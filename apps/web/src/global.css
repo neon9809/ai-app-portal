@@ -1,0 +1,100 @@
+/* 全局样式：消费 ThemeProvider 写入的 CSS variables（--aap-*）。
+   组件级样式优先用 AntD token，这里只放布局级与变量消费示例。 */
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+}
+
+body {
+  background: var(--aap-bg-layout);
+  color: var(--aap-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 门户 shell 布局 */
+.aap-shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.aap-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 24px;
+  height: 60px;
+  background: var(--aap-bg-container);
+  border-bottom: 1px solid var(--aap-border);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.aap-header .aap-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.aap-header .aap-brand img {
+  height: 30px;
+  width: auto;
+}
+
+.aap-header .aap-brand .aap-site-name {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--aap-primary);
+  white-space: nowrap;
+}
+
+.aap-header .aap-tagline {
+  color: var(--aap-text-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.aap-main {
+  flex: 1;
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 24px 16px;
+}
+
+.aap-footer {
+  padding: 16px;
+  text-align: center;
+  color: var(--aap-text-secondary);
+  font-size: 12px;
+  background: var(--aap-bg-container);
+  border-top: 1px solid var(--aap-border);
+}
+
+.aap-footer a {
+  color: var(--aap-text-secondary);
+  margin: 0 4px;
+}
+
+@media (max-width: 640px) {
+  .aap-header .aap-tagline {
+    display: none;
+  }
+  .aap-header {
+    padding: 0 12px;
+  }
+  .aap-main {
+    padding: 16px 12px;
+  }
+}

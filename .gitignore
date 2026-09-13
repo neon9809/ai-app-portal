@@ -1,0 +1,39 @@
+# dependencies
+node_modules/
+
+# builds
+dist/
+build/
+
+# runtime data (SQLite, certs, keys, uploads)
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# env & secrets
+.env
+.env.local
+!.env.example
+
+# logs
+*.log
+logs/
+
+# debug sandbox local state
+.aap-dev/
+
+# os / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+!.vscode/extensions.json
+
+# test artifacts
+coverage/
+playwright-report/
+test-results/
+
+# reference implementation (private, read-only)
+office-tool/

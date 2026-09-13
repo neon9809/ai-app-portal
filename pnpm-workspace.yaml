@@ -1,0 +1,8 @@
+packages:
+  - apps/*
+  - packages/*
+
+# pnpm 11 构建脚本白名单（原生模块与 esbuild 需要执行安装脚本）
+allowBuilds:
+  better-sqlite3: true
+  esbuild: true

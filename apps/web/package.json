@@ -1,0 +1,29 @@
+{
+  "name": "@aap/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "echo \"no tests\" && exit 0",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@aap/shared": "workspace:*",
+    "@ant-design/icons": "^5.6.1",
+    "@tanstack/react-query": "^5.66.0",
+    "antd": "^5.27.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.30.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.9.2",
+    "vite": "^6.3.5"
+  }
+}

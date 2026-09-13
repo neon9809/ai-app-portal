@@ -1,0 +1,19 @@
+{
+  "name": "ai-app-portal",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI应用门户 — 自托管 AI 应用网关 + 门户（统一入口 / 自动 HTTPS / 登录鉴权 / 主题品牌 / LLM 网关 / 计费）",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @aap/shared build && pnpm -r --parallel dev",
+    "build": "pnpm --filter @aap/shared build && pnpm -r build",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "db:generate": "pnpm --filter @aap/server db:generate"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2"
+  }
+}
