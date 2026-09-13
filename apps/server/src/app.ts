@@ -79,9 +79,9 @@ export function createApp(cfg: AapConfig = config): Express {
     if (getSettingBool('HTTPS_REDIRECT', false) && !req.path.startsWith('/.well-known/acme-challenge/')) {
       const proto = req.protocol;
       if (proto === 'http') {
+        // 外部经 443 映射访问容器 8443，跳转一律指向标准 443（不带端口）
         const host = (req.headers.host ?? '').replace(/:\d+$/, '');
-        const port = config.httpsPort;
-        res.redirect(301, `https://${host}${port === 443 ? '' : ':' + port}${req.originalUrl}`);
+        res.redirect(301, `https://${host}${req.originalUrl}`);
         return;
       }
     }
