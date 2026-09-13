@@ -222,6 +222,20 @@ adminRouter.get(
   }),
 );
 
+/** 密钥查看（自研应用验签/接入需要；审计泄露面） */
+adminRouter.get(
+  '/admin/secrets/:key',
+  h(async (req, res) => {
+    const key = String(req.params.key);
+    const def = SETTING_DEFS[key];
+    if (!def || !def.secret) throw new HttpError(404, 'NOT_SECRET', '配置项不存在或不是密钥');
+    const value = getSetting(key);
+    if (!value) throw new HttpError(404, 'NOT_SET', '该密钥尚未生成');
+    audit(`${req.user!.kind}:${req.user!.id}`, req.clientIp ?? null, 'config.secret.revealed', { key });
+    res.json({ key, value });
+  }),
+);
+
 // ---------- 审计查询 ----------
 
 adminRouter.get(

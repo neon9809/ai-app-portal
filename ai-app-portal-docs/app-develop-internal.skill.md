@@ -45,7 +45,8 @@ Neon 的 OSS 项目：自托管 AI 应用网关 + 门户，中文名「AI应用�
 
 ## 三、身份传递（passUser）
 
-代理转发时注入：`X-Office-Identity: base64url(payload)` + `X-Office-Identity-Sig: hex(HMAC-SHA256(secret, payload))`。
+代理转发时注入：`X-AAP-Identity: base64url(JSON payload)` + `X-AAP-Identity-Sig: hex(HMAC-SHA256(secret, payload))`。
+签名密钥 = 平台设置 `AAP_SIGN_SECRET`（管理后台 → 安全 → 高级项可查看/轮换；首启自动随机生成，或用环境变量 AAP_SIGN_SECRET 设初值）。
 
 - payload 必含：`aud`（目标工具 id，防身份头转发到其他上游重放）、`jti`（一次性随机串）、`iat/exp`（10 分钟 TTL）、`kind`+`uid`（**本地账号与 OIDC 分表自增，仅按 uid 隔离会同号串号——必须 (kind, uid) 联合或用 subject**）
 - 消费端校验：签名（timingSafeEqual）、exp、aud 与自身 id 一致
