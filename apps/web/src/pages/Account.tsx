@@ -404,8 +404,8 @@ export function AccountPage() {
           },
           {
             key: 'billing',
-            label: '账务',
-            children: <BillingTab />,
+            label: '会员与充值',
+            children: <MembershipTopupTab />,
           },
           {
             key: 'danger',
@@ -604,6 +604,174 @@ function BillingTab(): ReactNode {
         ) : (
           <Typography.Text type="secondary">暂无调用记录</Typography.Text>
         )}
+      </Card>
+    </Space>
+  );
+}
+
+// ---------- 会员与充值（M3：manual 渠道下单，管理员确认到账后生效） ----------
+
+interface PlanUI {
+  id: number;
+  name: string;
+  groupName: string;
+  durationDays: number;
+  priceFen: number;
+  tokenGrant: number;
+}
+interface OrderUI {
+  id: string;
+  kind: 'tokens' | 'membership';
+  planId: number | null;
+  tokens: number | null;
+  priceFen: number;
+  status: 'pending' | 'paid' | 'cancelled';
+  createdAt: number;
+}
+interface MembershipData {
+  membership: { planName: string; expiresAt: number } | null;
+  plans: PlanUI[];
+  orders: OrderUI[];
+}
+interface TopupResult {
+  orderId: string;
+  tokens?: number;
+  priceFen: number;
+}
+
+function yuan(fen: number): string {
+  return `¥${(fen / 100).toFixed(2)}`;
+}
+
+function MembershipTopupTab(): ReactNode {
+  const qc = useQueryClient();
+  const data = useQuery({ queryKey: ['membership'], queryFn: () => api<MembershipData>('/api/user/membership') });
+  const [amount, setAmount] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  async function subscribe(planId: number): Promise<void> {
+    setBusy(true);
+    try {
+      const r = await api<TopupResult>('/api/user/membership/subscribe', { method: 'POST', json: { planId } });
+      message.info(`订单已创建（${yuan(r.priceFen)}），等待管理员确认到账后生效`);
+      void qc.invalidateQueries({ queryKey: ['membership'] });
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : '下单失败');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function topup(fen: number): Promise<void> {
+    setBusy(true);
+    try {
+      const r = await api<TopupResult>('/api/user/topup', { method: 'POST', json: { priceFen: fen } });
+      message.info(`充值订单已创建（${yuan(fen)} → ${r.tokens?.toLocaleString()} 额度），等待确认到账`);
+      void qc.invalidateQueries({ queryKey: ['membership'] });
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : '下单失败');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const d = data.data;
+  return (
+    <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+      <Card size="small" title="我的会员">
+        {d?.membership ? (
+          <Alert
+            type="success"
+            showIcon
+            message={`会员生效中：${d.membership.planName}`}
+            description={`到期时间：${new Date(d.membership.expiresAt).toLocaleString()}（到期自动降级，数据保留）`}
+          />
+        ) : (
+          <Typography.Text type="secondary">当前为免费版。开通会员解锁对应分组的应用。</Typography.Text>
+        )}
+      </Card>
+
+      <Card size="small" title="会员套餐">
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 10 }}>
+          {(d?.plans ?? []).map((p) => (
+            <Card key={p.id} size="small" style={{ borderColor: 'var(--aap-border)' }}>
+              <div style={{ fontWeight: 700 }}>{p.name}</div>
+              <div style={{ color: 'var(--aap-text-secondary)', fontSize: 12, margin: '4px 0' }}>
+                {p.durationDays} 天 · 权益分组：{p.groupName}
+                {p.tokenGrant > 0 ? ` · 赠 ${p.tokenGrant.toLocaleString()} 额度` : ''}
+              </div>
+              <Button type="primary" size="small" block loading={busy} onClick={() => void subscribe(p.id)}>
+                {yuan(p.priceFen)} 开通
+              </Button>
+            </Card>
+          ))}
+          {(d?.plans.length ?? 0) === 0 ? <Typography.Text type="secondary">暂无在售套餐</Typography.Text> : null}
+        </div>
+      </Card>
+
+      <Card size="small" title="额度充值">
+        <Space wrap>
+          {[1000, 5000, 10000].map((fen) => (
+            <Button key={fen} onClick={() => void topup(fen)} loading={busy}>
+              {yuan(fen)} → {(fen * 10).toLocaleString()} 额度
+            </Button>
+          ))}
+          <Input
+            style={{ width: 140 }}
+            placeholder="自定义金额(元)"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+          />
+          <Button
+            onClick={() => {
+              const yuan_ = Number(amount);
+              if (Number.isFinite(yuan_) && yuan_ >= 1) void topup(Math.round(yuan_ * 100));
+              else message.warning('最低 1 元');
+            }}
+          >
+            充值
+          </Button>
+        </Space>
+        <Typography.Paragraph type="secondary" style={{ marginTop: 8, fontSize: 12 }}>
+          计费单价：1 元 = 1000 额度（管理员可调）。订单创建后等待确认到账，到账即入账。
+        </Typography.Paragraph>
+      </Card>
+
+      <Card size="small" title="我的订单">
+        <Table<OrderUI>
+          rowKey="id"
+          size="small"
+          pagination={false}
+          dataSource={d?.orders ?? []}
+          columns={[
+            { title: '订单号', dataIndex: 'id', width: 170 },
+            { title: '类型', width: 80, render: (_, r) => (r.kind === 'membership' ? '会员' : '额度') },
+            { title: '金额', width: 90, render: (_, r) => yuan(r.priceFen) },
+            { title: '到账', width: 110, render: (_, r) => (r.kind === 'tokens' ? `${r.tokens?.toLocaleString()} 额度` : '会员权益') },
+            {
+              title: '状态',
+              width: 90,
+              render: (_, r) =>
+                r.status === 'pending' ? <Tag color="orange">待确认</Tag> : r.status === 'paid' ? <Tag color="green">已到账</Tag> : <Tag>已取消</Tag>,
+            },
+            {
+              title: '',
+              width: 90,
+              render: (_, r) =>
+                r.status === 'pending' ? (
+                  <Button
+                    size="small"
+                    onClick={async () => {
+                      await api(`/api/user/orders/${r.id}/cancel`, { method: 'POST' });
+                      void qc.invalidateQueries({ queryKey: ['membership'] });
+                    }}
+                  >
+                    取消
+                  </Button>
+                ) : null,
+            },
+          ]}
+        />
       </Card>
     </Space>
   );

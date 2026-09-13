@@ -5,7 +5,7 @@
 import { Router } from 'express';
 import { eq, sql } from 'drizzle-orm';
 import { getDb } from '../db/index.js';
-import { llmAppTokens, llmLedger, llmUpstreams, users } from '../db/schema.js';
+import { llmAppTokens, llmLedger, llmRoutes, llmUpstreams, users } from '../db/schema.js';
 import { HttpError, h } from '../lib/httpError.js';
 import { requireAdmin } from '../lib/auth.js';
 import { audit } from '../lib/audit.js';
@@ -98,6 +98,24 @@ adminLlmRouter.post(
       weight: body.weight,
     });
     audit(`${req.user!.kind}:${req.user!.id}`, req.clientIp ?? null, 'llm.route.create', { model: body.model });
+    res.json({ ok: true });
+  }),
+);
+
+adminLlmRouter.put(
+  '/admin/llm/routes/:id',
+  h(async (req, res) => {
+    const id = Number(req.params.id);
+    const body = (req.body ?? {}) as { multiplier?: number; costPer1k?: number; priority?: number; weight?: number; enabled?: boolean };
+    const set: Record<string, number | boolean> = {};
+    if (body.multiplier !== undefined) set.multiplier = Math.max(1, Math.round(body.multiplier));
+    if (body.costPer1k !== undefined) set.costPer1k = Math.max(0, Math.round(body.costPer1k));
+    if (body.priority !== undefined) set.priority = Math.round(body.priority);
+    if (body.weight !== undefined) set.weight = Math.max(1, Math.round(body.weight));
+    if (body.enabled !== undefined) set.enabled = body.enabled;
+    if (Object.keys(set).length > 0) {
+      getDb().update(llmRoutes).set(set).where(eq(llmRoutes.id, id)).run();
+    }
     res.json({ ok: true });
   }),
 );

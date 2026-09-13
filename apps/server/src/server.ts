@@ -8,6 +8,7 @@ import { config } from './config/index.js';
 import { closeDb, initDb } from './db/index.js';
 import { startPurgeLoop, stopPurgeLoop } from './lib/audit.js';
 import { startHealthLoop, stopHealthLoop } from './gateway/health.js';
+import { startBillingLoop, stopBillingLoop } from './lib/billing.js';
 import { handleUpgrade } from './gateway/wsproxy.js';
 import * as tls from './gateway/tls.js';
 import { ensureInitialAdmin } from './lib/bootstrap.js';
@@ -24,6 +25,7 @@ function main(): void {
   ensureInitialAdmin(); // F3：users 为空时创建初始管理员（Docker 首启打印密码 + 一次性凭据文件）
   startPurgeLoop();
   startHealthLoop();
+  startBillingLoop();
 
   const app = createApp();
   const server = http.createServer(app);
@@ -42,6 +44,7 @@ function main(): void {
     console.log(`[aap] received ${signal}, shutting down...`);
     stopPurgeLoop();
     stopHealthLoop();
+    stopBillingLoop();
     tls.stop();
     server.close(() => {
       closeDb();

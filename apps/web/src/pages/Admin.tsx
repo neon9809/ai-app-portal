@@ -314,6 +314,7 @@ export function AdminPage() {
               { key: 'mail', label: '通知通道', children: <MailTab /> },
               { key: 'tls', label: '证书', children: <TlsTab /> },
               { key: 'llm', label: 'LLM 网关', children: <LlmTab /> },
+              { key: 'ops', label: '运营', children: <OpsTab /> },
             ]}
           />
         </div>
@@ -1491,5 +1492,208 @@ function GroupsCard(): ReactNode {
         <Form.Item name="noop">{null}</Form.Item>
       </Form>
     </Card>
+  );
+}
+
+// ---------- 运营面板（M3，D4）：套餐 / 订单 / 排行 / 成本毛利 ----------
+
+interface PlanRowUI {
+  id: number;
+  name: string;
+  groupId: number;
+  groupName: string;
+  durationDays: number;
+  priceFen: number;
+  tokenGrant: number;
+  enabled: boolean;
+}
+interface OrderRowUI {
+  id: string;
+  userId: number;
+  kind: 'tokens' | 'membership';
+  planId: number | null;
+  tokens: number | null;
+  priceFen: number;
+  channel: string;
+  status: 'pending' | 'paid' | 'cancelled';
+  note: string | null;
+  createdAt: number;
+  paidAt: number | null;
+}
+interface OpsStatsUI {
+  balanceTop: Array<{ userId: number; balance: number }>;
+  spentTop: Array<{ userId: number; spent: number }>;
+  appHot: Array<{ appId: string; calls: number; tokens: number }>;
+  revenue30d: number;
+  cost30d: number;
+}
+
+function fen2yuan(fen: number): string {
+  return (fen / 100).toFixed(2);
+}
+
+function OpsTab(): ReactNode {
+  const qc = useQueryClient();
+  const plansQ = useQuery({ queryKey: ['billing-plans'], queryFn: () => api<{ plans: PlanRowUI[] }>('/api/admin/billing/plans') });
+  const ordersQ = useQuery({ queryKey: ['billing-orders'], queryFn: () => api<{ orders: OrderRowUI[] }>('/api/admin/billing/orders?status=pending') });
+  const opsQ = useQuery({ queryKey: ['billing-ops'], queryFn: () => api<OpsStatsUI>('/api/admin/billing/ops') });
+  const groupsQ = useQuery({ queryKey: ['admin-groups'], queryFn: () => api<{ groups: GroupRow[] }>('/api/admin/groups') });
+  const [planForm] = Form.useForm();
+
+  const ops = opsQ.data;
+  const grossMargin = ops ? ops.revenue30d - ops.cost30d : 0;
+
+  return (
+    <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
+        <Card size="small" title="30 天收入（额度）">
+          <Typography.Text strong style={{ fontSize: 22 }}>{ops?.revenue30d.toLocaleString() ?? '—'}</Typography.Text>
+        </Card>
+        <Card size="small" title="30 天上游成本">
+          <Typography.Text strong style={{ fontSize: 22 }}>{ops?.cost30d.toLocaleString() ?? '—'}</Typography.Text>
+        </Card>
+        <Card size="small" title="毛利（额度）">
+          <Typography.Text strong style={{ fontSize: 22, color: grossMargin >= 0 ? '#2E7D32' : '#ff4d4f' }}>
+            {grossMargin.toLocaleString()}
+          </Typography.Text>
+        </Card>
+        <Card size="small" title="待处理订单">
+          <Typography.Text strong style={{ fontSize: 22 }}>{ordersQ.data?.orders.length ?? 0}</Typography.Text>
+        </Card>
+      </div>
+
+      <Card size="small" title="会员套餐">
+        <Table<PlanRowUI>
+          rowKey="id"
+          size="small"
+          pagination={false}
+          dataSource={plansQ.data?.plans ?? []}
+          columns={[
+            { title: '名称', dataIndex: 'name', width: 140 },
+            { title: '分组', dataIndex: 'groupName', width: 140 },
+            { title: '时长', dataIndex: 'durationDays', width: 90, render: (v: number) => `${v} 天` },
+            { title: '价格', dataIndex: 'priceFen', width: 90, render: (v: number) => `¥${fen2yuan(v)}` },
+            { title: '赠额度', dataIndex: 'tokenGrant', width: 100 },
+            { title: '状态', width: 80, render: (_, r) => (r.enabled ? <Tag color="green">在售</Tag> : <Tag>停售</Tag>) },
+            {
+              title: '操作',
+              width: 160,
+              render: (_, r) => (
+                <Space size="small">
+                  <Button size="small" onClick={async () => {
+                    await api(`/api/admin/billing/plans/${r.id}`, { method: 'PUT', json: { enabled: !r.enabled } });
+                    void qc.invalidateQueries({ queryKey: ['billing-plans'] });
+                  }}>{r.enabled ? '停售' : '在售'}</Button>
+                  <Popconfirm title="删除套餐？" onConfirm={async () => {
+                    try {
+                      await api(`/api/admin/billing/plans/${r.id}`, { method: 'DELETE' });
+                      void qc.invalidateQueries({ queryKey: ['billing-plans'] });
+                    } catch (err) {
+                      message.error(err instanceof Error ? err.message : '删除失败');
+                    }
+                  }}>
+                    <Button size="small" danger>删除</Button>
+                  </Popconfirm>
+                </Space>
+              ),
+            },
+          ]}
+        />
+        <Form form={planForm} layout="inline" style={{ marginTop: 10, rowGap: 8 }} onFinish={async (v) => {
+          try {
+            await api('/api/admin/billing/plans', {
+              method: 'POST',
+              json: { ...v, groupId: Number(v.groupId), durationDays: Number(v.durationDays), priceFen: Math.round(Number(v.priceFen ?? 0) * 100), tokenGrant: Number(v.tokenGrant ?? 0) },
+            });
+            message.success('套餐已创建');
+            planForm.resetFields();
+            void qc.invalidateQueries({ queryKey: ['billing-plans'] });
+          } catch (err) {
+            message.error(err instanceof Error ? err.message : '创建失败');
+          }
+        }}>
+          <Form.Item name="name" rules={[{ required: true, message: '必填' }]}>
+            <Input placeholder="套餐名（会员-高级）" style={{ width: 160 }} />
+          </Form.Item>
+          <Form.Item name="groupId" rules={[{ required: true, message: '必选' }]}>
+            <Select placeholder="对应分组" style={{ width: 150 }} options={groupsQ.data?.groups.map((g) => ({ value: g.id, label: g.name }))} />
+          </Form.Item>
+          <Form.Item name="durationDays" rules={[{ required: true, message: '必填' }]}>
+            <Input placeholder="时长(天)=30" style={{ width: 110 }} />
+          </Form.Item>
+          <Form.Item name="priceFen" rules={[{ required: true, message: '必填' }]}>
+            <Input placeholder="价格(元)=30" style={{ width: 110 }} />
+          </Form.Item>
+          <Form.Item name="tokenGrant">
+            <Input placeholder="赠额度=0" style={{ width: 100 }} />
+          </Form.Item>
+          <Button htmlType="submit" type="primary">创建套餐</Button>
+        </Form>
+      </Card>
+
+      <Card size="small" title="待确认订单（人工确认到账；确认后权益/额度自动生效）">
+        <Table<OrderRowUI>
+          rowKey="id"
+          size="small"
+          pagination={false}
+          dataSource={ordersQ.data?.orders ?? []}
+          columns={[
+            { title: '订单号', dataIndex: 'id', width: 170 },
+            { title: '用户', dataIndex: 'userId', width: 70 },
+            { title: '类型', width: 90, render: (_, r) => (r.kind === 'membership' ? '会员' : '额度') },
+            { title: '金额', width: 90, render: (_, r) => `¥${fen2yuan(r.priceFen)}` },
+            { title: '到账', width: 110, render: (_, r) => (r.kind === 'tokens' ? `${r.tokens?.toLocaleString()} 额度` : '会员权益') },
+            { title: '创建时间', width: 160, render: (_, r) => new Date(r.createdAt).toLocaleString() },
+            {
+              title: '操作',
+              width: 160,
+              render: (_, r) => (
+                <Space size="small">
+                  <Popconfirm title={`确认已收到 ¥${fen2yuan(r.priceFen)}？确认后立即生效。`} onConfirm={async () => {
+                    await api(`/api/admin/billing/orders/${r.id}/confirm`, { method: 'POST' });
+                    message.success('已确认到账');
+                    void qc.invalidateQueries({ queryKey: ['billing-orders'] });
+                    void qc.invalidateQueries({ queryKey: ['billing-ops'] });
+                  }}>
+                    <Button size="small" type="primary">确认到账</Button>
+                  </Popconfirm>
+                  <Button size="small" onClick={async () => {
+                    await api(`/api/admin/billing/orders/${r.id}/cancel`, { method: 'POST' });
+                    void qc.invalidateQueries({ queryKey: ['billing-orders'] });
+                  }}>取消</Button>
+                </Space>
+              ),
+            },
+          ]}
+        />
+      </Card>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 12 }}>
+        <Card size="small" title="余额排行">
+          {(ops?.balanceTop ?? []).map((r, i) => (
+            <div key={r.userId} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, padding: '2px 0' }}>
+              <span>#{i + 1} 用户 {r.userId}</span>
+              <Typography.Text strong>{r.balance.toLocaleString()}</Typography.Text>
+            </div>
+          ))}
+        </Card>
+        <Card size="small" title="消耗排行（30 天）">
+          {(ops?.spentTop ?? []).map((r, i) => (
+            <div key={r.userId} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, padding: '2px 0' }}>
+              <span>#{i + 1} 用户 {r.userId}</span>
+              <Typography.Text type="danger">-{r.spent.toLocaleString()}</Typography.Text>
+            </div>
+          ))}
+        </Card>
+        <Card size="small" title="应用热度（30 天）">
+          {(ops?.appHot ?? []).map((r) => (
+            <div key={r.appId} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, padding: '2px 0' }}>
+              <span>{r.appId}</span>
+              <span style={{ color: 'var(--aap-text-secondary)' }}>{r.calls} 次 / {r.tokens.toLocaleString()} tokens</span>
+            </div>
+          ))}
+        </Card>
+      </div>
+    </Space>
   );
 }

@@ -28,6 +28,7 @@ import { guideRouter } from './routes/guide.js';
 import { portalChromeJs } from './gateway/staticApp.js';
 import { llmGatewayRouter } from './routes/llmGateway.js';
 import { adminLlmRouter } from './routes/adminLlm.js';
+import { adminBillingRouter } from './routes/adminBilling.js';
 import { gatewayRouter } from './gateway/proxy.js';
 import { acmeChallengeResponse } from './gateway/tls.js';
 import { getSettingBool } from './lib/settings.js';
@@ -95,6 +96,7 @@ export function createApp(cfg: AapConfig = config): Express {
   app.use('/api', adminRouter);
   app.use('/api', guideRouter);
   app.use('/api', adminLlmRouter);
+  app.use('/api', adminBillingRouter);
 
   // 应用网关（B1）：/app/<id>/ 路径反代。必须在 SPA 兜底之前挂载；
   // 不经过 express.json（流式 body 保真），CSRF 不适用（仅 /api 挂载）。

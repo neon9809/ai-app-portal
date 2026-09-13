@@ -5,13 +5,14 @@
 import { Router } from 'express';
 import { and, eq, gt, ne, sql } from 'drizzle-orm';
 import { getDb } from '../db/index.js';
-import { llmLedger, sessions, users } from '../db/schema.js';
+import { llmLedger, membershipPlans, sessions, users } from '../db/schema.js';
 import { HttpError, h } from '../lib/httpError.js';
 import { requireAuth, requireStepUp } from '../lib/auth.js';
 import { publicUserOf } from './shared.js';
 import { registerPurgeTask } from '../lib/audit.js';
 import { getSetting, getSettingInt } from '../lib/settings.js';
 import { issueCode, verifyCode } from '../lib/verification.js';
+import { cancelOrder } from '../lib/billing.js';
 import { audit } from '../lib/audit.js';
 import { recomputeBalance } from '../lib/llm.js';
 
@@ -167,6 +168,63 @@ userRouter.get(
       })),
       note: '会员订阅与自助充值在 M3（计费闭环）上线后开放；当前额度由管理员发放',
     });
+  }),
+);
+
+// ---------- 会员与充值（M3） ----------
+
+userRouter.get(
+  '/user/membership',
+  h(async (req, res) => {
+    const { listPlans, listUserOrders } = await import('../lib/billing.js');
+    const me = getDb().select().from(users).where(eq(users.id, req.user!.id)).get();
+    const planName = (() => {
+      if (!me?.membershipPlanId) return null;
+      const p = getDb().select().from(membershipPlans).where(eq(membershipPlans.id, me.membershipPlanId)).get();
+      return p?.name ?? null;
+    })();
+    res.json({
+      membership: me?.membershipExpiresAt && me.membershipExpiresAt > Date.now()
+        ? { planName, expiresAt: me.membershipExpiresAt }
+        : null,
+      plans: listPlans(true),
+      orders: listUserOrders(req.user!.id),
+    });
+  }),
+);
+
+/** 开通会员：建订单（manual 渠道），管理员确认到账后生效 */
+userRouter.post(
+  '/user/membership/subscribe',
+  h(async (req, res) => {
+    const { createOrder, listPlans } = await import('../lib/billing.js');
+    const body = (req.body ?? {}) as { planId?: number };
+    const plan = listPlans(true).find((p) => p.id === Number(body.planId));
+    if (!plan) throw new HttpError(404, 'PLAN_NOT_FOUND', '套餐不存在或已下架');
+    const order = createOrder(req.user!.id, 'membership', { priceFen: plan.priceFen, planId: plan.id });
+    res.json({ ok: true, orderId: order.id, priceFen: order.priceFen });
+  }),
+);
+
+/** 额度充值：建订单，tokens 按单价折算 */
+userRouter.post(
+  '/user/topup',
+  h(async (req, res) => {
+    const { createOrder } = await import('../lib/billing.js');
+    const body = (req.body ?? {}) as { priceFen?: number };
+    const priceFen = Math.round(Number(body.priceFen ?? 0));
+    const perFen = getSettingInt('TOPUP_TOKENS_PER_FEN', 1000);
+    if (priceFen < 100) throw new HttpError(400, 'INVALID_AMOUNT', '最低充值 1.00 元');
+    const order = createOrder(req.user!.id, 'tokens', { priceFen, tokens: priceFen * perFen });
+    res.json({ ok: true, orderId: order.id, tokens: order.tokens, priceFen: order.priceFen });
+  }),
+);
+
+userRouter.post(
+  '/user/orders/:id/cancel',
+  h(async (req, res) => {
+    cancelOrder(String(req.params.id), req.user!.id, false);
+    res.json({ ok: true });
   }),
 );
 

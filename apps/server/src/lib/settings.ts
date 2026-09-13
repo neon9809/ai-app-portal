@@ -148,6 +148,10 @@ export const SETTING_DEFS: Record<string, SettingDef> = {
   },
   RATE_USER_PER_MIN: {
     group: '应用网关', type: 'int', desc: '应用网关限流：每用户请求/分', initial: () => String(config.rateUserPerMin), defaultsWork: true, advanced: true },
+  TOPUP_TOKENS_PER_FEN: {
+    group: '计费', type: 'int',
+    desc: '充值单价：每 1 分钱到账的 token 数（100 = 1 元 1000 token）',
+    initial: () => '1000', defaultsWork: true },
   RATE_LLM_PER_MIN: {
     group: '应用网关', type: 'int', desc: 'LLM 网关凭据默认限流（请求/分，凭据可单独覆写）', initial: () => '60', defaultsWork: true, advanced: true },
   RATE_IP_PER_MIN: {

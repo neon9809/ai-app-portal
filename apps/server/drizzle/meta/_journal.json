@@ -57,6 +57,20 @@
       "when": 1789290026975,
       "tag": "0007_purple_amphibian",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1789290807365,
+      "tag": "0008_easy_jamie_braddock",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1789290917167,
+      "tag": "0009_jazzy_silver_fox",
+      "breakpoints": true
     }
   ]
 }

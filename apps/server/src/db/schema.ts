@@ -38,6 +38,10 @@ export const users = sqliteTable(
     status: text('status').notNull().default('active'),
     /** 'free' | 'member'（M3 计费接入，M1 恒 free） */
     plan: text('plan').notNull().default('free'),
+    /** 当前生效会员套餐（到期自动清空并移出对应分组） */
+    membershipPlanId: integer('membership_plan_id'),
+    /** 会员到期时间（null = 未开通/已过期） */
+    membershipExpiresAt: integer('membership_expires_at'),
     mfaEnabled: integer('mfa_enabled', { mode: 'boolean' }).notNull().default(false),
     mustChangePassword: integer('must_change_password', { mode: 'boolean' }).notNull().default(false),
     deletionRequestedAt: integer('deletion_requested_at'),
@@ -331,6 +335,8 @@ export const llmRoutes = sqliteTable(
       .references(() => llmUpstreams.id, { onDelete: 'cascade' }),
     upstreamModel: text('upstream_model').notNull(), // 上游侧真实模型名
     multiplier: integer('multiplier').notNull().default(100), // 计费倍率（千分比，100 = 1:1），M3 定价沿用
+    /** 上游成本价（每 1k token 的成本，单位=分；毛利 = 收入倍率 − 成本价） */
+    costPer1k: integer('cost_per_1k').notNull().default(0),
     priority: integer('priority').notNull().default(100),
     weight: integer('weight').notNull().default(100),
     enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
@@ -396,3 +402,45 @@ export const oidcStates = sqliteTable('oidc_states', {
   createdAt: integer('created_at').notNull(),
   expiresAt: integer('expires_at').notNull(),
 });
+
+// ---------- D：计费（M3） ----------
+
+/** 会员套餐：开通后把用户加入目标分组（可见性随分组走），到期自动降级 */
+export const membershipPlans = sqliteTable('membership_plans', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  name: text('name').notNull().unique(),
+  /** 开通后加入的分组 id（该组可见的应用集合即会员权益） */
+  groupId: integer('group_id')
+    .notNull()
+    .references(() => userGroups.id, { onDelete: 'cascade' }),
+  durationDays: integer('duration_days').notNull(),
+  /** 价格（分） */
+  priceFen: integer('price_fen').notNull().default(0),
+  /** 开通赠送的 LLM 额度（token） */
+  tokenGrant: integer('token_grant').notNull().default(0),
+  enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+  createdAt: integer('created_at').notNull(),
+});
+
+/** 充值/开通订单（支付渠道 adapter 对接；manual = 人工确认到账） */
+export const topupOrders = sqliteTable(
+  'topup_orders',
+  {
+    id: text('id').primaryKey(),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    /** 'tokens' 额度充值 | 'membership' 会员开通 */
+    kind: text('kind').notNull(),
+    planId: integer('plan_id'), // kind=membership 时指向套餐
+    tokens: integer('tokens'), // kind=tokens 时到账额度
+    priceFen: integer('price_fen').notNull(),
+    channel: text('channel').notNull().default('manual'),
+    /** 'pending' 待收款 | 'paid' 已到账 | 'cancelled' 已取消 */
+    status: text('status').notNull().default('pending'),
+    note: text('note'),
+    createdAt: integer('created_at').notNull(),
+    paidAt: integer('paid_at'),
+  },
+  (t) => [index('topup_orders_user_idx').on(t.userId, t.createdAt)],
+);
