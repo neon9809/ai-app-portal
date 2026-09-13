@@ -21,6 +21,8 @@ import { signIdentity } from './identity.js';
 import { allowRequest } from './limiter.js';
 import { getSettingInt } from '../lib/settings.js';
 import { injectChrome, serveHtmlApp } from './staticApp.js';
+import { ensurePersistent, touchByPort } from '../lib/sandbox.js';
+import http from 'node:http';
 
 export const gatewayRouter = Router();
 
@@ -216,8 +218,17 @@ gatewayRouter.all('/app/:id/*', async (req: Request, res: Response) => {
     return htmlError(res, 429, '请求过于频繁', '请稍后再试');
   }
 
-  // 门户托管应用（简单 HTML / .neon-aap html 包 / 等待运行时的包）不走上游
+  // 门户托管应用（简单 HTML / .neon-aap 包）不走上游
   if (app.kind !== 'upstream') {
+    if (app.kind === 'package' && app.runtimeMode === 'persistent') {
+      // G2 persistent：拉起长驻沙箱并反代（纳入 B 域门禁/限流/审计）
+      const port = await ensurePersistent(app.id, manifestEntry(app), () => {
+        console.log(`[sandbox] persistent 崩溃重启: ${app.id}`);
+      });
+      if (!port) return htmlError(res, 503, '应用启动中', '请稍后重试');
+      const sub = decodeSafe((req.params[0] as string | undefined) ?? '');
+      return proxyToSandbox(req, res, port, sub);
+    }
     const sub = decodeSafe((req.params[0] as string | undefined) ?? '');
     return serveHtmlApp(req, res, app, sub);
   }
@@ -338,3 +349,47 @@ gatewayRouter.all('/app/:id/*', async (req: Request, res: Response) => {
     clearTimeout(timer);
   }
 });
+
+
+// ---------- persistent 沙箱反代（HTTP；WS 由 upgrade 通道类似处理，M4 后续补齐） ----------
+
+function manifestEntry(app: { manifestJson: string | null }): string {
+  if (!app.manifestJson) return 'mod.py';
+  try {
+    const m = JSON.parse(app.manifestJson) as { entry?: string };
+    return m.entry || 'mod.py';
+  } catch {
+    return 'mod.py';
+  }
+}
+
+function proxyToSandbox(req: Request, res: Response, port: number, sub: string): void {
+  touchPersistentByPort(port);
+  const headers: Record<string, string> = {};
+  for (const [k, v] of Object.entries(req.headers)) {
+    if (['host', 'connection', 'content-length', 'transfer-encoding'].includes(k.toLowerCase())) continue;
+    headers[k] = Array.isArray(v) ? v.join(', ') : (v ?? '');
+  }
+  const pathAndQuery = req.originalUrl ?? req.url ?? '/';
+  const up = http.request(
+    { hostname: '127.0.0.1', port, path: pathAndQuery, method: req.method, headers },
+    (upRes) => {
+      res.status(upRes.statusCode ?? 502);
+      for (const [key, value] of Object.entries(upRes.headers)) {
+        if (value === undefined) continue;
+        if (Array.isArray(value)) res.setHeader(key, value);
+        else res.setHeader(key, value);
+      }
+      upRes.pipe(res);
+    },
+  );
+  up.on('error', () => {
+    if (!res.headersSent) res.status(502).type('html').send('sandbox error');
+    else res.end();
+  });
+  req.pipe(up);
+}
+
+function touchPersistentByPort(port: number): void {
+  touchByPort(port);
+}

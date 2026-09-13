@@ -90,8 +90,10 @@ function AppTile({ app }: { app: AppCard }) {
     </Card>
   );
 
+  const isTool = app.kind === 'package' && app.runtimeMode === 'invoked';
+  const target = isTool ? `/run/${app.id}` : `/open/${app.id}`;
   return app.accessible ? (
-    <Link to={`/open/${app.id}`} style={{ textDecoration: 'none' }}>
+    <Link to={target} style={{ textDecoration: 'none' }}>
       {inner}
     </Link>
   ) : (

@@ -9,6 +9,7 @@ import { MfaSetupPage } from './pages/MfaSetup';
 import { ForceChangePasswordPage } from './pages/ForceChangePassword';
 import { AccountPage } from './pages/Account';
 import { AdminPage } from './pages/Admin';
+import { RunToolPage } from './pages/RunTool';
 import { GuidePage } from './pages/Guide';
 
 export default function App() {
@@ -17,6 +18,7 @@ export default function App() {
       <Route element={<PortalLayout />}>
         <Route path="/" element={<HomePage />} />
         <Route path="/open/:id" element={<AppFramePage />} />
+        <Route path="/run/:id" element={<RunToolPage />} />
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
         <Route path="/forgot" element={<ForgotPage />} />

@@ -85,6 +85,20 @@
       "when": 1789291895116,
       "tag": "0011_hard_captain_midlands",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1789292621158,
+      "tag": "0012_conscious_sleepwalker",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1789293021148,
+      "tag": "0013_condemned_mordo",
+      "breakpoints": true
     }
   ]
 }

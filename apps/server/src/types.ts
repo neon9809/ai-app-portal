@@ -8,6 +8,7 @@ import type { AuthState, UserRole, UserKind } from '@aap/shared';
 
 export interface SessionUser {
   id: number;
+  avatar?: string | null;
   kind: UserKind;
   /** 'local:<username>'（oidc: 'oidc:<subject>'，M2） */
   subject: string;

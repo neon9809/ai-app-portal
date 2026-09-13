@@ -21,7 +21,7 @@ RUN pnpm --filter @aap/server --prod deploy --legacy /out
 
 # ---------- 运行阶段 ----------
 FROM node:22-alpine
-RUN apk add --no-cache tini
+RUN apk add --no-cache tini python3 py3-flask
 WORKDIR /out
 # pnpm deploy 产物：package.json + node_modules（含 @aap/shared 构建产物）
 COPY --from=build /out ./
@@ -30,6 +30,11 @@ COPY --from=build /app/apps/server/dist ./dist
 COPY --from=build /app/apps/server/drizzle ./drizzle
 # 前端构建产物（server 生产托管 + SPA 兜底）
 COPY --from=build /app/apps/web/dist ./public
+# .neon-aap 运行时 SDK（M4：aap 对象 + runner）
+COPY --from=build /app/packages/aap-sdk ./aap-sdk
+ENV PYTHONPATH=/out/aap-sdk \
+    PYTHON_BIN=python3
+
 # 开发指南与平台文档（右上角「开发指南」页数据源）
 COPY --from=build /app/ai-app-portal-docs/app-develop.skill-v0.2.md ./assets/app-develop.skill-v0.2.md
 COPY --from=build /app/README.md ./assets/README.md

@@ -1,0 +1,225 @@
+"""aap_runtime — 平台注入给 .neon-aap python 包的运行时（aap 对象 + runner）。
+
+平台通过 runner.py 启动包进程并注入全局 ``aap``（包内无需 import）：
+  - invoked:   stdin 收 JSON 入参 → mod.handle(input, aap) → stdout 回 JSON
+  - persistent: runpy 以 __main__ 执行 mod.py（自带 flask 服务，PORT 由环境注入）
+
+能力面（app-develop.skill v0.2 §三，只存在这些接口）：
+  aap.llm.chat / aap.db.execute|query / aap.storage.put|get|delete|list
+  aap.http.fetch / aap.log.debug|info|warning|error
+"""
+from __future__ import annotations
+
+import json
+import logging
+import os
+import sqlite3
+import sys
+import time
+import urllib.request
+import urllib.error
+
+
+def _env(key, default=None):
+    return os.environ.get(key, default)
+
+
+def _platform(path, payload=None, timeout=60):
+    """平台内部调用（LLM 代理 / 出站代理）。统一携带网关凭据。"""
+    url = _env("AAP_PLATFORM", "http://127.0.0.1:8080").rstrip("/") + path
+    data = None if payload is None else json.dumps(payload).encode()
+    req = urllib.request.Request(url, data=data, method="POST" if payload is not None else "GET")
+    req.add_header("x-aap-token", _env("AAP_TOKEN", ""))
+    if data is not None:
+        req.add_header("content-type", "application/json")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.status, json.loads(resp.read().decode() or "{}")
+    except urllib.error.HTTPError as e:
+        body = e.read().decode()[:500]
+        raise RuntimeError("平台接口错误(%s): %s" % (e.code, body))
+
+
+def _quota_bytes():
+    try:
+        return int(_env("AAP_STORAGE_QUOTA", str(10 * 1024 * 1024)))
+    except ValueError:
+        return 10 * 1024 * 1024
+
+
+class Llm:
+    """LLM 调用（经平台代理 → 网关 → 上游；计入发起用户的额度池）。"""
+
+    def chat(self, messages, model=None, temperature=None, max_tokens=None, stream=False):
+        payload = {"messages": messages}
+        if model:
+            payload["model"] = model
+        if temperature is not None:
+            payload["temperature"] = temperature
+        if max_tokens:
+            payload["max_tokens"] = int(max_tokens)
+        status, resp = _platform("/api/aap/llm/chat", payload)
+        choices = resp.get("choices") or []
+        content = ""
+        if choices:
+            message = choices[0].get("message") or {}
+            content = message.get("content", "")
+        return {"content": content, "usage": resp.get("usage") or {}, "model": resp.get("model", model or "")}
+
+    # 流式的便捷形式：逐段产出增量文本（底层仍整段返回后切片，行为对齐契约）
+    def chat_stream(self, messages, model=None, temperature=None, max_tokens=None):
+        result = self.chat(messages, model=model, temperature=temperature, max_tokens=max_tokens)
+        content = result.get("content", "")
+        step = max(1, len(content) // 8)
+        for i in range(0, len(content), step):
+            yield content[i : i + step]
+
+
+class Db:
+    """每包独立 SQLite；SQL 只作用于本包库，? 占位传参。"""
+
+    def __init__(self, path):
+        self._conn = sqlite3.connect(path, check_same_thread=False)
+        self._conn.row_factory = sqlite3.Row
+
+    def execute(self, sql, params=()):
+        cur = self._conn.execute(sql, params)
+        self._conn.commit()
+        return cur.rowcount
+
+    def query(self, sql, params=()):
+        return [dict(r) for r in self._conn.execute(sql, params).fetchall()]
+
+
+class Storage:
+    """每包独立配额空间（目录隔离 + 总量限额）。"""
+
+    def __init__(self, root, quota):
+        self._root = root
+        self._quota = quota
+        os.makedirs(root, exist_ok=True)
+
+    def _path(self, key):
+        clean = key.lstrip("/").replace("..", "_")
+        return os.path.join(self._root, clean)
+
+    def _used(self):
+        total = 0
+        for root, _dirs, files in os.walk(self._root):
+            for f in files:
+                total += os.path.getsize(os.path.join(root, f))
+        return total
+
+    def put(self, key, data):
+        if isinstance(data, str):
+            data = data.encode()
+        if self._used() + len(data) > self._quota:
+            raise RuntimeError("storage 配额已满")
+        path = self._path(key)
+        os.makedirs(os.path.dirname(path) or self._root, exist_ok=True)
+        with open(path, "wb") as f:
+            f.write(data)
+        return len(data)
+
+    def get(self, key):
+        with open(self._path(key), "rb") as f:
+            return f.read()
+
+    def delete(self, key):
+        os.remove(self._path(key))
+
+    def list(self, prefix=""):
+        base = self._root
+        out = []
+        for root, _dirs, files in os.walk(base):
+            for f in files:
+                rel = os.path.relpath(os.path.join(root, f), base).replace(os.sep, "/")
+                if rel.startswith(prefix):
+                    out.append(rel)
+        return sorted(out)
+
+
+class Http:
+    """出站 HTTP：唯一通道，平台侧逐请求核对 manifest 域名白名单。"""
+
+    def fetch(self, url, timeout=15):
+        status, resp = _platform("/api/aap/egress", {"url": url}, timeout=timeout + 5)
+        return {"status": status, "body": resp.get("body")}
+
+
+class AapLog:
+    def __init__(self, run_id):
+        self._logger = logging.getLogger("aap")
+        handler = logging.StreamHandler(sys.stderr)
+        handler.setFormatter(logging.Formatter(json.dumps({
+            "ts": "%(asctime)s", "level": "%(levelname)s", "run_id": run_id, "msg": "%(message)s",
+        })))
+        self._logger.addHandler(handler)
+        self._logger.setLevel(logging.DEBUG if _env("AAP_DEBUG") == "1" else logging.INFO)
+
+    def debug(self, msg, *args):
+        self._logger.debug(msg, *args)
+
+    def info(self, msg, *args):
+        self._logger.info(msg, *args)
+
+    def warning(self, msg, *args):
+        self._logger.warning(msg, *args)
+
+    def error(self, msg, *args):
+        self._logger.error(msg, *args)
+
+
+def build_aap():
+    run_id = _env("AAP_RUN_ID", "local")
+    pkg = _env("AAP_PACKAGE_DIR", os.getcwd())
+    return type("Aap", (), {
+        "log": AapLog(run_id),
+        "llm": Llm(),
+        "db": Db(_env("AAP_DB_PATH", os.path.join(pkg, "app.sqlite"))),
+        "storage": Storage(_env("AAP_STORAGE_DIR", os.path.join(pkg, "storage")), _quota_bytes()),
+        "http": Http(),
+    })()
+
+
+def inject(module_dict, aap):
+    """把 aap 注入模块命名空间（包内无需 import，直接使用全局 aap）。"""
+    module_dict["aap"] = aap
+
+
+def run_invoked(mod_path, aap):
+    """invoked：stdin JSON → handle(input, aap) → stdout JSON。"""
+    import runpy
+
+    payload = json.loads(sys.stdin.read() or "{}")
+    input_data = payload.get("input", payload) if isinstance(payload, dict) else payload
+    ns = runpy.run_path(mod_path, run_name="aap_mod")
+    inject(ns, aap)
+    if "handle" not in ns:
+        json.dump({"error": "包未实现 handle(input, aap) 入口"}, sys.stdout)
+        sys.exit(1)
+    result = ns["handle"](input_data, aap)
+    json.dump(result, sys.stdout, ensure_ascii=False, default=str)
+    sys.stdout.write("\n")
+
+
+def run_serve(mod_path, aap):
+    """persistent：以 __main__ 执行 mod.py（flask 自行监听注入的 PORT）。"""
+    import runpy
+
+    ns = runpy.run_path(mod_path, run_name="__main__")
+    inject(ns, aap)
+
+
+def main():
+    mode = _env("AAP_MODE", "run")
+    mod_path = _env("AAP_MOD_PATH", "mod.py")
+    aap = build_aap()
+    if mode == "serve":
+        run_serve(mod_path, aap)
+    else:
+        run_invoked(mod_path, aap)
+
+
+if __name__ == "__main__":
+    main()

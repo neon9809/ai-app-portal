@@ -403,6 +403,11 @@ export function AccountPage() {
             ),
           },
           {
+            key: 'myapps',
+            label: '我的应用',
+            children: <MyAppsTab />,
+          },
+          {
             key: 'billing',
             label: '订阅与充值',
             children: <MembershipTopupTab />,
@@ -812,6 +817,105 @@ function MembershipTopupTab(): ReactNode {
                     }}
                   >
                     取消
+                  </Button>
+                ) : null,
+            },
+          ]}
+        />
+      </Card>
+    </Space>
+  );
+}
+
+// ---------- 我的应用（M4：.neon-aap 上传 / 提交审核 / 状态跟踪） ----------
+
+interface MyAppRow {
+  id: string;
+  name: string;
+  runtimeMode: string | null;
+  visibility: string;
+  reviewStatus: 'none' | 'pending' | 'approved' | 'rejected';
+  reviewNote: string | null;
+  enabled: boolean;
+  updatedAt: number;
+}
+
+function MyAppsTab(): ReactNode {
+  const qc = useQueryClient();
+  const mine = useQuery({ queryKey: ['my-apps'], queryFn: () => api<{ apps: MyAppRow[] }>('/api/apps/mine') });
+  const [uploading, setUploading] = useState(false);
+  const [lastError, setLastError] = useState<string | null>(null);
+
+  async function onFile(e: React.ChangeEvent<HTMLInputElement>): Promise<void> {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setUploading(true);
+    setLastError(null);
+    try {
+      const dataBase64 = String(await f.arrayBuffer().then((b) => btoa(String.fromCharCode(...new Uint8Array(b)))));
+      const r = await api<{ id: string; review: string }>('/api/apps/submit', { method: 'POST', json: { filename: f.name, dataBase64 } });
+      message.success(`包「${r.id}」上传成功，仅自己可见${r.review === 'pending' ? '（重新进入审核）' : ''}`);
+      void qc.invalidateQueries({ queryKey: ['my-apps'] });
+    } catch (err) {
+      setLastError(err instanceof Error ? err.message : '上传失败');
+    } finally {
+      setUploading(false);
+      e.target.value = '';
+    }
+  }
+
+  const REVIEW_TAG: Record<string, ReactNode> = {
+    none: <Tag>未提交审核</Tag>,
+    pending: <Tag color="orange">审核中</Tag>,
+    approved: <Tag color="green">已通过</Tag>,
+    rejected: <Tag color="red">已驳回</Tag>,
+  };
+
+  return (
+    <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+      <Card size="small" title="上传 .neon-aap 包" extra={<Tag bordered={false} color="blue" style={{ fontSize: 11 }}>python 运行时随 M4 上线</Tag>}>
+        <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
+          上传后默认仅自己可见可用；要公开给所有用户，请提交审核（管理员将查看代码与能力声明）。
+        </Typography.Paragraph>
+        <input type="file" accept=".zip,.neon-aap" onChange={(e) => void onFile(e)} disabled={uploading} />
+        {uploading ? <Typography.Text type="secondary">上传校验中…</Typography.Text> : null}
+        {lastError ? <Alert type="error" showIcon style={{ marginTop: 10 }} message={lastError} /> : null}
+      </Card>
+
+      <Card size="small" title="我的包">
+        <Table<MyAppRow>
+          rowKey="id"
+          size="small"
+          pagination={false}
+          dataSource={mine.data?.apps ?? []}
+          columns={[
+            { title: '应用', dataIndex: 'id', width: 160 },
+            { title: '运行', width: 110, render: (_, r) => (r.runtimeMode === 'invoked' ? '按调用' : r.runtimeMode === 'persistent' ? '持久服务' : '—') },
+            { title: '审核', width: 120, render: (_, r) => REVIEW_TAG[r.reviewStatus] ?? <Tag>{r.reviewStatus}</Tag> },
+            {
+              title: '驳回理由',
+              ellipsis: true,
+              render: (_, r) => r.reviewNote ?? '—',
+            },
+            {
+              title: '操作',
+              width: 130,
+              render: (_, r) =>
+                r.reviewStatus !== 'pending' ? (
+                  <Button
+                    size="small"
+                    type="primary"
+                    onClick={async () => {
+                      try {
+                        await api(`/api/apps/${r.id}/submit-review`, { method: 'POST' });
+                        message.success('已提交审核');
+                        void qc.invalidateQueries({ queryKey: ['my-apps'] });
+                      } catch (err) {
+                        message.error(err instanceof Error ? err.message : '提交失败');
+                      }
+                    }}
+                  >
+                    提交审核
                   </Button>
                 ) : null,
             },

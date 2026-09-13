@@ -20,6 +20,8 @@ appsRouter.get('/apps', (req, res) => {
       accessible: canAccess(a, user),
       status: (a.healthState as AppCard['status']) ?? 'unknown',
       sort: a.sort,
+      kind: a.kind as AppCard['kind'],
+      runtimeMode: (a.runtimeMode as AppCard['runtimeMode']) ?? null,
     }));
   res.json({ apps: cards });
 });

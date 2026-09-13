@@ -213,6 +213,13 @@ export const apps = sqliteTable('apps', {
   kind: text('kind').notNull().default('upstream'),
   /** 归属者（用户自建应用默认私有可见的依据；管理员创建 = 该管理员 id） */
   ownerUserId: integer('owner_user_id'),
+  // ---- G：.neon-aap 包元数据（kind=package 时生效） ----
+  manifestJson: text('manifest_json'),
+  runtimeMode: text('runtime_mode'),
+  reviewStatus: text('review_status').notNull().default('none'),
+  reviewNote: text('review_note'),
+  submittedAt: integer('submitted_at'),
+  inputSchema: text('input_schema'),
   /** 是否向上游注入签名身份头（X-AAP-Identity） */
   passUser: integer('pass_user', { mode: 'boolean' }).notNull().default(false),
   /** 上游地址 http(s)://host[:port]/path?query（凭据不写这里，走 urlSecret） */
@@ -465,3 +472,20 @@ export const redeemCodes = sqliteTable('redeem_codes', {
   usedBy: integer('used_by'),
   usedAt: integer('used_at'),
 });
+
+/** 应用运行记录（G5：谁/哪个包/耗时/状态；LLM 用量在 llm_ledger 另行归因） */
+export const appRuns = sqliteTable(
+  'app_runs',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    appId: text('app_id').notNull(),
+    userId: integer('user_id'),
+    ts: integer('ts').notNull(),
+    durationMs: integer('duration_ms').notNull(),
+    /** 'ok' | 'error' | 'timeout' */
+    status: text('status').notNull(),
+    error: text('error'),
+    logs: text('logs'),
+  },
+  (t) => [index('app_runs_app_idx').on(t.appId, t.ts)],
+);

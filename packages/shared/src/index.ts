@@ -102,7 +102,10 @@ export interface AppCard {
   accessible: boolean;
   status: AppStatus;
   sort: number;
-}
+  /** 应用形态（python 包的执行入口区分） */
+  kind?: 'upstream' | 'html' | 'package';
+  runtimeMode?: 'invoked' | 'persistent' | null;
+};
 
 // ---------- 常量 ----------
 

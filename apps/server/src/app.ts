@@ -26,6 +26,8 @@ import { userRouter } from './routes/user.js';
 import { adminRouter } from './routes/admin.js';
 import { guideRouter } from './routes/guide.js';
 import { portalChromeJs } from './gateway/staticApp.js';
+import { appsRunRouter } from './routes/appsRun.js';
+import { aapRouter } from './routes/aap.js';
 import { llmGatewayRouter } from './routes/llmGateway.js';
 import { adminLlmRouter } from './routes/adminLlm.js';
 import { adminBillingRouter } from './routes/adminBilling.js';
@@ -57,6 +59,7 @@ export function createApp(cfg: AapConfig = config): Express {
   // /api 下的 JSON body 与 CSRF Origin 校验；/app 代理路径不经过这里（W5 起独立挂载）
   // .neon-aap 包上传需要更大的 JSON 体积（仅此路径）
   app.use('/api/admin/apps/package', express.json({ limit: '15mb' }));
+  app.use('/api/apps/submit', express.json({ limit: '15mb' }));
 
   app.use('/api', csrfOriginCheck);
   app.use('/api', express.json({ limit: '1mb' }));
@@ -97,6 +100,8 @@ export function createApp(cfg: AapConfig = config): Express {
   app.use('/api', guideRouter);
   app.use('/api', adminLlmRouter);
   app.use('/api', adminBillingRouter);
+  app.use('/api', appsRunRouter);
+  app.use('/api/aap', aapRouter);
 
   // 应用网关（B1）：/app/<id>/ 路径反代。必须在 SPA 兜底之前挂载；
   // 不经过 express.json（流式 body 保真），CSRF 不适用（仅 /api 挂载）。

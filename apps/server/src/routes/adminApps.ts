@@ -328,11 +328,9 @@ adminAppsRouter.post(
       allowUserIds: body.allowedUserIds ?? [],
     });
     // manifest 声明 llm 能力 → 自动签发网关凭据（幂等），运行时（M4）按 appId 注入，无需手动下发
-    let llmProvisioned = false;
-    if (manifest.capabilities.includes('llm')) {
-      ensureAutoProvisionedToken(manifest.name);
-      llmProvisioned = true;
-    }
+    // 所有包统一自动签发运行时凭据（egress/db/storage 必需）；llm.chat 额外校验能力声明
+    ensureAutoProvisionedToken(manifest.name);
+    const llmProvisioned = manifest.capabilities.includes('llm');
     audit(`${req.user!.kind}:${req.user!.id}`, req.clientIp ?? null, 'app.package.create', {
       name: manifest.name,
       type: manifest.type,

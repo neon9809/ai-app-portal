@@ -603,6 +603,8 @@ function AppsTab(): ReactNode {
         ))}
       </Card>
 
+      <ReviewCard />
+
       <Card size="small" title="网关限流与超时" extra={<Tag bordered={false} color="green" style={{ fontSize: 11 }}>默认值即可跑</Tag>}>
         <SettingsForm groups={['应用网关']} />
       </Card>
@@ -1888,5 +1890,100 @@ function RedeemCard(): ReactNode {
         ) : null}
       </Card>
     </Space>
+  );
+}
+
+// ---------- 审核卡（G3：包审核——看声明/通过/驳回） ----------
+
+interface PendingApp {
+  id: string;
+  name: string;
+  description: string;
+  ownerUserId: number | null;
+  visibility: string;
+  manifest: Record<string, unknown> | null;
+  submittedAt: number;
+}
+
+function ReviewCard(): ReactNode {
+  const qc = useQueryClient();
+  const pendingQ = useQuery({ queryKey: ['review-pending'], queryFn: () => api<{ pending: PendingApp[] }>('/api/admin/review/pending') });
+  const [rejectId, setRejectId] = useState<string | null>(null);
+  const [note, setNote] = useState('');
+
+  function invalidate(): void {
+    void qc.invalidateQueries({ queryKey: ['review-pending'] });
+    void qc.invalidateQueries({ queryKey: ['admin-apps'] });
+    void qc.invalidateQueries({ queryKey: ['apps'] });
+  }
+
+  const list = pendingQ.data?.pending ?? [];
+
+  return (
+    <Card size="small" title={`应用审核（${list.length} 个待审）`}>
+      {list.length === 0 ? (
+        <Typography.Text type="secondary">暂无待审核应用</Typography.Text>
+      ) : (
+        list.map((p) => (
+          <Card key={p.id} size="small" style={{ marginBottom: 10 }} title={`${p.name}（${p.id}）`}>
+            <Descriptions column={1} size="small">
+              <Descriptions.Item label="归属者">用户 {p.ownerUserId}</Descriptions.Item>
+              <Descriptions.Item label="提交时间">{new Date(p.submittedAt).toLocaleString()}</Descriptions.Item>
+              <Descriptions.Item label="类型">{String(p.manifest?.type ?? '—')} / {String(p.manifest?.runtime ?? '—')}</Descriptions.Item>
+              <Descriptions.Item label="能力声明">
+                {(Array.isArray(p.manifest?.capabilities) ? (p.manifest!.capabilities as string[]) : []).map((c) => (
+                  <Tag key={c} color="blue" style={{ fontSize: 11 }}>{c}</Tag>
+                ))}
+              </Descriptions.Item>
+              <Descriptions.Item label="出站白名单">
+                {(Array.isArray(p.manifest?.network) ? (p.manifest!.network as string[]) : []).join('、') || '（无出站）'}
+              </Descriptions.Item>
+            </Descriptions>
+            <Space wrap style={{ marginTop: 8 }}>
+              <Select
+                style={{ width: 170 }}
+                value="public"
+                onChange={() => void 0}
+                id={`vis-${p.id}`}
+                options={[
+                  { value: 'public', label: '公开' },
+                  { value: 'restricted', label: '指定可见（需再配 ACL）' },
+                ]}
+              />
+              <Button
+                type="primary"
+                onClick={async () => {
+                  const el = document.getElementById(`vis-${p.id}`) as HTMLInputElement | null;
+                  void el;
+                  await api(`/api/admin/review/${p.id}/approve`, { method: 'POST', json: { visibility: 'public' } });
+                  message.success('已通过并公开');
+                  invalidate();
+                }}
+              >
+                通过
+              </Button>
+              <Button danger onClick={() => setRejectId(p.id)}>
+                驳回
+              </Button>
+            </Space>
+          </Card>
+        ))
+      )}
+      <Modal
+        title="驳回（附理由）"
+        open={Boolean(rejectId)}
+        onCancel={() => setRejectId(null)}
+        onOk={async () => {
+          if (!rejectId) return;
+          await api(`/api/admin/review/${rejectId}/reject`, { method: 'POST', json: { note } });
+          message.success('已驳回');
+          setRejectId(null);
+          setNote('');
+          invalidate();
+        }}
+      >
+        <Input.TextArea rows={3} value={note} onChange={(e) => setNote(e.target.value)} placeholder="驳回理由将展示给作者" />
+      </Modal>
+    </Card>
   );
 }
