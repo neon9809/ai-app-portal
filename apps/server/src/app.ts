@@ -10,7 +10,11 @@ import path from 'node:path';
 import express, { type Express } from 'express';
 import cookieParser from 'cookie-parser';
 import { type AapConfig, config } from './config/index.js';
+import './types.js';
 import { applySecurityHeaders } from './lib/securityHeaders.js';
+import { getClientIp } from './lib/security.js';
+import { sessionMiddleware } from './lib/session.js';
+import { csrfOriginCheck } from './lib/csrf.js';
 import { healthRouter } from './routes/health.js';
 import { portalRouter } from './routes/portal.js';
 
@@ -24,7 +28,17 @@ export function createApp(cfg: AapConfig = config): Express {
   applySecurityHeaders(app);
   app.use(cookieParser());
 
-  // /api 下的 JSON body；/app 代理路径不经过这里（W5 起独立挂载）
+  // 真实客户端 IP（封禁/PoW/审计/限流全部依赖）
+  app.use((req, _res, next) => {
+    req.clientIp = getClientIp(req);
+    next();
+  });
+
+  // 会话装载（cookie → sessions 表 → req.user）
+  app.use(sessionMiddleware);
+
+  // /api 下的 JSON body 与 CSRF Origin 校验；/app 代理路径不经过这里（W5 起独立挂载）
+  app.use('/api', csrfOriginCheck);
   app.use('/api', express.json({ limit: '1mb' }));
 
   app.use('/api', healthRouter);

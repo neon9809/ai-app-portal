@@ -4,12 +4,14 @@
  */
 import { config } from './config/index.js';
 import { closeDb, initDb } from './db/index.js';
+import { startPurgeLoop, stopPurgeLoop } from './lib/audit.js';
 import { seedSettings } from './lib/settings.js';
 import { createApp } from './app.js';
 
 function main(): void {
   initDb({ file: config.databaseFile, migrationsDir: config.migrationsDir });
   seedSettings();
+  startPurgeLoop();
 
   const app = createApp();
   const server = app.listen(config.port, () => {
@@ -19,6 +21,7 @@ function main(): void {
 
   const shutdown = (signal: string) => {
     console.log(`[aap] received ${signal}, shutting down...`);
+    stopPurgeLoop();
     server.close(() => {
       closeDb();
       process.exit(0);

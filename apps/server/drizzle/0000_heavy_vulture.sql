@@ -34,7 +34,7 @@ CREATE TABLE `login_attempts` (
 CREATE INDEX `login_attempts_ip_idx` ON `login_attempts` (`ip`,`created_at`);--> statement-breakpoint
 CREATE INDEX `login_attempts_user_idx` ON `login_attempts` (`user_key`,`created_at`);--> statement-breakpoint
 CREATE TABLE `pow_challenges` (
-	`challenge_id` text PRIMARY KEY NOT NULL,
+	`id` text PRIMARY KEY NOT NULL,
 	`seed` text NOT NULL,
 	`difficulty` integer NOT NULL,
 	`ip` text NOT NULL,

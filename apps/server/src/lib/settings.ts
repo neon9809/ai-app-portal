@@ -60,6 +60,7 @@ export const SETTING_DEFS: Record<string, SettingDef> = {
   },
 
   // ---- 安全栈调优（默认值即可跑） ----
+  POW_ENABLED: { type: 'bool', desc: '登录失败超阈值后要求 PoW 工作量证明', initial: () => 'true', defaultsWork: true },
   AAP_SIGN_SECRET: {
     type: 'string',
     desc: '身份注入头 HMAC 签名密钥（应用侧验签用；泄露需轮换）',

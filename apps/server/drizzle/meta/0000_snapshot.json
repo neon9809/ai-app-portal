@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "eea88449-3ff0-4d92-89c7-f0d7d9908c51",
+  "id": "678e0f67-cd39-4d32-963a-0bea8acb75b4",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "audit_logs": {
@@ -220,8 +220,8 @@
     "pow_challenges": {
       "name": "pow_challenges",
       "columns": {
-        "challenge_id": {
-          "name": "challenge_id",
+        "id": {
+          "name": "id",
           "type": "text",
           "primaryKey": true,
           "notNull": true,

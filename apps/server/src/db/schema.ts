@@ -100,7 +100,7 @@ export const ipBans = sqliteTable('ip_bans', {
 });
 
 export const powChallenges = sqliteTable('pow_challenges', {
-  id: text('challenge_id').primaryKey(),
+  id: text('id').primaryKey(),
   seed: text('seed').notNull(),
   difficulty: integer('difficulty').notNull(),
   ip: text('ip').notNull(),
