@@ -277,13 +277,14 @@ export async function acmeIssue(domain: string, email: string): Promise<CertInfo
       contact: [`mailto:${email}`],
     });
 
-    const [csrPem, keyPemBuf] = await acme.crypto.createCsr({
+    // 注意：acme-client v5 createCsr 返回顺序是 [私钥, CSR]，与我们直觉相反
+    const [keyPemBuf, csrPemBuf] = await acme.crypto.createCsr({
       commonName: domain,
       altNames: [domain],
     });
 
     const certPem = await client.auto({
-      csr: csrPem,
+      csr: csrPemBuf,
       email,
       termsOfServiceAgreed: true,
       challengePriority: ['http-01'],
