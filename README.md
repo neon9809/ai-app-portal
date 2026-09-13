@@ -79,6 +79,6 @@ push 到 `main` 或打 `v*` tag 时，GitHub Actions 自动：
 - **M1 门户可用** ✅：路径反代（HTTP+WS/SSE）、自动 HTTPS、本地账号+注册、MFA、用户中心、管理后台、Docker/FPK 分发
 - **M2 LLM 网关** ✅：OpenAI 兼容端点（含流式）、多上游路由与 failover、网关凭据、用户级+应用级计量与预检、OIDC SSO
 - **M3 计费闭环** ✅：功能订阅×分组可见性、额度充值与卡券码、结算对账+到期降级、运营面板
-- **M4 生态** ⬜：.neon-aap 扩展体系（Python 沙箱运行时、用户提交流程、ed25519 官方包签名）
+- **M4 生态** ◐：Python 沙箱运行时（invoked 全链路 + persistent 拉起/回收/重启）、用户上传默认私有 + 审核流、统一页面元素注入；剩 persistent WS、ed25519 官方包签名、aap-dev 完整版
 
 详见 `ai-app-portal-docs/ai-app-portal-PRD-v0.3.1.md`；开发者文档见 `docs/DEVELOPMENT.md`。
