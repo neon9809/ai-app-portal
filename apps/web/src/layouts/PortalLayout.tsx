@@ -74,6 +74,17 @@ export function PortalLayout() {
           />
           {me ? (
             <>
+              {me.user.role === 'admin' ? (
+                <Button
+                  size="small"
+                  onClick={() => {
+                    void qc.invalidateQueries();
+                    navigate('/admin');
+                  }}
+                >
+                  管理
+                </Button>
+              ) : null}
               <Button
                 size="small"
                 icon={<UserOutlined />}

@@ -8,6 +8,7 @@ import { ForgotPage } from './pages/Forgot';
 import { MfaSetupPage } from './pages/MfaSetup';
 import { ForceChangePasswordPage } from './pages/ForceChangePassword';
 import { AccountPage } from './pages/Account';
+import { AdminPage } from './pages/Admin';
 
 export default function App() {
   return (
@@ -21,6 +22,7 @@ export default function App() {
         <Route path="/initialize" element={<ForceChangePasswordPage />} />
         <Route path="/mfa-setup" element={<MfaSetupPage />} />
         <Route path="/account" element={<AccountPage />} />
+        <Route path="/admin" element={<AdminPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
