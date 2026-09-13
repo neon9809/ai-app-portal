@@ -806,7 +806,7 @@ function MailTab(): ReactNode {
 
   return (
     <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-      <Card size="small" title="邮件发信（验证码用；短信通道后续版本接入）" extra={<Tag bordered={false} color="blue" style={{ fontSize: 11 }}>推荐 Resend</Tag>}>
+      <Card size="small" title="邮件发信（验证码用；短信通道后续版本接入）" extra={<Tag bordered={false} color="blue" style={{ fontSize: 11 }}>Resend 仅需 API Key</Tag>}>
         <SettingsForm groups={['通知通道（验证码发信）']} />
       </Card>
       <Card size="small" title="发信测试">
