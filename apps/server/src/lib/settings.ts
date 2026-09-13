@@ -161,7 +161,7 @@ export const SETTING_DEFS: Record<string, SettingDef> = {
   TURNSTILE_SECRET_KEY: {
     group: '人机验证', type: 'string', desc: 'Turnstile 服务端密钥', initial: () => '', secret: true, defaultsWork: true },
 
-  // ---- 验证码通道（A2，SMTP 首发配置） ----
+  // ---- 通知通道（A2，验证码发信：邮件 [Resend/SMTP] 与未来短信） ----
   SMTP_HOST: {
     group: '通知通道（验证码发信）', type: 'string', desc: 'SMTP 服务器（注册/找回/绑定邮箱验证码发信）', initial: () => '', defaultsWork: false },
   SMTP_PORT: {
@@ -172,6 +172,17 @@ export const SETTING_DEFS: Record<string, SettingDef> = {
     group: '通知通道（验证码发信）', type: 'string', desc: 'SMTP 密码/授权码', initial: () => '', secret: true, defaultsWork: false },
   SMTP_FROM: {
     group: '通知通道（验证码发信）', type: 'string', desc: '发件人（如 "AI应用门户 <no-reply@example.com>"）', initial: () => '', defaultsWork: false },
+  MAIL_PROVIDER: {
+    group: '通知通道（验证码发信）', type: 'string', options: ['smtp', 'resend'],
+    desc: '发信方式：smtp 经典 SMTP / resend API（仅需 API Key）', initial: () => 'smtp', defaultsWork: false },
+  RESEND_API_KEY: {
+    group: '通知通道（验证码发信）', type: 'string',
+    desc: 'Resend API Key（resend.com 后台获取，以 re_ 开头）。发信方式选 resend 时仅需填这一项即可发信',
+    initial: () => '', secret: true, defaultsWork: false },
+  RESEND_FROM: {
+    group: '通知通道（验证码发信）', type: 'string',
+    desc: 'Resend 发件人（留空：默认用沙箱发件人 onboarding@resend.dev，仅能发给本 Resend 账号注册邮箱；绑定自有域名后填 "AI应用门户 <no-reply@mail.example.com>" 即可发给任意用户）',
+    initial: () => '', defaultsWork: true },
 };
 
 /** 首启把全部默认值种入 settings（INSERT OR IGNORE，env 只作初值不覆盖已存值） */
