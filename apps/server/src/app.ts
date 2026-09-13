@@ -19,6 +19,9 @@ import { healthRouter } from './routes/health.js';
 import { portalRouter } from './routes/portal.js';
 import { authRouter } from './routes/auth.js';
 import { mfaRouter } from './routes/mfa.js';
+import { appsRouter } from './routes/apps.js';
+import { adminAppsRouter } from './routes/adminApps.js';
+import { gatewayRouter } from './gateway/proxy.js';
 import { HttpError, toBody } from './lib/httpError.js';
 
 export function createApp(cfg: AapConfig = config): Express {
@@ -48,6 +51,12 @@ export function createApp(cfg: AapConfig = config): Express {
   app.use('/api', portalRouter);
   app.use('/api', authRouter);
   app.use('/api', mfaRouter);
+  app.use('/api', appsRouter);
+  app.use('/api', adminAppsRouter);
+
+  // 应用网关（B1）：/app/<id>/ 路径反代。必须在 SPA 兜底之前挂载；
+  // 不经过 express.json（流式 body 保真），CSRF 不适用（仅 /api 挂载）。
+  app.use(gatewayRouter);
 
   // 未知 API 一律 JSON 404（避免 SPA 兜底吞掉打错的接口）
   app.use('/api', (_req, res) => {

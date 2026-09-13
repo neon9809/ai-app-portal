@@ -1,0 +1,182 @@
+/**
+ * WebSocket 透传（B2，P0）：HTTP/HTTPS server 的 upgrade 事件 →
+ * /app/<id>/ 前缀匹配 → 会话鉴权（裸 req cookie 解析）→ 三态门禁 →
+ * 限流 → TCP 双向管道（手写 101 + pipe；上游拒绝时回写状态并销毁）。
+ * 上游路径映射与 HTTP 代理一致：sub → 上游根 + path 型凭据前缀。
+ */
+import http from 'node:http';
+import https from 'node:https';
+import type { Duplex } from 'node:stream';
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import { IDENTITY_TTL_MS } from '@aap/shared';
+import { canAccess, findApp, getUrlSecret, type AppRow, type UrlSecret } from './registry.js';
+import { signIdentity } from './identity.js';
+import { allowRequest } from './limiter.js';
+import { loadSessionByToken } from '../lib/session.js';
+import type { SessionUser } from '../types.js';
+
+const REQ_SKIP = new Set(REQ_SKIP_KEYS());
+
+function REQ_SKIP_KEYS(): string[] {
+  return [
+    'host',
+    'connection',
+    'content-length',
+    'transfer-encoding',
+    'keep-alive',
+    'cookie',
+    'authorization',
+    'origin',
+    'referer',
+    'x-forwarded-for',
+    'sec-websocket-key',
+    'sec-websocket-version',
+    'sec-websocket-extensions',
+    'sec-websocket-protocol',
+    'upgrade',
+  ];
+}
+
+/** 从裸 Cookie 头取会话 token（复用 session 哈希查询） */
+function userFromCookieHeader(cookieHeader: string | undefined): SessionUser | null {
+  if (!cookieHeader) return null;
+  const sidName = 'aap_sid';
+  for (const part of cookieHeader.split(';')) {
+    const eq = part.indexOf('=');
+    if (eq <= 0) continue;
+    const name = part.slice(0, eq).trim();
+    if (name === sidName) return loadSessionByToken(part.slice(eq + 1).trim());
+  }
+  return null;
+}
+
+function reject(socket: Duplex, code: number, reason: string): void {
+  const body = `HTTP/1.1 ${code} ${reason}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`;
+  socket.end(body);
+  socket.destroy();
+}
+
+export function handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer): void {
+  try {
+    void upgrade(req, socket, head);
+  } catch (err) {
+    console.error('[wsproxy] upgrade error:', err);
+    reject(socket, 500, 'Internal Server Error');
+  }
+}
+
+function upgrade(req: IncomingMessage, socket: Duplex, head: Buffer): void {
+  const url = new URL(req.url ?? '/', 'http://internal.invalid');
+  const m = url.pathname.match(/^\/app\/([a-z0-9][a-z0-9-]*)(\/.*)?$/);
+  if (!m) return reject(socket, 404, 'Not Found');
+  const id = m[1]!;
+  const sub = (m[2] ?? '/').replace(/^\/+/, '');
+
+  const app: AppRow | null = findApp(id);
+  if (!app || !app.enabled) return reject(socket, 404, 'Not Found');
+
+  const user = userFromCookieHeader(req.headers.cookie);
+  if (!canAccess(app, user ?? null)) {
+    return reject(socket, user ? 403 : 401, user ? 'Forbidden' : 'Unauthorized');
+  }
+
+  const userKey = user ? `${user.kind}:${user.id}` : null;
+  const ip = req.socket.remoteAddress?.replace(/^::ffff:/, '') ?? 'unknown';
+  if (!allowRequest(userKey, ip)) return reject(socket, 429, 'Too Many Requests');
+
+  let base: URL;
+  try {
+    base = new URL(app.upstream.replace(/^http/i, 'ws'));
+  } catch {
+    return reject(socket, 502, 'Bad Gateway');
+  }
+
+  // 上游路径：path 型凭据前缀 + sub（映射到上游根，与 HTTP 代理同语义）
+  const secret: UrlSecret | null = getUrlSecret(app);
+  const secretPath = secret && secret.name === null ? secret.value.replace(/\/+$/, '') : '';
+  const upstreamPath = `${secretPath}/${sub}`.replace(/\/{2,}/g, '/');
+
+  // query 合并：上游自带 ∪ 请求侧（请求侧优先）
+  const target = new URL(upstreamPath || '/', base);
+  for (const [k, v] of base.searchParams) if (!target.searchParams.has(k)) target.searchParams.set(k, v);
+  for (const [k, v] of url.searchParams) target.searchParams.set(k, v);
+
+  const identity = app.passUser && user ? signIdentity(user, app.id) : null;
+  const headers: Record<string, string> = {};
+  for (const [k, v] of Object.entries(req.headers)) {
+    if (REQ_SKIP.has(k.toLowerCase())) continue;
+    headers[k] = Array.isArray(v) ? v.join(', ') : (v ?? '');
+  }
+  headers['host'] = base.host;
+  if (identity) {
+    headers['x-aap-identity'] = identity.payload;
+    headers['x-aap-identity-sig'] = identity.sig;
+  }
+
+  const isTls = base.protocol === 'wss:';
+  const transport = isTls ? https : http;
+  const upReq = transport.request(
+    {
+      hostname: base.hostname,
+      port: base.port || (isTls ? 443 : 80),
+      path: `${target.pathname}${target.search}`,
+      headers: {
+        ...headers,
+        connection: 'Upgrade',
+        upgrade: 'websocket',
+        'sec-websocket-key': req.headers['sec-websocket-key'] as string,
+        'sec-websocket-version': req.headers['sec-websocket-version'] as string,
+        ...(req.headers['sec-websocket-protocol']
+          ? { 'sec-websocket-protocol': req.headers['sec-websocket-protocol'] as string }
+          : {}),
+        ...(req.headers['sec-websocket-extensions']
+          ? { 'sec-websocket-extensions': req.headers['sec-websocket-extensions'] as string }
+          : {}),
+      },
+    },
+  );
+
+  upReq.on('upgrade', (upRes: IncomingMessage, upSocket: Duplex, upHead: Buffer) => {
+    // 手写 101：把上游的握手响应原样回给客户端，随后双向裸管道
+    let resp = `HTTP/1.1 101 Switching Protocols\r\n`;
+    for (const [k, v] of Object.entries(upRes.headers)) {
+      if (Array.isArray(v)) for (const item of v) resp += `${k}: ${item}\r\n`;
+      else resp += `${k}: ${v}\r\n`;
+    }
+    resp += '\r\n';
+    socket.write(resp);
+    if (upHead.length) socket.write(upHead);
+    upSocket.pipe(socket);
+    socket.pipe(upSocket);
+
+    const kill = (): void => {
+      upSocket.destroy();
+      socket.destroy();
+    };
+    upSocket.on('error', kill);
+    socket.on('error', kill);
+    upSocket.on('close', () => socket.destroy());
+    socket.on('close', () => upSocket.destroy());
+  });
+
+  // 上游拒绝升级（返回普通 HTTP 响应）
+  upReq.on('response', (res: ServerResponse | IncomingMessage) => {
+    const r = res as IncomingMessage;
+    let head = `HTTP/1.1 ${r.statusCode} ${r.statusMessage ?? ''}\r\n`;
+    for (const [k, v] of Object.entries(r.headers)) {
+      if (Array.isArray(v)) for (const item of v) head += `${k}: ${item}\r\n`;
+      else head += `${k}: ${v}\r\n`;
+    }
+    socket.end(`${head}\r\n`);
+  });
+
+  upReq.on('error', (err) => {
+    console.error('[wsproxy] upstream error:', err.message);
+    reject(socket, 502, 'Bad Gateway');
+  });
+  socket.on('error', () => upReq.destroy());
+
+  if (head.length) upReq.write(head);
+  upReq.end();
+  void IDENTITY_TTL_MS;
+}

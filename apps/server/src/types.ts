@@ -23,6 +23,8 @@ export interface SessionUser {
   authState: AuthState;
   /** 步升认证到期时间（null 未步升） */
   stepUpUntil: number | null;
+  /** 会员计划（M3 计费；M1 恒 free） */
+  plan: 'free' | 'member';
   /** 是否已启用 MFA（任一第二因子） */
   mfaEnabled: boolean;
   /** 强制改密标记（首始 F3 / 管理员重置后） */

@@ -190,6 +190,31 @@ export const inviteCodes = sqliteTable('invite_codes', {
   createdAt: integer('created_at').notNull(),
 });
 
+// ---------- B4：应用注册 ----------
+
+export const apps = sqliteTable('apps', {
+  id: text('id').primaryKey(), // [a-z0-9][a-z0-9-]*，即 /app/<id>/ 前缀
+  name: text('name').notNull(),
+  description: text('description').notNull().default(''),
+  icon: text('icon'),
+  category: text('category').notNull().default('未分类'),
+  /** 'public' 公开 | 'login' 需登录 | 'member' 会员（M3 计费打通） */
+  visibility: text('visibility').notNull().default('login'),
+  /** 是否向上游注入签名身份头（X-AAP-Identity） */
+  passUser: integer('pass_user', { mode: 'boolean' }).notNull().default(false),
+  /** 上游地址 http(s)://host[:port]/path?query（凭据不写这里，走 urlSecret） */
+  upstream: text('upstream').notNull(),
+  /** urlSecret 加密落盘：query 型 'token=xxx' / path 型 '__path__=/chat/xxx' */
+  urlSecretEnc: text('url_secret_enc'),
+  enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+  sort: integer('sort').notNull().default(0),
+  /** 'ok' | 'down' | 'unknown'（管理端状态仪表卡） */
+  healthState: text('health_state').notNull().default('unknown'),
+  lastProbeAt: integer('last_probe_at'),
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+});
+
 // ---------- A3：MFA ----------
 
 /** TOTP 密钥（AES-256-GCM 加密落盘；±1 窗口 + 计数器重放拒绝） */

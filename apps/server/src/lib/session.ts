@@ -69,6 +69,7 @@ interface SessionJoinRow {
   name: string;
   role: string;
   status: string;
+  plan: string;
   mfa_enabled: number;
   must_change_password: number;
 }
@@ -86,7 +87,7 @@ export function loadSessionByToken(token: string | undefined | null): SessionUse
     joinStmt = s.prepare(`
       SELECT s.token_hash, s.auth_state, s.step_up_until, s.expires_at, s.last_seen_at,
              u.id AS u_id, u.kind, u.username, u.email, u.phone, u.name, u.role, u.status,
-             u.mfa_enabled, u.must_change_password
+             u.plan, u.mfa_enabled, u.must_change_password
       FROM sessions s JOIN users u ON u.id = s.user_id
       WHERE s.token_hash = ?
     `);
@@ -124,6 +125,7 @@ export function loadSessionByToken(token: string | undefined | null): SessionUse
     name: row.name || row.username || `用户${row.u_id}`,
     role: row.role === 'admin' ? 'admin' : 'user',
     status: row.status,
+    plan: row.plan === 'member' ? 'member' : 'free',
     sessionId: row.token_hash,
     authState: (row.auth_state as AuthState) || 'full',
     stepUpUntil: row.step_up_until ?? null,
