@@ -166,18 +166,19 @@ function SettingsForm({ groups, excludeKeys = [] }: { groups: string[]; excludeK
   }
 
   function renderItem(s: SettingRow): ReactNode {
+    const short = s.desc.split('（')[0];
+    const tooltip = short === s.desc ? `配置键：${s.key}` : `${s.desc}\n配置键：${s.key}`;
     return (
       <Form.Item
         key={s.key}
         name={s.key}
         label={
           <Space size="small" wrap>
-            <span>{s.desc.split('（')[0]}</span>
-            {s.defaultsWork ? <Tag bordered={false} color="green" style={{ fontSize: 11 }}>默认值即可跑</Tag> : null}
-            <Typography.Text code style={{ fontSize: 11 }}>{s.key}</Typography.Text>
+            <span>{short}</span>
+            {!s.defaultsWork ? <Tag bordered={false} color="orange" style={{ fontSize: 11 }}>需配置</Tag> : null}
           </Space>
         }
-        extra={s.desc}
+        tooltip={tooltip}
         valuePropName={s.type === 'bool' ? 'checked' : 'value'}
       >
         {renderControl(s, form)}
@@ -229,7 +230,7 @@ function renderControl(s: SettingRow, form?: { setFieldsValue: (v: Record<string
       </Space.Compact>
     );
   }
-  if (s.type === 'bool') return <Switch checkedChildren="开" unCheckedChildren="关" />;
+  if (s.type === 'bool') return <Switch />;
   if (s.choiceLabels) {
     return <Select options={Object.entries(s.choiceLabels).map(([value, label]) => ({ value, label }))} />;
   }
@@ -1074,13 +1075,8 @@ function MailTab(): ReactNode {
         <Form form={form} layout="vertical">
           <Form.Item
             name="MAIL_PROVIDER"
-            label={
-              <Space size="small">
-                <span>发信方式（两者互斥）</span>
-                <Typography.Text code style={{ fontSize: 11 }}>MAIL_PROVIDER</Typography.Text>
-              </Space>
-            }
-            extra="Resend API：仅需 API Key 即可发信，推荐"
+            label="发信方式（互斥）"
+            tooltip="Resend API：仅需 API Key 即可发信；配置键 MAIL_PROVIDER"
           >
             <Select
               options={[
@@ -1093,21 +1089,20 @@ function MailTab(): ReactNode {
 
           {visible
             .filter((s) => s.key !== 'MAIL_PROVIDER')
-            .map((s) => (
-              <Form.Item
-                key={s.key}
-                name={s.key}
-                label={
-                  <Space size="small" wrap>
-                    <span>{s.desc.split('（')[0]}</span>
-                    <Typography.Text code style={{ fontSize: 11 }}>{s.key}</Typography.Text>
-                  </Space>
-                }
-                extra={s.desc}
-              >
-                {renderControl(s, form, true)}
-              </Form.Item>
-            ))}
+            .map((s) => {
+              const short = s.desc.split('（')[0];
+              const tooltip = short === s.desc ? `配置键：${s.key}` : `${s.desc}\n配置键：${s.key}`;
+              return (
+                <Form.Item
+                  key={s.key}
+                  name={s.key}
+                  label={short}
+                  tooltip={tooltip}
+                >
+                  {renderControl(s, form, true)}
+                </Form.Item>
+              );
+            })}
 
           <Button type="primary" loading={saving} onClick={() => void save()}>
             保存（即时生效）
