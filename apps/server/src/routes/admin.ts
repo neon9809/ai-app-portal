@@ -76,6 +76,9 @@ adminRouter.put(
       if (body.status !== 'active' && body.status !== 'disabled') {
         throw new HttpError(400, 'INVALID_STATUS', '状态必须是 active/disabled');
       }
+      if (body.status === 'active' && target.status === 'pending_approval') {
+        audit(`${req.user!.kind}:${req.user!.id}`, req.clientIp ?? null, 'admin.user.approved', { userId: uid });
+      }
       // 防自锁：不能禁用自己（参考实现 H 项）
       if (uid === req.user!.id) throw new HttpError(400, 'CANNOT_DISABLE_SELF', '不能禁用自己的账号');
       getDb().update(users).set({ status: body.status }).where(eq(users.id, uid)).run();

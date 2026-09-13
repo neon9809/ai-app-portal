@@ -125,8 +125,11 @@ function SettingsForm({ groups, excludeKeys = [] }: { groups: string[]; excludeK
 
   useEffect(() => {
     if (settingsQ.data) {
-      const values: Record<string, string> = {};
-      for (const s of settingsQ.data.settings) values[s.key] = s.value;
+      const values: Record<string, string | boolean> = {};
+      for (const s of settingsQ.data.settings) {
+        // bool 项规范为真布尔（Switch 需要布尔；字符串真值判断不可靠）
+        values[s.key] = s.type === 'bool' ? s.value === 'true' : s.value;
+      }
       form.setFieldsValue(values);
     }
   }, [settingsQ.data, form]);

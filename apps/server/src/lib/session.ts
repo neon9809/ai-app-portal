@@ -104,8 +104,8 @@ export function loadSessionByToken(token: string | undefined | null): SessionUse
     del();
     return null;
   }
-  // 用户被禁用：会话即刻作废（deletion_pending 仍可登录以便撤回注销）
-  if (row.status === 'disabled') {
+  // 用户被禁用/待批准：会话即刻作废（deletion_pending 仍可登录以便撤回注销）
+  if (row.status === 'disabled' || row.status === 'pending_approval') {
     del();
     return null;
   }

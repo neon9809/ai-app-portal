@@ -100,22 +100,33 @@ export const SETTING_DEFS: Record<string, SettingDef> = {
   },
   OIDC_ISSUER: {
     label: 'OIDC Issuer 地址',
-    group: '注册与账号', type: 'string',
+        group: 'OIDC 单点登录', type: 'string',
     desc: 'OIDC Issuer URL（如 https://id.example.com；与 Client ID/Secret 同时配置即启用单点登录，重启生效）',
     initial: () => '', defaultsWork: false },
   OIDC_CLIENT_ID: {
     label: 'OIDC Client ID',
-    group: '注册与账号', type: 'string',
+        group: 'OIDC 单点登录', type: 'string',
     desc: 'OIDC Client ID', initial: () => '', defaultsWork: false },
   OIDC_CLIENT_SECRET: {
     label: 'OIDC Client Secret',
-    group: '注册与账号', type: 'string',
+        group: 'OIDC 单点登录', type: 'string',
     desc: 'OIDC Client Secret', initial: () => '', secret: true, defaultsWork: false },
   OIDC_ADMIN_SUBJECTS: {
     label: 'OIDC 管理员白名单',
-    group: '注册与账号', type: 'string',
+        group: 'OIDC 单点登录', type: 'string',
     desc: '自动提升管理员的 subject/邮箱（逗号分隔；仅首次登录生效）',
     initial: () => '', defaultsWork: true, advanced: true },
+  OIDC_NEW_USER_POLICY: {
+    label: 'OIDC 新账户准入',
+        group: 'OIDC 单点登录', type: 'string',
+    choiceLabels: { admin_approval: '管理员批准', auto_enabled: '默认启用' },
+    desc: '首次 OIDC 登录的账号准入：管理员批准（首次登录后待批准，批准前无法进入）或默认启用（IdP 内账号均可直接进入）',
+    initial: () => 'admin_approval', defaultsWork: false },
+  OIDC_DEFAULT_GROUP_ID: {
+    label: '默认订阅分组 ID',
+        group: 'OIDC 单点登录', type: 'int',
+    desc: '新 OIDC 账号激活后自动加入的分组 ID（填 0 = 不加入；分组 ID 见 用户与注册 → 用户分组）',
+    initial: () => '0', defaultsWork: true },
   REGISTRATION_PENDING_TTL_DAYS: {
     label: '废弃注册清理（天）',
     group: '注册与账号',

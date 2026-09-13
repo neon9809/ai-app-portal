@@ -12,7 +12,7 @@ import { Router } from 'express';
 import { and, eq, gt, isNull, lt, ne, sql } from 'drizzle-orm';
 import type { PublicUser, SessionInfo } from '@aap/shared';
 import { getDb } from '../db/index.js';
-import { inviteCodes, localCredentials, registrations, sessions, users } from '../db/schema.js';
+import { inviteCodes, localCredentials, registrations, sessions, users, userGroupMembers } from '../db/schema.js';
 import { HttpError, h } from '../lib/httpError.js';
 import { dummyVerify, hashPassword, randomToken, verifyPassword } from '../lib/passwords.js';
 import { consumePowToken, isBanned, needsPow, recordFailure, recordSuccess } from '../lib/security.js';
@@ -429,6 +429,25 @@ authRouter.get('/auth/oidc/callback', h(async (req, res) => {
     const now = Date.now();
     if (!row) {
       const promote = isAdminSubject(profile);
+      // 准入策略（OIDC 新账户）：管理员批准 → 创建待批准账号，不建会话
+      const policy = getSetting('OIDC_NEW_USER_POLICY') || 'admin_approval';
+      if (policy === 'admin_approval' && !promote) {
+        const info = getDb()
+          .insert(users)
+          .values({
+            kind: 'oidc',
+            subject: profile.subject,
+            email: profile.email,
+            name: profile.name,
+            role: 'user',
+            status: 'pending_approval',
+            createdAt: now,
+          })
+          .run();
+        audit(`oidc:${profile.subject}`, ip, 'user.oidc.pending_approval', { userId: Number(info.lastInsertRowid) });
+        res.redirect(302, '/login?error=oidc_pending');
+        return;
+      }
       const info = getDb()
         .insert(users)
         .values({
@@ -441,6 +460,20 @@ authRouter.get('/auth/oidc/callback', h(async (req, res) => {
         })
         .run();
       row = getDb().select().from(users).where(eq(users.id, Number(info.lastInsertRowid))).get();
+      // 白名单内的待批准账号：自动激活并提升
+      if (promote && row!.status === 'pending_approval') {
+        getDb().update(users).set({ role: 'admin', status: 'active' }).where(eq(users.id, row!.id)).run();
+        audit(`oidc:${profile.subject}`, ip, 'user.oidc.admin_approved', { userId: row!.id });
+      }
+      // 默认订阅分组：新 OIDC 账号自动加入（可见性/额度随分组）
+      const defaultGroup = getSettingInt('OIDC_DEFAULT_GROUP_ID', 0);
+      if (defaultGroup > 0) {
+        getDb()
+          .insert(userGroupMembers)
+          .values({ groupId: defaultGroup, userId: row!.id, createdAt: Date.now() })
+          .onConflictDoNothing()
+          .run();
+      }
       audit(`oidc:${profile.subject}`, ip, 'user.oidc.created', { userId: row!.id, promoted: promote });
     } else {
       getDb()
