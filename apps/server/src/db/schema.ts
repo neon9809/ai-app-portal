@@ -189,3 +189,55 @@ export const inviteCodes = sqliteTable('invite_codes', {
   usedAt: integer('used_at'),
   createdAt: integer('created_at').notNull(),
 });
+
+// ---------- A3：MFA ----------
+
+/** TOTP 密钥（AES-256-GCM 加密落盘；±1 窗口 + 计数器重放拒绝） */
+export const totpSecrets = sqliteTable('totp_secrets', {
+  userId: integer('user_id')
+    .primaryKey()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  /** 加密后的 base32 密钥（secrets 加密见 lib/cryptoSecrets.ts） */
+  secretEnc: text('secret_enc').notNull(),
+  /** 值 = TOTP 周期步数（30s 一步）；重放拒绝：只接受 > 此值的匹配 */
+  lastUsedCounter: integer('last_used_counter').notNull().default(-1),
+  /** enroll 未确认前不生效 */
+  confirmed: integer('confirmed', { mode: 'boolean' }).notNull().default(false),
+  createdAt: integer('created_at').notNull(),
+});
+
+/** 恢复码（10 枚、哈希存储、一枚一用） */
+export const recoveryCodes = sqliteTable(
+  'recovery_codes',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    codeHash: text('code_hash').notNull(),
+    usedAt: integer('used_at'),
+    createdAt: integer('created_at').notNull(),
+  },
+  (t) => [index('recovery_codes_user_idx').on(t.userId)],
+);
+
+/** Passkey 凭据（二次因子 + 无密码主登录双角色；多凭据） */
+export const passkeys = sqliteTable(
+  'passkeys',
+  {
+    /** WebAuthn credential ID（base64url） */
+    id: text('id').primaryKey(),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    publicKey: text('public_key').notNull(), // base64url
+    counter: integer('counter').notNull().default(0),
+    transports: text('transports'), // JSON 数组
+    deviceType: text('device_type'),
+    backedUp: integer('backedUp', { mode: 'boolean' }).notNull().default(false),
+    nickname: text('nickname').notNull().default(''),
+    createdAt: integer('created_at').notNull(),
+    lastUsedAt: integer('last_used_at'),
+  },
+  (t) => [index('passkeys_user_idx').on(t.userId)],
+);

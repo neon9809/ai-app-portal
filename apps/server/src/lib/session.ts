@@ -17,6 +17,11 @@ import type { SessionUser } from '../types.js';
 
 export const hashToken = sha256Hex;
 
+/** 步升认证有效期（秒）：重验一次因子后 5 分钟内免重验 */
+export function stepUpTtlSec(): number {
+  return getSettingInt('MFA_STEPUP_TTL', 300);
+}
+
 // HTTPS 状态由 tls 模块（W6）在证书启用/移除时调用
 let secureCookieOverride: boolean | null = null;
 export function setSecureCookie(v: boolean | null): void {
@@ -160,6 +165,21 @@ export function createSession(
 export function destroySessionByToken(token: string | undefined | null): void {
   if (!token) return;
   getSqlite().prepare('DELETE FROM sessions WHERE token_hash = ?').run(hashToken(token));
+}
+
+/** 登录状态机推进：password_ok → full（MFA 验证通过） */
+export function upgradeSessionToFull(tokenHash: string): void {
+  getSqlite()
+    .prepare("UPDATE sessions SET auth_state = 'full' WHERE token_hash = ?")
+    .run(tokenHash);
+}
+
+/** 敏感操作步升认证：重验一次因子后 5 分钟内免重验（A3） */
+export function markStepUp(tokenHash: string): number {
+  const ttl = getSettingInt('MFA_STEPUP_TTL', 300);
+  const until = Date.now() + ttl * 1000;
+  getSqlite().prepare('UPDATE sessions SET step_up_until = ? WHERE token_hash = ?').run(until, tokenHash);
+  return until;
 }
 
 export function destroySession(req: Request, res: Response): void {

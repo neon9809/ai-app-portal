@@ -87,6 +87,13 @@ export const SETTING_DEFS: Record<string, SettingDef> = {
   IP_BAN_MULTIPLIER: { type: 'int', desc: '累犯封禁时长倍数（2 = 翻倍）', initial: () => String(config.ipBanMultiplier), defaultsWork: true, advanced: true },
   IP_BAN_MAX_SECONDS: { type: 'int', desc: '封禁时长上限（秒）', initial: () => String(config.ipBanMaxSec), defaultsWork: true, advanced: true },
   AUDIT_RETENTION_DAYS: { type: 'int', desc: '审计日志保留天数', initial: () => String(config.auditRetentionDays), defaultsWork: true, advanced: true },
+  MFA_STEPUP_TTL: {
+    type: 'int',
+    desc: '步升认证有效期（秒）：重验一次因子后免重验窗口',
+    initial: () => '300',
+    defaultsWork: true,
+    advanced: true,
+  },
   RATE_USER_PER_MIN: { type: 'int', desc: '应用网关限流：每用户请求/分', initial: () => String(config.rateUserPerMin), defaultsWork: true, advanced: true },
   RATE_IP_PER_MIN: { type: 'int', desc: '应用网关限流：每 IP 兜底请求/分', initial: () => String(config.rateIpPerMin), defaultsWork: true, advanced: true },
   PROXY_TIMEOUT: { type: 'int', desc: '应用网关上游超时（秒，仅覆盖首字节/HTML 拉取，不断流式连接）', initial: () => String(config.proxyTimeoutSec), defaultsWork: true, advanced: true },

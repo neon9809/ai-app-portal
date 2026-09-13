@@ -19,6 +19,18 @@ export const requireAuth: RequestHandler = (req, res, next) => {
   next();
 };
 
+/** 要求步升认证（敏感操作：改绑邮箱/手机、注销、MFA 管理、恢复码重生成） */
+export const requireStepUp: RequestHandler = (req, res, next) => {
+  requireAuth(req, res, () => {
+    const until = req.user?.stepUpUntil ?? 0;
+    if (until <= Date.now()) {
+      res.status(403).json({ error: { code: 'STEP_UP_REQUIRED', message: '该操作需要重新验证一次身份因子', action: 'step-up' } });
+      return;
+    }
+    next();
+  });
+};
+
 /** 要求管理员 */
 export const requireAdmin: RequestHandler = (req, res, next) => {
   requireAuth(req, res, () => {

@@ -18,6 +18,7 @@ import { csrfOriginCheck } from './lib/csrf.js';
 import { healthRouter } from './routes/health.js';
 import { portalRouter } from './routes/portal.js';
 import { authRouter } from './routes/auth.js';
+import { mfaRouter } from './routes/mfa.js';
 import { HttpError, toBody } from './lib/httpError.js';
 
 export function createApp(cfg: AapConfig = config): Express {
@@ -46,6 +47,7 @@ export function createApp(cfg: AapConfig = config): Express {
   app.use('/api', healthRouter);
   app.use('/api', portalRouter);
   app.use('/api', authRouter);
+  app.use('/api', mfaRouter);
 
   // 未知 API 一律 JSON 404（避免 SPA 兜底吞掉打错的接口）
   app.use('/api', (_req, res) => {

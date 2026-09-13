@@ -23,6 +23,7 @@ import { verifyTurnstile, turnstileEnabled } from '../lib/turnstile.js';
 import { issueCode, maskEmail, verifyCode } from '../lib/verification.js';
 import { adminCount, disposeCredentialsFile, getLocalPasswordHash, writeLocalCredentials } from '../lib/bootstrap.js';
 import { audit, registerPurgeTask } from '../lib/audit.js';
+import { publicUserOf } from './shared.js';
 
 export const authRouter = Router();
 
@@ -94,35 +95,6 @@ async function enforceTurnstile(req: Express.Request, body: PowBody): Promise<vo
   if (!ok) throw new HttpError(403, 'TURNSTILE_FAILED', '人机验证未通过', { action: 'turnstile' });
 }
 
-function publicUser(u: {
-  id: number;
-  avatar?: string | null;
-  kind: string;
-  username: string | null;
-  email: string | null;
-  phone: string | null;
-  name: string;
-  role: string;
-  status: string;
-  mfaEnabled: boolean;
-  plan: string;
-  createdAt: number;
-}): PublicUser {
-  return {
-    id: u.id,
-    avatar: u.avatar ?? null,
-    kind: u.kind === 'oidc' ? 'oidc' : 'local',
-    username: u.username,
-    email: u.email,
-    phone: u.phone,
-    name: u.name,
-    role: u.role === 'admin' ? 'admin' : 'user',
-    status: u.status as PublicUser['status'],
-    mfaEnabled: u.mfaEnabled,
-    plan: u.plan === 'member' ? 'member' : 'free',
-    createdAt: u.createdAt,
-  };
-}
 
 function loadUserById(id: number) {
   const row = getDb().select().from(users).where(eq(users.id, id)).get();
@@ -300,7 +272,7 @@ authRouter.post(
     createSession(res, { id: userId }, { ip, userAgent: req.headers['user-agent'] });
     const user = loadUserById(userId);
     res.json({
-      user: publicUser(user),
+      user: publicUserOf(user),
       authState: 'full',
       mfaRequired: false,
       mustChangePassword: user.mustChangePassword,
@@ -364,7 +336,7 @@ authRouter.post(
     audit(subject, ip, mfaEnabled ? 'login.password_ok' : 'local.login', { userId: user.id });
 
     res.json({
-      user: publicUser(user),
+      user: publicUserOf(user),
       authState,
       mfaRequired: mfaEnabled,
       mustChangePassword: user.mustChangePassword,
@@ -391,9 +363,14 @@ authRouter.get(
       res.status(401).json({ error: { code: 'UNAUTHENTICATED', message: '未登录' } });
       return;
     }
+    // 半登录态（password_ok）不下发完整资料；挑战页改用 /api/auth/mfa/status
+    if (u.authState !== 'full') {
+      res.status(403).json({ error: { code: 'MFA_REQUIRED', message: '需要完成多因子认证', action: 'mfa' } });
+      return;
+    }
     const row = loadUserById(u.id);
     const info: SessionInfo = {
-      user: publicUser(row),
+      user: publicUserOf(row),
       authState: u.authState,
       stepUpUntil: u.stepUpUntil,
       mustChangePassword: row.mustChangePassword,

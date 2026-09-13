@@ -17,12 +17,15 @@
   },
   "dependencies": {
     "@aap/shared": "workspace:*",
+    "@simplewebauthn/server": "^14.0.1",
     "better-sqlite3": "^12.4.1",
     "cookie-parser": "^1.4.7",
     "dotenv": "^16.4.5",
     "drizzle-orm": "^0.44.2",
     "express": "^4.21.2",
-    "nodemailer": "^10.0.8"
+    "nodemailer": "^10.0.8",
+    "otplib": "^13.5.0",
+    "qrcode": "^1.5.4"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
@@ -30,6 +33,7 @@
     "@types/express": "^4.17.23",
     "@types/node": "^24.5.2",
     "@types/nodemailer": "^8.0.1",
+    "@types/qrcode": "^1.5.6",
     "drizzle-kit": "^0.31.4",
     "tsx": "^4.20.5",
     "typescript": "^5.9.2",
