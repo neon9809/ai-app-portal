@@ -1,12 +1,13 @@
 ---
 name: app-develop
 description: "开发 ai-app-portal（AI应用门户）时用：架构决策与路径反代经验。"
-version: 2.1.0
+version: 2.2.0
 ---
 
 # ai-app-portal（AI应用门户）开发指南
 
-> v2.1.0 变更：新增 §九「沙箱日志收口与调试沙箱」（平台侧约定），与 app-develop 规范 v0.2（§3.5 日志 / §3.6 统一元素 / §八 aap-dev）配套。
+> v2.2.0 变更：新增 §十「实现状态快照（M1–M3 交付）」；§三 身份头更名 X-AAP-* 并写明密钥来源。
+> v2.1.0 变更：新增 §九「沙箱日志收口与调试沙箱」，与 app-develop 规范 v0.2（§3.5 日志 / §3.6 统一元素 / §八 aap-dev）配套。
 
 Neon 的 OSS 项目：自托管 AI 应用网关 + 门户，中文名「AI应用门户」，仓库名 `ai-app-portal`。
 - **PRD**：`workspace/ai-app-portal-PRD.md`（v0.3+，功能按 A–G 功能域组织：A 门户与身份 / B 应用网关 / C LLM 网关 / D 计费 / E 管理后台 / F 分发与运行 / G 生态；里程碑 M1–M4 只在第 7 节，与功能域编号解耦）
@@ -124,3 +125,18 @@ office-tool 后台丑且交互差是已知痛点；新面板七条要求：① �
 
 - `aap` 对象接口面（`llm` / `db` / `storage` / `http` / `log`）以 app-develop 规范 §三 为准，**开发期即冻结**；新增能力必须走规范升版 + manifest 能力字段同步 + 审核页展示同步，不允许运行时动态扩面。
 - 实装顺序：W0（本节）定契约 → M4 实装 `packages/aap-sdk`；接口冻结后 M2/M3 的 LLM 网关计量、配额预检对 SDK 透明（SDK 只见 `aap.llm.chat` 语义）。
+
+
+## 十、实现状态快照（v2.2，2026-09）
+
+M1–M3 已交付（服务端 66 测试 + Playwright E2E ×3）。M4 生态未启动。
+
+- **已实装**：路径反代全套（§二）、WS 双通道、passUser 自动签发/注入、自动 HTTPS（PEM 热替换 + ACME HTTP-01 + 续期）、本地账号+注册（验证码 SMTP/Resend/日志兜底 + 邀请码 + Turnstile 接口）、MFA（TOTP/Passkey/恢复码/步升/状态机）、用户中心四区、管理后台（总览/站点设置/应用管理/用户与注册/安全/通知通道/证书/LLM 网关/运营 九个功能域选项卡 + 左侧竖向首配向导）、Docker/FPK/CI(ghcr 多架构+FPK Release)、OIDC SSO（PKCE）
+- **M2 LLM 网关**：`/v1/chat/completions`（流式透传+末帧 usage 捕获）、`/v1/models` 聚合；凭据 `aapk_*`（SHA-256 存储、可吊销、按凭据限流）；路由 priority+加权 failover；`llm_ledger` append-only 账本 + `llm_balance_cache` 预检（402）+ 事后校正；结算循环每分钟对账；manifest 声明 llm 的包上传即自动签发凭据（tokenEnc 加密保管，`getAppLlmProvision` 供 M4 运行时注入）
+- **M3 计费**：功能订阅套餐（开通入分组/续费顺延/到期自动降级出组）；额度充值与**卡券码**（AAP-XXXX-XXXX-XXXX，原子兑换防双花，可作废/设有效期）；运营面板（套餐 CRUD/订单确认/余额消耗排行/应用热度/成本毛利）；manual 支付渠道首发（adapter 接口可扩）
+- **可见性模型（P）**：public / login / restricted（ACL：分组或账号任一命中，空=全部登录用户）/ private（仅归属者，用户自建默认，门户对他人隐藏）；用户分组 = 订阅等级载体
+- **通知通道**：MAIL_PROVIDER = smtp | resend（Resend 仅需 API Key，from 留空用沙箱发件人）；日志兜底（内网离线）；`SHOW_TOPUP_PANEL` 可隐藏用户充值面板
+- **统一页面元素（已实装）**：`portal-chrome.js` 注入所有代理/托管 HTML（应用门户/个人中心/退出登录+用户名，GET /api/auth/logout?next= 回跳）；幂等失败静默
+- **更名记录**：X-Office-*→X-AAP-*；WEBUI_SIGN_SECRET→AAP_SIGN_SECRET（settings 表，首启随机/env 初值，管理端高级项可查看需审计）；邮件通道→通知通道；会员→功能订阅
+- **关键新增配置**：RATE_LLM_PER_MIN / TOPUP_TOKENS_PER_FEN / SHOW_TOPUP_PANEL / MFA_STEPUP_TTL / CODE_SEND_DAILY_LIMIT / DELETION_COOLDOWN_DAYS / APP_ALLOW_PUBLIC_UPSTREAM / ACME_* / HTTPS_REDIRECT / MAIL_PROVIDER / RESEND_*
+- **待办**：M4 生态（Python 沙箱运行时/提交流程/ed25519）；ACME 与 OIDC 真实环境联调；FPK 真机；E2 真人走查

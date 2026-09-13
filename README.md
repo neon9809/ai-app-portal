@@ -20,8 +20,9 @@
 | `apps/web` | 前端：React 18 + Vite + TS + Ant Design 5（门户 / 用户中心 / 管理后台三合一 SPA） |
 | `packages/shared` | 前后端共享类型与 API 契约 |
 | `packages/aap-sdk` | Python：`aap` 运行时存根 + `aap-dev` 本地调试沙箱（M4 实装） |
+| `examples/demo-app` | 演示上游应用（体验反代 / WS / SSE / passUser 身份注入） |
 | `deploy/` | Docker / FPK 分发形态 |
-| `docs/` | 开发文档 |
+| `docs/DEVELOPMENT.md` | 开发者文档（架构 / 配置 / LLM 网关接入 / 通知通道 / 订阅计费） |
 | `ai-app-portal-docs/` | 产品需求与规范（PRD / app-develop 技能） |
 
 ## 开发
@@ -63,11 +64,21 @@ push 到 `main` 或打 `v*` tag 时，GitHub Actions 自动：
 
 发布只走 ghcr.io（Docker Hub 不使用）。tag 版本必须与根 `package.json.version` 一致。
 
+## 核心能力（当前实现）
+
+- **应用网关**：`/app/<id>/` 路径反代（HTML 改写 / `<base>` / fetch+XHR+script 猴补丁 / 路径穿越防御 / SSE 零缓冲），**WebSocket 透传**（HTTP+HTTPS 双通道），passUser 签名身份注入（X-AAP-Identity）
+- **门户托管应用**：简单 HTML 页直接粘贴接入；上传 `.neon-aap` 包自动校验 manifest 并提取字段；声明 `llm` 能力的包自动签发网关凭据（加密保管，运行时注入）
+- **LLM 网关**：OpenAI 兼容 `/v1/chat/completions`（流式）+ `/v1/models`；多上游按优先级+权重 failover；网关凭据（SHA-256 存储/可吊销/限流）；用户级+应用级计量（append-only 账本）、余额预检 402、预估事后校正
+- **账号与安全**：本地账号+注册（验证码 SMTP/Resend/日志兜底、邀请码、Turnstile）、MFA（TOTP+Passkey）、OIDC 单点登录（PKCE）、登录防爆破+IP 封禁累犯倍增+PoW、步升认证、审计日志
+- **订阅与计费**：功能订阅套餐（开通即入分组、到期自动降级）、额度充值与**卡券码兑换**（manual 确认渠道，支付渠道 adapter 可扩展）、运营面板（订单确认/排行/成本毛利）
+- **可见性模型**：公开 / 需登录 / 指定分组与账号 / 仅自己（用户自建应用默认私有，门户对他人隐藏）
+- **统一页面元素**：所有托管/代理应用右上角自动注入「应用门户 / 个人中心 / 退出登录」（portal-chrome.js，幂等失败静默）
+
 ## 里程碑
 
-- **M1 门户可用**：路径反代（HTTP+WS/SSE）、自动 HTTPS、本地账号+注册、MFA（TOTP+Passkey）、用户中心、管理后台、Docker/FPK 分发
-- **M2 LLM 网关**：OpenAI 兼容端点、多上游路由与 failover、用户级计量
-- **M3 计费闭环**：会员×应用可见性、token 充值与结算、运营面板
-- **M4 生态**：.neon-aap 扩展体系（HTML / Python 沙箱）、审核上架循环
+- **M1 门户可用** ✅：路径反代（HTTP+WS/SSE）、自动 HTTPS、本地账号+注册、MFA、用户中心、管理后台、Docker/FPK 分发
+- **M2 LLM 网关** ✅：OpenAI 兼容端点（含流式）、多上游路由与 failover、网关凭据、用户级+应用级计量与预检、OIDC SSO
+- **M3 计费闭环** ✅：功能订阅×分组可见性、额度充值与卡券码、结算对账+到期降级、运营面板
+- **M4 生态** ⬜：.neon-aap 扩展体系（Python 沙箱运行时、用户提交流程、ed25519 官方包签名）
 
-详见 `ai-app-portal-docs/ai-app-portal-PRD-v0.3.1.md`。
+详见 `ai-app-portal-docs/ai-app-portal-PRD-v0.3.1.md`；开发者文档见 `docs/DEVELOPMENT.md`。
