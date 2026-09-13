@@ -18,6 +18,7 @@
   "dependencies": {
     "@aap/shared": "workspace:*",
     "@simplewebauthn/server": "^14.0.1",
+    "acme-client": "^5.4.0",
     "better-sqlite3": "^12.4.1",
     "cookie-parser": "^1.4.7",
     "dotenv": "^16.4.5",

@@ -98,6 +98,18 @@ export const SETTING_DEFS: Record<string, SettingDef> = {
   RATE_IP_PER_MIN: { type: 'int', desc: '应用网关限流：每 IP 兜底请求/分', initial: () => String(config.rateIpPerMin), defaultsWork: true, advanced: true },
   PROXY_TIMEOUT: { type: 'int', desc: '应用网关上游超时（秒，仅覆盖首字节/HTML 拉取，不断流式连接）', initial: () => String(config.proxyTimeoutSec), defaultsWork: true, advanced: true },
 
+  // ---- HTTPS / 证书（B3；默认纯门户模式 = 不启 HTTPS，反代外置） ----
+  ACME_DOMAIN: { type: 'string', desc: 'ACME 签发域名（填写即启用自动 HTTPS，需 80 端口可达；留空走纯门户模式）', initial: () => '', defaultsWork: true },
+  ACME_EMAIL: { type: 'string', desc: 'ACME 账户邮箱（证书到期通知）', initial: () => '', defaultsWork: false },
+  ACME_STAGING: {
+    type: 'bool',
+    desc: '使用 Let\'s Encrypt 测试环境（避免触发正式环境限频，跑通后关闭）',
+    initial: () => 'true',
+    defaultsWork: true,
+    advanced: true,
+  },
+  HTTPS_REDIRECT: { type: 'bool', desc: 'HTTP 请求自动跳转 HTTPS（ACME 挑战路径除外）', initial: () => 'false', defaultsWork: true },
+
   // ---- 人机验证（可选，填 key 即启用，默认 PoW 兜底） ----
   TURNSTILE_SITE_KEY: { type: 'string', desc: 'Cloudflare Turnstile 站点密钥（留空则只用 PoW）', initial: () => '', defaultsWork: true },
   TURNSTILE_SECRET_KEY: { type: 'string', desc: 'Turnstile 服务端密钥', initial: () => '', secret: true, defaultsWork: true },

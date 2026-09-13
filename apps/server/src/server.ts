@@ -9,6 +9,7 @@ import { closeDb, initDb } from './db/index.js';
 import { startPurgeLoop, stopPurgeLoop } from './lib/audit.js';
 import { startHealthLoop, stopHealthLoop } from './gateway/health.js';
 import { handleUpgrade } from './gateway/wsproxy.js';
+import * as tls from './gateway/tls.js';
 import { ensureInitialAdmin } from './lib/bootstrap.js';
 import { seedSettings } from './lib/settings.js';
 import { createApp } from './app.js';
@@ -22,8 +23,12 @@ function main(): void {
 
   const app = createApp();
   const server = http.createServer(app);
-  // WebSocket（B2）：HTTP 侧升级通道；HTTPS server（W6）同样挂 handleUpgrade
+  // WebSocket（B2）：HTTP 侧升级通道；HTTPS server 复用同一 handler
   server.on('upgrade', handleUpgrade);
+  // HTTPS（B3）：注入 app 与 upgrade 处理器，恢复已存证书 / 启动续期循环
+  tls.init(app, handleUpgrade);
+  tls.restore();
+  tls.startRenewalLoop();
   server.listen(config.port, () => {
     console.log(`[aap] AI应用门户 listening on http://localhost:${config.port}`);
     console.log(`[aap] data dir: ${config.dataDir}`);
@@ -33,6 +38,7 @@ function main(): void {
     console.log(`[aap] received ${signal}, shutting down...`);
     stopPurgeLoop();
     stopHealthLoop();
+    tls.stop();
     server.close(() => {
       closeDb();
       process.exit(0);

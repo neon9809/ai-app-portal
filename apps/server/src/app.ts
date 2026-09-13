@@ -21,8 +21,12 @@ import { authRouter } from './routes/auth.js';
 import { mfaRouter } from './routes/mfa.js';
 import { appsRouter } from './routes/apps.js';
 import { adminAppsRouter } from './routes/adminApps.js';
+import { adminTlsRouter } from './routes/adminTls.js';
 import { gatewayRouter } from './gateway/proxy.js';
+import { acmeChallengeResponse } from './gateway/tls.js';
+import { getSettingBool } from './lib/settings.js';
 import { HttpError, toBody } from './lib/httpError.js';
+
 
 export function createApp(cfg: AapConfig = config): Express {
   const app = express();
@@ -47,12 +51,37 @@ export function createApp(cfg: AapConfig = config): Express {
   app.use('/api', csrfOriginCheck);
   app.use('/api', express.json({ limit: '1mb' }));
 
+  // ACME HTTP-01 挑战应答（80/HTTP 端口直达本服务或反代转发均可）
+  app.get('/.well-known/acme-challenge/:token', (req, res) => {
+    const ka = acmeChallengeResponse(String(req.params.token));
+    if (ka) {
+      res.type('text/plain').send(ka);
+      return;
+    }
+    res.status(404).end();
+  });
+
+  // HTTP → HTTPS 跳转开关（B3；默认关，ACME 挑战已在上方处理）
+  app.use((req, res, next) => {
+    if (getSettingBool('HTTPS_REDIRECT', false) && !req.path.startsWith('/.well-known/acme-challenge/')) {
+      const proto = req.protocol;
+      if (proto === 'http') {
+        const host = (req.headers.host ?? '').replace(/:\d+$/, '');
+        const port = config.httpsPort;
+        res.redirect(301, `https://${host}${port === 443 ? '' : ':' + port}${req.originalUrl}`);
+        return;
+      }
+    }
+    next();
+  });
+
   app.use('/api', healthRouter);
   app.use('/api', portalRouter);
   app.use('/api', authRouter);
   app.use('/api', mfaRouter);
   app.use('/api', appsRouter);
   app.use('/api', adminAppsRouter);
+  app.use('/api', adminTlsRouter);
 
   // 应用网关（B1）：/app/<id>/ 路径反代。必须在 SPA 兜底之前挂载；
   // 不经过 express.json（流式 body 保真），CSRF 不适用（仅 /api 挂载）。
