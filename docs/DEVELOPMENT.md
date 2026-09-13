@@ -41,6 +41,12 @@ pnpm db:generate    # drizzle-kit 生成迁移（schema 变更后必跑）
 
 主要分组：站点与品牌 / 注册与账号 / 人机验证 / 通知通道（验证码发信：SMTP 或 Resend）/ 证书与 HTTPS / 安全与限流 / 应用网关 / 计费。
 
+管理端渲染约定（`apps/web/src/pages/Admin.tsx`）：
+- 每项按元数据选控件：`choiceLabels` → 下拉（中文选项）、bool → 开关、`secret` → 密码框 + 「查看」（`GET /api/admin/secrets/:key`，记审计）、int → 数字框
+- `exclusiveOf` 互斥渲染：如 `MAIL_PROVIDER=resend` 时只显示 Resend 两项、隐藏 SMTP 五项
+- 展示降噪：短标签 + 悬浮详情（完整描述与配置键）；仅 `defaultsWork=false` 的项显示「需配置」橙标
+- 「通知通道」「计费」「证书(HTTPS 跳转)」等有专用面板，经 `excludeKeys` 排除由专用表单写入的键
+
 ## 4. 应用网关（/app/\<id\>/）
 
 - 应用注册在 `apps` 表（管理后台 → 应用管理），三种形态 `kind`：
@@ -85,7 +91,7 @@ client = OpenAI(base_url="http://<host>:8080/v1", api_key="aapk_…")
 - **功能订阅**：`membership_plans`（名称/对应分组/时长/价格分/赠额度）→ 用户下单（manual 渠道，管理员运营面板确认到账）→ 自动入分组 + 赠额度到账；到期结算循环自动降级（移出分组、数据保留）。
 - **额度充值**：订单按 `TOPUP_TOKENS_PER_FEN` 折算到账；`SHOW_TOPUP_PANEL` 可对用户隐藏充值面板（兑换码不受影响）。
 - **卡券码**：批量生成额度码/订阅码（`AAP-XXXX-XXXX-XXXX`），原子兑换防双花，可作废/设有效期；兑换走 `grantTokens`（三触发失效缓存）。
-- **运营面板**：30 天收入/成本/毛利（成本按路由 `costPer1k`）、余额与消耗排行、应用热度、订单确认。
+- **运营面板**：30 天收入/成本/毛利（成本按路由 `costPer1k`）、余额与消耗排行、应用热度、订单确认；用户额度发放/调减入口与计费设置（`TOPUP_TOKENS_PER_FEN`、`SHOW_TOPUP_PANEL`）也在本页。
 
 ## 8. 分发（deploy/）
 
