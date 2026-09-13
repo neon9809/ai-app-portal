@@ -36,6 +36,34 @@ class LogChannel implements CodeChannel {
   }
 }
 
+class ResendEmailChannel implements CodeChannel {
+  readonly id = 'email' as const;
+  async send(target: string, code: string, purpose: CodePurpose): Promise<void> {
+    const key = getSetting('RESEND_API_KEY') ?? '';
+    const from = getSetting('RESEND_FROM') || 'AI应用门户 <onboarding@resend.dev>';
+    const site = getSetting('SITE_NAME') || 'AI应用门户';
+    const purposeText: Record<CodePurpose, string> = {
+      register: '注册账号',
+      reset: '重置密码',
+      bind: '绑定账号资料',
+    };
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        from,
+        to: [target],
+        subject: `[${site}] 验证码：${code}（${purposeText[purpose]}）`,
+        text: `您的验证码是 ${code}，${CODE_TTL_MS / 60000} 分钟内有效。如非本人操作请忽略本邮件。`,
+      }),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`Resend 发信失败(${res.status})：${body.slice(0, 200)}`);
+    }
+  }
+}
+
 class SmtpEmailChannel implements CodeChannel {
   readonly id = 'email' as const;
   async send(target: string, code: string, purpose: CodePurpose): Promise<void> {
@@ -65,9 +93,20 @@ class SmtpEmailChannel implements CodeChannel {
   }
 }
 
-/** email 通道：配置了 SMTP 用 SMTP，否则日志兜底 */
+/** email 通道：按 MAIL_PROVIDER 选择 Resend / SMTP；都未配置时日志兜底 */
 export function getEmailChannel(): CodeChannel {
+  const provider = (getSetting('MAIL_PROVIDER') ?? 'smtp').toLowerCase();
+  if (provider === 'resend') {
+    if (getSetting('RESEND_API_KEY')) return new ResendEmailChannel();
+    return new LogChannel('email');
+  }
   return getSetting('SMTP_HOST') ? new SmtpEmailChannel() : new LogChannel('email');
+}
+
+/** 出站邮件是否已配置（false = 日志兜底模式） */
+export function outboundMailConfigured(): boolean {
+  const provider = (getSetting('MAIL_PROVIDER') ?? 'smtp').toLowerCase();
+  return provider === 'resend' ? Boolean(getSetting('RESEND_API_KEY')) : Boolean(getSetting('SMTP_HOST'));
 }
 
 export function getChannel(id: VerifyChannel): CodeChannel {
@@ -80,9 +119,7 @@ export function getChannel(id: VerifyChannel): CodeChannel {
   }
 }
 
-export function smtpConfigured(): boolean {
-  return Boolean(getSetting('SMTP_HOST'));
-}
+
 
 // ---------- 签发与校验 ----------
 

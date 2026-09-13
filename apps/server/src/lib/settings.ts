@@ -12,6 +12,8 @@ import { settings } from '../db/schema.js';
 export interface SettingDef {
   type: 'string' | 'int' | 'bool';
   desc: string;
+  /** type=string 时可选的枚举值（管理端渲染为下拉） */
+  options?: string[];
   /** 面板分组（E2：配置按功能块分区，不糊成一团） */
   group: string;
   /** 首次种子的初值（通常取自 env） */

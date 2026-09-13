@@ -10,6 +10,7 @@ import { apps, inviteCodes, localCredentials, sessions, users } from '../db/sche
 import { HttpError, h } from '../lib/httpError.js';
 import { requireAdmin } from '../lib/auth.js';
 import { publicUserOf } from './shared.js';
+import { getEmailChannel, outboundMailConfigured } from '../lib/verification.js';
 import { generatePassword, hashPassword } from '../lib/passwords.js';
 import { listSettingsForAdmin, updateSettingFromAdmin, SETTING_DEFS, getSetting } from '../lib/settings.js';
 import { audit } from '../lib/audit.js';
@@ -130,6 +131,7 @@ adminRouter.get(
         value: s.value,
         type: s.def.type,
         group: s.def.group,
+        options: s.def.options,
         desc: s.def.desc,
         secret: Boolean(s.def.secret),
         advanced: Boolean(s.def.advanced),
@@ -150,6 +152,25 @@ adminRouter.put(
     }
     audit(`${req.user!.kind}:${req.user!.id}`, req.clientIp ?? null, 'config.update', { keys });
     res.json({ ok: true });
+  }),
+);
+
+/** 邮件通道发信测试（R：直给结果） */
+adminRouter.post(
+  '/admin/mail/test',
+  h(async (req, res) => {
+    const body = (req.body ?? {}) as { to?: string };
+    const me = getDb().select().from(users).where(eq(users.id, req.user!.id)).get();
+    const to = String(body.to ?? '').trim() || me?.email || getSetting('SMTP_FROM') || getSetting('RESEND_FROM') || '';
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+      throw new HttpError(400, 'NO_RECIPIENT', '没有可用收件邮箱：请填写收件地址，或先给管理员账号绑定邮箱');
+    }
+    if (!outboundMailConfigured()) {
+      throw new HttpError(400, 'MAIL_NOT_CONFIGURED', '尚未配置发信通道（当前为日志兜底模式：验证码会打印到服务端日志）');
+    }
+    await getEmailChannel().send(to, '123456', 'bind');
+    audit(`${req.user!.kind}:${req.user!.id}`, req.clientIp ?? null, 'admin.mail.test', { to });
+    res.json({ ok: true, to });
   }),
 );
 

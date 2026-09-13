@@ -1,12 +1,14 @@
 /**
- * 管理后台（E1/E2，P0 硬指标）：
- * ① 视觉与门户同源（同一 AntD 主题 token / CSS variables）
- * ② 首配 checklist 向导（管理员密码→证书→注册策略→第一个应用，状态自动检测）
- * ③ 配置项一句话说明 +「默认值即可跑」标注 + 高级项折叠
- * ④ 危险操作防呆（告知后果 + 输入确认）
- * ⑤ 状态仪表卡（证书/上游健康/网关 绿黄红）
- * ⑥ 移动端可看状态（卡片纵向堆叠）
- * ⑦ 保存即生效 + 测试按钮直接给结果
+ * 管理后台（E1/E2，P0 硬指标）——目录与功能域一一对应：
+ *   总览（仪表卡 + 快捷入口 + 最近动态）
+ *   站点设置（品牌/默认主题/备案）
+ *   应用管理（应用列表 + 网关限流）
+ *   用户与注册（用户列表 + 注册策略 + 邀请码）
+ *   安全（防爆破/PoW/会话/签名密钥/Turnstile + 审计日志）
+ *   邮件通道（SMTP / Resend + 发信测试）
+ *   证书（状态/ACME/PEM/HTTPS 跳转）
+ * E2 七条：①同源主题 ②首配向导（左侧竖向） ③一句话说明+默认值标注+高级折叠
+ * ④危险操作防呆 ⑤状态仪表卡 ⑥移动端可看状态 ⑦保存即生效+测试按钮
  */
 import type { ReactNode } from 'react';
 import {
@@ -29,11 +31,13 @@ import {
   Typography,
   message,
 } from 'antd';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import { useSession } from '../state/session';
 import type { PublicUser } from '@aap/shared';
+
+// ---------- 类型 ----------
 
 interface AdminApp {
   id: string;
@@ -54,6 +58,7 @@ interface SettingRow {
   value: string;
   type: 'string' | 'int' | 'bool';
   group: string;
+  options?: string[];
   desc: string;
   secret: boolean;
   advanced: boolean;
@@ -79,110 +84,316 @@ interface AuditRow {
   action: string;
   detail: unknown;
 }
+interface Invite {
+  code: string;
+  usedBy: number | null;
+  createdAt: number;
+}
 
 function dot(state: string): ReactNode {
   const color = state === 'ok' || state === 'green' ? '#52c41a' : state === 'down' ? '#ff4d4f' : '#faad14';
-  return <Badge color={color} text={state === 'ok' ? '正常' : state === 'down' ? '异常' : '未知'} />;
+  const label = state === 'ok' || state === 'green' ? '正常' : state === 'down' ? '异常' : '未知';
+  return <Badge color={color} text={label} />;
 }
+
+// ---------- 通用：分组配置表单（③一句话说明 + 默认值标注；⑦保存即生效） ----------
+
+function SettingsForm({ groups, excludeKeys = [] }: { groups: string[]; excludeKeys?: string[] }): ReactNode {
+  const qc = useQueryClient();
+  const settingsQ = useQuery({
+    queryKey: ['admin-settings'],
+    queryFn: () => api<{ settings: SettingRow[] }>('/api/admin/settings'),
+  });
+  const [form] = Form.useForm();
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (settingsQ.data) {
+      const values: Record<string, string> = {};
+      for (const s of settingsQ.data.settings) values[s.key] = s.value;
+      form.setFieldsValue(values);
+    }
+  }, [settingsQ.data, form]);
+
+  const ordered: Array<[string, SettingRow[]]> = groups.map((g) => [
+    g,
+    (settingsQ.data?.settings ?? []).filter((s) => s.group === g && !excludeKeys.includes(s.key)),
+  ]);
+
+  async function save(): Promise<void> {
+    setSaving(true);
+    try {
+      const values = form.getFieldsValue() as Record<string, string | boolean>;
+      const payload: Record<string, string> = {};
+      for (const [k, v] of Object.entries(values)) {
+        if (v === undefined || v === null) continue;
+        payload[k] = typeof v === 'boolean' ? (v ? 'true' : 'false') : String(v);
+      }
+      await api('/api/admin/settings', { method: 'PUT', json: payload });
+      message.success('已保存并即时生效');
+      void qc.invalidateQueries({ queryKey: ['admin-settings'] });
+      void qc.invalidateQueries({ queryKey: ['bootstrap'] });
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : '保存失败');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function renderItem(s: SettingRow): ReactNode {
+    return (
+      <Form.Item
+        key={s.key}
+        name={s.key}
+        label={
+          <Space size="small" wrap>
+            <span>{s.desc.split('（')[0]}</span>
+            {s.defaultsWork ? <Tag bordered={false} color="green" style={{ fontSize: 11 }}>默认值即可跑</Tag> : null}
+            <Typography.Text code style={{ fontSize: 11 }}>{s.key}</Typography.Text>
+          </Space>
+        }
+        extra={s.desc}
+        valuePropName={s.type === 'bool' ? 'checked' : 'value'}
+      >
+        {s.type === 'bool' ? (
+          <Switch />
+        ) : s.options ? (
+          <Select options={s.options.map((o) => ({ value: o, label: o }))} />
+        ) : s.secret ? (
+          <Input.Password placeholder="留空保持不变" autoComplete="new-password" />
+        ) : (
+          <Input placeholder={s.defaultsWork ? '（默认值即可）' : ''} />
+        )}
+      </Form.Item>
+    );
+  }
+
+  return (
+    <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+      {ordered.map(([g, items]) =>
+        items.length > 0 ? (
+          <Card key={g} size="small" title={g} extra={<Tag bordered={false} style={{ fontSize: 11 }}>{items.length} 项</Tag>}>
+            {items.map(renderItem)}
+          </Card>
+        ) : null,
+      )}
+      <Button type="primary" loading={saving} onClick={() => void save()}>
+        保存（即时生效）
+      </Button>
+    </Space>
+  );
+}
+
+// ---------- 主页面 ----------
 
 export function AdminPage() {
   const { me } = useSession();
-  const qc = useQueryClient();
   const [activeTab, setActiveTab] = useState('overview');
-  const [wizardCollapsed, setWizardCollapsed] = useState(false);
+  const [railCollapsed, setRailCollapsed] = useState(() => localStorage.getItem('aap.admin.railCollapsed') === '1');
 
-  const overview = useQuery({ queryKey: ['admin-overview'], queryFn: () => api<Overview>('/api/admin/overview'), refetchInterval: 30_000 });
-  const tlsQ = useQuery({ queryKey: ['admin-tls'], queryFn: () => api<Record<string, unknown>>('/api/admin/tls') });
+  const overview = useQuery({
+    queryKey: ['admin-overview'],
+    queryFn: () => api<Overview>('/api/admin/overview'),
+    refetchInterval: 30_000,
+  });
+  const c = overview.data?.checklist;
+
+  // 首配向导（左侧竖向）：跳过/完成状态持久化
+  const [skipCert, setSkipCert] = useState(() => localStorage.getItem('aap.wizard.skipCert') === '1');
+  const [skipReg, setSkipReg] = useState(() => localStorage.getItem('aap.wizard.skipReg') === '1');
+  const markSkip = (k: 'cert' | 'reg'): void => {
+    localStorage.setItem(`aap.wizard.skip${k === 'cert' ? 'Cert' : 'Reg'}`, '1');
+    if (k === 'cert') setSkipCert(true);
+    else setSkipReg(true);
+  };
+  const wizardDone = Boolean(
+    c &&
+      c.adminPasswordChanged &&
+      c.adminMfaEnabled &&
+      (c.httpsEnabled || skipCert) &&
+      c.appCount > 0 &&
+      (c.registrationMode !== 'closed' || skipReg),
+  );
+  const showRail = !railCollapsed && !wizardDone;
 
   if (!me || me.user.role !== 'admin') {
     return <Alert type="warning" showIcon message="需要管理员权限" description={<a href="/login">使用管理员账号登录</a>} />;
   }
 
-  const c = overview.data?.checklist;
+  const go = (tab: string) => () => setActiveTab(tab);
 
   return (
-    <div style={{ maxWidth: 1080, margin: '0 auto' }}>
+    <div style={{ maxWidth: 1160, margin: '0 auto' }}>
       <Typography.Title level={4}>管理后台</Typography.Title>
 
-      {/* ⑤ 状态仪表卡 */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12, marginBottom: 16 }}>
-        <Card size="small">
-          <Descriptions column={1} size="small" title="HTTPS 证书">
-            <Descriptions.Item label="状态">
-              {dot(c?.httpsEnabled ? 'ok' : c?.tls !== 'off' ? 'warn' : 'unknown')}
-            </Descriptions.Item>
-            <Descriptions.Item label="模式">{c?.tls === 'acme' ? '自动签发' : c?.tls === 'manual' ? '手动上传' : '未启用（纯门户模式）'}</Descriptions.Item>
-            {c?.certDaysRemaining != null ? (
-              <Descriptions.Item label="剩余">{c.certDaysRemaining} 天</Descriptions.Item>
-            ) : null}
-          </Descriptions>
-        </Card>
-        <Card size="small">
-          <Descriptions column={1} size="small" title="应用网关">
-            <Descriptions.Item label="已接入">{c?.appCount ?? 0} 个应用</Descriptions.Item>
-            <Descriptions.Item label="在线会话">{overview.data?.liveSessions ?? 0}</Descriptions.Item>
-          </Descriptions>
-        </Card>
-        <Card size="small">
-          <Descriptions column={1} size="small" title="账号安全">
-            <Descriptions.Item label="MFA">{dot(c?.adminMfaEnabled ? 'ok' : 'warn')}</Descriptions.Item>
-            <Descriptions.Item label="注册">{c?.registrationMode === 'closed' ? '关闭' : c?.registrationMode === 'invite' ? '邀请制' : '开放'}</Descriptions.Item>
-          </Descriptions>
-        </Card>
-      </div>
-
-      {/* ② 首配 checklist 向导 */}
-      {c && !wizardCollapsed ? (
-        <Card size="small" style={{ marginBottom: 16 }} extra={<Button type="text" onClick={() => setWizardCollapsed(true)}>收起</Button>}>
-          <Steps
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'flex-start' }}>
+        {/* ② 首配向导：左侧竖向，占位小；完成后自动隐藏 */}
+        {showRail && c ? (
+          <Card
             size="small"
-            direction="horizontal"
-            responsive
+            style={{ width: 250, flexShrink: 0, position: 'sticky', top: 76 }}
+            title="首次配置"
+            extra={
+              <Button
+                type="text"
+                size="small"
+                onClick={() => {
+                  localStorage.setItem('aap.admin.railCollapsed', '1');
+                  setRailCollapsed(true);
+                }}
+              >
+                收起
+              </Button>
+            }
+          >
+            <Steps
+              direction="vertical"
+              size="small"
+              current={-1}
+              items={[
+                {
+                  title: '管理员密码',
+                  status: c.adminPasswordChanged ? 'finish' : 'process',
+                  description: <a href="/account">去修改</a>,
+                },
+                {
+                  title: '绑定 MFA',
+                  status: c.adminMfaEnabled ? 'finish' : 'process',
+                  description: <a href="/mfa-setup">去绑定</a>,
+                },
+                {
+                  title: '域名证书',
+                  status: c.httpsEnabled ? 'finish' : skipCert ? 'finish' : 'wait',
+                  description: (
+                    <>
+                      <a onClick={go('tls')}>去配置</a>
+                      {!c.httpsEnabled ? <> · <a onClick={() => markSkip('cert')}>跳过（内网）</a></> : null}
+                    </>
+                  ),
+                },
+                {
+                  title: '注册策略',
+                  status: c.registrationMode !== 'closed' ? 'finish' : skipReg ? 'finish' : 'wait',
+                  description: (
+                    <>
+                      <a onClick={go('users')}>去设置</a>
+                      {c.registrationMode === 'closed' ? <> · <a onClick={() => markSkip('reg')}>保持关闭</a></> : null}
+                    </>
+                  ),
+                },
+                {
+                  title: '接第一个应用',
+                  status: c.appCount > 0 ? 'finish' : 'process',
+                  description: <a onClick={go('apps')}>去接入</a>,
+                },
+              ]}
+            />
+          </Card>
+        ) : null}
+
+        <div style={{ flex: 1, minWidth: 300 }}>
+          <Tabs
+            activeKey={activeTab}
+            onChange={setActiveTab}
             items={[
-              { title: '管理员密码', status: c.adminPasswordChanged ? 'finish' : 'process', description: <a onClick={() => setActiveTab('overview')}>修改初始密码</a> },
-              { title: '域名证书', status: c.httpsEnabled ? 'finish' : 'process', description: <a onClick={() => setActiveTab('tls')}>配置 HTTPS</a> },
-              { title: '注册策略', status: c.registrationMode !== 'closed' ? 'finish' : 'wait', description: <a onClick={() => setActiveTab('settings')}>设置注册方式</a> },
-              { title: '接第一个应用', status: c.appCount > 0 ? 'finish' : 'wait', description: <a onClick={() => setActiveTab('apps')}>添加应用</a> },
+              { key: 'overview', label: '总览', children: <OverviewTab onShowRail={() => { localStorage.removeItem('aap.admin.railCollapsed'); setRailCollapsed(false); }} onGoTab={(t) => setActiveTab(t)} /> },
+              { key: 'site', label: '站点设置', children: <SettingsForm groups={['站点与品牌']} /> },
+              { key: 'apps', label: '应用管理', children: <AppsTab /> },
+              { key: 'users', label: '用户与注册', children: <UsersRegTab /> },
+              { key: 'security', label: '安全', children: <SecurityTab /> },
+              { key: 'mail', label: '邮件通道', children: <MailTab /> },
+              { key: 'tls', label: '证书', children: <TlsTab /> },
             ]}
           />
-        </Card>
-      ) : null}
-
-      <Tabs
-        activeKey={activeTab}
-        onChange={setActiveTab}
-        items={[
-          { key: 'overview', label: '总览', children: <OverviewTab /> },
-          { key: 'apps', label: '应用管理', children: <AppsTab /> },
-          { key: 'users', label: '用户管理', children: <UsersTab /> },
-          { key: 'settings', label: '安全策略', children: <SettingsTab /> },
-          { key: 'tls', label: '证书', children: <TlsTab /> },
-          { key: 'audit', label: '审计日志', children: <AuditTab /> },
-          { key: 'invites', label: '邀请码', children: <InvitesTab /> },
-        ]}
-      />
+        </div>
+      </div>
     </div>
   );
 }
 
-// ---------- 总览 ----------
+// ---------- 总览（仪表卡 + 快捷入口 + 最近动态） ----------
 
-function OverviewTab() {
+function OverviewTab({ onShowRail, onGoTab }: { onShowRail: () => void; onGoTab: (tab: string) => void }): ReactNode {
+  const qc = useQueryClient();
+  const overview = useQuery({ queryKey: ['admin-overview'], queryFn: () => api<Overview>('/api/admin/overview'), refetchInterval: 30_000 });
   const health = useQuery({ queryKey: ['health'], queryFn: () => api<{ version: string; uptimeSec: number }>('/api/health') });
+  const appsQ = useQuery({ queryKey: ['admin-apps'], queryFn: () => api<{ apps: AdminApp[] }>('/api/admin/apps') });
+  const auditQ = useQuery({ queryKey: ['admin-audit-recent'], queryFn: () => api<{ logs: AuditRow[] }>('/api/admin/audit?limit=6') });
+
+  const c = overview.data?.checklist;
+  const apps = appsQ.data?.apps ?? [];
+  const okApps = apps.filter((a) => a.healthState === 'ok').length;
+  const downApps = apps.filter((a) => a.healthState === 'down').length;
+
   return (
-    <Card title="服务状态">
-      <Descriptions column={1} size="small">
-        <Descriptions.Item label="版本">{health.data?.version ?? '—'}</Descriptions.Item>
-        <Descriptions.Item label="运行时长">{health.data ? `${Math.floor(health.data.uptimeSec / 60)} 分钟` : '—'}</Descriptions.Item>
-        <Descriptions.Item label="数据库">{dot('ok')}</Descriptions.Item>
-      </Descriptions>
-    </Card>
+    <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+      {/* ⑤ 状态仪表卡 */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 12 }}>
+        <Card size="small">
+          <Descriptions column={1} size="small" title="HTTPS 证书">
+            <Descriptions.Item label="状态">{dot(c?.httpsEnabled ? 'ok' : 'unknown')}</Descriptions.Item>
+            <Descriptions.Item label="模式">{c?.tls === 'acme' ? '自动签发' : c?.tls === 'manual' ? '手动上传' : '未启用'}</Descriptions.Item>
+            {c?.certDaysRemaining != null ? <Descriptions.Item label="剩余">{c.certDaysRemaining} 天</Descriptions.Item> : null}
+          </Descriptions>
+        </Card>
+        <Card size="small">
+          <Descriptions column={1} size="small" title="应用网关">
+            <Descriptions.Item label="已接入">{apps.length} 个</Descriptions.Item>
+            <Descriptions.Item label="健康">{okApps} 正常{downApps > 0 ? ` / ${downApps} 异常` : ''}</Descriptions.Item>
+          </Descriptions>
+        </Card>
+        <Card size="small">
+          <Descriptions column={1} size="small" title="会话与账号">
+            <Descriptions.Item label="在线会话">{overview.data?.liveSessions ?? 0}</Descriptions.Item>
+            <Descriptions.Item label="管理员 MFA">{dot(c?.adminMfaEnabled ? 'ok' : 'unknown')}</Descriptions.Item>
+          </Descriptions>
+        </Card>
+        <Card size="small">
+          <Descriptions column={1} size="small" title="服务">
+            <Descriptions.Item label="版本">{health.data?.version ?? '—'}</Descriptions.Item>
+            <Descriptions.Item label="运行时长">
+              {health.data ? `${Math.floor(health.data.uptimeSec / 3600)}h ${Math.floor((health.data.uptimeSec % 3600) / 60)}m` : '—'}
+            </Descriptions.Item>
+          </Descriptions>
+        </Card>
+      </div>
+
+      {/* 快捷入口 */}
+      <Card size="small" title="快捷操作">
+        <Space wrap>
+          <Button onClick={() => onGoTab('apps')}>接第一个应用</Button>
+          <Button onClick={() => onGoTab('tls')}>配置证书</Button>
+          <Button onClick={() => onGoTab('users')}>注册策略</Button>
+          <Button type="text" onClick={onShowRail}>显示首配向导</Button>
+        </Space>
+      </Card>
+
+      {/* 最近动态 */}
+      <Card size="small" title="最近动态">
+        {auditQ.data?.logs.length ? (
+          auditQ.data.logs.map((r) => (
+            <div key={r.id} style={{ display: 'flex', gap: 10, fontSize: 12.5, padding: '3px 0' }}>
+              <span style={{ color: 'var(--aap-text-secondary)', minWidth: 130 }}>{new Date(r.ts).toLocaleString()}</span>
+              <Typography.Text code style={{ fontSize: 12 }}>{r.action}</Typography.Text>
+              <span style={{ color: 'var(--aap-text-secondary)' }}>{r.actor}</span>
+            </div>
+          ))
+        ) : (
+          <Typography.Text type="secondary">暂无事件</Typography.Text>
+        )}
+        <div style={{ marginTop: 8 }}>
+          <Button size="small" type="text" onClick={() => void qc.invalidateQueries({ queryKey: ['admin-audit-recent'] })}>
+            刷新
+          </Button>
+        </div>
+      </Card>
+    </Space>
   );
 }
 
-// ---------- 应用管理 ----------
+// ---------- 应用管理（应用列表 + 网关限流配置） ----------
 
-function AppsTab() {
+function AppsTab(): ReactNode {
   const qc = useQueryClient();
   const [form] = Form.useForm();
   const [editing, setEditing] = useState<AdminApp | null>(null);
@@ -219,7 +430,7 @@ function AppsTab() {
       );
       setTestResult((prev) => ({
         ...prev,
-        [app.id]: r.ok ? `✓ 可达（${r.status}，${r.latencyMs}ms）` : `✗ ${r.error ?? r.status}`,
+        [app.id]: r.ok ? `✓ ${app.id} 可达（${r.status}，${r.latencyMs}ms）` : `✗ ${app.id}：${r.error ?? r.status}`,
       }));
       void qc.invalidateQueries({ queryKey: ['admin-apps'] });
     } catch (err) {
@@ -228,65 +439,69 @@ function AppsTab() {
   }
 
   return (
-    <Card
-      title="应用管理"
-      extra={<Button type="primary" onClick={() => { setEditing(null); setCreating(true); form.resetFields(); }}>接入应用</Button>}
-    >
-      <Table<AdminApp>
-        rowKey="id"
-        dataSource={appsQ.data?.apps ?? []}
-        pagination={false}
-        size="small"
-        columns={[
-          { title: 'ID', dataIndex: 'id', width: 110 },
-          { title: '名称', dataIndex: 'name', width: 130 },
-          { title: '上游', dataIndex: 'upstream', ellipsis: true },
-          {
-            title: '策略',
-            width: 90,
-            render: (_, r) => (
-              <Tag>{r.visibility === 'public' ? '公开' : r.visibility === 'member' ? '会员' : '登录'}</Tag>
-            ),
-          },
-          { title: '健康', width: 90, render: (_, r) => dot(r.healthState) },
-          {
-            title: '操作',
-            width: 230,
-            render: (_, r) => (
-              <Space size="small">
-                <Button size="small" onClick={() => void testApp(r)}>测试</Button>
-                <Button
-                  size="small"
-                  onClick={() => {
-                    setEditing(r);
-                    setCreating(true);
-                    form.setFieldsValue({ ...r, urlSecret: undefined });
-                  }}
-                >
-                  编辑
-                </Button>
-                <Popconfirm
-                  title={`删除应用「${r.name}」？`}
-                  description="门户将立即无法访问该应用。"
-                  onConfirm={async () => {
-                    await api(`/api/admin/apps/${r.id}`, { method: 'DELETE' });
-                    message.success('已删除');
-                    void qc.invalidateQueries({ queryKey: ['admin-apps'] });
-                    void qc.invalidateQueries({ queryKey: ['apps'] });
-                  }}
-                >
-                  <Button size="small" danger>删除</Button>
-                </Popconfirm>
-              </Space>
-            ),
-          },
-        ]}
-      />
-      <div style={{ marginTop: 4, color: 'var(--aap-text-secondary)', fontSize: 12 }}>
-        {appsQ.data?.apps.map((a) => testResult[a.id]).filter(Boolean).map((t, i) => (
-          <div key={i}>{t}</div>
+    <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+      <Card
+        title="应用列表"
+        extra={<Button type="primary" onClick={() => { setEditing(null); setCreating(true); form.resetFields(); }}>接入应用</Button>}
+      >
+        <Table<AdminApp>
+          rowKey="id"
+          dataSource={appsQ.data?.apps ?? []}
+          pagination={false}
+          size="small"
+          columns={[
+            { title: 'ID', dataIndex: 'id', width: 110 },
+            { title: '名称', dataIndex: 'name', width: 130 },
+            { title: '上游', dataIndex: 'upstream', ellipsis: true },
+            {
+              title: '策略',
+              width: 90,
+              render: (_, r) => (
+                <Tag>{r.visibility === 'public' ? '公开' : r.visibility === 'member' ? '会员' : '登录'}</Tag>
+              ),
+            },
+            { title: '健康', width: 90, render: (_, r) => dot(r.healthState) },
+            {
+              title: '操作',
+              width: 230,
+              render: (_, r) => (
+                <Space size="small">
+                  <Button size="small" onClick={() => void testApp(r)}>测试</Button>
+                  <Button
+                    size="small"
+                    onClick={() => {
+                      setEditing(r);
+                      setCreating(true);
+                      form.setFieldsValue({ ...r, urlSecret: undefined });
+                    }}
+                  >
+                    编辑
+                  </Button>
+                  <Popconfirm
+                    title={`删除应用「${r.name}」？`}
+                    description="门户将立即无法访问该应用。"
+                    onConfirm={async () => {
+                      await api(`/api/admin/apps/${r.id}`, { method: 'DELETE' });
+                      message.success('已删除');
+                      void qc.invalidateQueries({ queryKey: ['admin-apps'] });
+                      void qc.invalidateQueries({ queryKey: ['apps'] });
+                    }}
+                  >
+                    <Button size="small" danger>删除</Button>
+                  </Popconfirm>
+                </Space>
+              ),
+            },
+          ]}
+        />
+        {Object.entries(testResult).filter(([, v]) => v).map(([k, v]) => (
+          <div key={k} style={{ color: 'var(--aap-text-secondary)', fontSize: 12, marginTop: 4 }}>{v}</div>
         ))}
-      </div>
+      </Card>
+
+      <Card size="small" title="网关限流与超时" extra={<Tag bordered={false} color="green" style={{ fontSize: 11 }}>默认值即可跑</Tag>}>
+        <SettingsForm groups={['应用网关']} />
+      </Card>
 
       <Modal
         title={editing ? `编辑应用：${editing.name}` : '接入应用'}
@@ -323,7 +538,7 @@ function AppsTab() {
             name="upstream"
             label="上游地址"
             rules={[{ required: true, message: '必填' }]}
-            extra="仅允许本机/内网地址，如 http://127.0.0.1:8001（默认值即可跑，公网地址需在高级设置放开）"
+            extra="仅允许本机/内网地址，如 http://127.0.0.1:8001（公网地址需在高级设置放开）"
           >
             <Input placeholder="http://127.0.0.1:8001" />
           </Form.Item>
@@ -351,15 +566,16 @@ function AppsTab() {
           </Button>
         </Form>
       </Modal>
-    </Card>
+    </Space>
   );
 }
 
-// ---------- 用户管理 ----------
+// ---------- 用户与注册（用户列表 + 注册策略 + 邀请码） ----------
 
-function UsersTab() {
+function UsersRegTab(): ReactNode {
   const qc = useQueryClient();
   const usersQ = useQuery({ queryKey: ['admin-users'], queryFn: () => api<{ users: PublicUser[] }>('/api/admin/users') });
+  const invitesQ = useQuery({ queryKey: ['admin-invites'], queryFn: () => api<{ invites: Invite[] }>('/api/admin/invites') });
   const [creating, setCreating] = useState(false);
   const [form] = Form.useForm();
   const [created, setCreated] = useState<{ username: string; password: string } | null>(null);
@@ -369,84 +585,118 @@ function UsersTab() {
   }
 
   return (
-    <Card
-      title="用户管理"
-      extra={<Button type="primary" onClick={() => { form.resetFields(); setCreating(true); }}>创建用户</Button>}
-    >
-      <Table<PublicUser>
-        rowKey="id"
-        dataSource={usersQ.data?.users ?? []}
-        pagination={false}
-        size="small"
-        columns={[
-          { title: '用户名', dataIndex: 'username' },
-          { title: '昵称', dataIndex: 'name' },
-          { title: '邮箱', dataIndex: 'email', ellipsis: true },
-          {
-            title: '角色',
-            width: 90,
-            render: (_, r) => (r.role === 'admin' ? <Tag color="gold">管理员</Tag> : <Tag>用户</Tag>),
-          },
-          {
-            title: '状态',
-            width: 90,
-            render: (_, r) =>
-              r.status === 'active' ? <Tag color="green">正常</Tag> : r.status === 'disabled' ? <Tag color="red">已禁用</Tag> : <Tag>注销中</Tag>,
-          },
-          {
-            title: '操作',
-            width: 220,
-            render: (_, r) => (
-              <Space size="small">
-                {r.status !== 'disabled' ? (
-                  <Popconfirm
-                    title={`禁用「${r.username}」？`}
-                    description="该用户所有会话将被踢下线。"
-                    onConfirm={async () => {
-                      await api(`/api/admin/users/${r.id}`, { method: 'PUT', json: { status: 'disabled' } });
-                      message.success('已禁用');
-                      void reload();
-                    }}
-                  >
-                    <Button size="small" danger>禁用</Button>
-                  </Popconfirm>
-                ) : (
+    <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+      <Card
+        title="用户列表"
+        extra={<Button type="primary" onClick={() => { form.resetFields(); setCreating(true); }}>创建用户</Button>}
+      >
+        <Table<PublicUser>
+          rowKey="id"
+          dataSource={usersQ.data?.users ?? []}
+          pagination={false}
+          size="small"
+          columns={[
+            { title: '用户名', dataIndex: 'username' },
+            { title: '昵称', dataIndex: 'name' },
+            { title: '邮箱', dataIndex: 'email', ellipsis: true },
+            {
+              title: '角色',
+              width: 90,
+              render: (_, r) => (r.role === 'admin' ? <Tag color="gold">管理员</Tag> : <Tag>用户</Tag>),
+            },
+            {
+              title: '状态',
+              width: 90,
+              render: (_, r) =>
+                r.status === 'active' ? <Tag color="green">正常</Tag> : r.status === 'disabled' ? <Tag color="red">已禁用</Tag> : <Tag>注销中</Tag>,
+            },
+            {
+              title: '操作',
+              width: 220,
+              render: (_, r) => (
+                <Space size="small">
+                  {r.status !== 'disabled' ? (
+                    <Popconfirm
+                      title={`禁用「${r.username}」？`}
+                      description="该用户所有会话将被踢下线。"
+                      onConfirm={async () => {
+                        await api(`/api/admin/users/${r.id}`, { method: 'PUT', json: { status: 'disabled' } });
+                        message.success('已禁用');
+                        void reload();
+                      }}
+                    >
+                      <Button size="small" danger>禁用</Button>
+                    </Popconfirm>
+                  ) : (
+                    <Button
+                      size="small"
+                      onClick={async () => {
+                        await api(`/api/admin/users/${r.id}`, { method: 'PUT', json: { status: 'active' } });
+                        message.success('已启用');
+                        void reload();
+                      }}
+                    >
+                      启用
+                    </Button>
+                  )}
                   <Button
                     size="small"
                     onClick={async () => {
-                      await api(`/api/admin/users/${r.id}`, { method: 'PUT', json: { status: 'active' } });
-                      message.success('已启用');
+                      const r2 = await api<{ password: string | null }>(`/api/admin/users/${r.id}/reset-password`, { method: 'POST', json: {} });
+                      setCreated({ username: r.username ?? '', password: r2.password ?? '' });
+                    }}
+                  >
+                    重置密码
+                  </Button>
+                  <Popconfirm
+                    title={`删除「${r.username}」？`}
+                    description="永久删除该用户及其全部数据，不可恢复。"
+                    onConfirm={async () => {
+                      await api(`/api/admin/users/${r.id}`, { method: 'DELETE' });
+                      message.success('已删除');
                       void reload();
                     }}
                   >
-                    启用
-                  </Button>
-                )}
-                <Button
-                  size="small"
-                  onClick={async () => {
-                    const r2 = await api<{ password: string | null }>(`/api/admin/users/${r.id}/reset-password`, { method: 'POST', json: {} });
-                    setCreated({ username: r.username ?? '', password: r2.password ?? '' });
-                  }}
-                >
-                  重置密码
-                </Button>
-                <Popconfirm
-                  title={`删除「${r.username}」？`}
-                  description="永久删除该用户及其全部数据，不可恢复。输入用户名确认。"
-                  onConfirm={async () => {
-                    await api(`/api/admin/users/${r.id}`, { method: 'DELETE' });
-                    message.success('已删除');
-                    void reload();
-                  }}
-                >
-                  <Button size="small" danger type="text">删除</Button>
-                </Popconfirm>
-              </Space>
-            ),
-          },
-        ]}
-      />
+                    <Button size="small" danger type="text">删除</Button>
+                  </Popconfirm>
+                </Space>
+              ),
+            },
+          ]}
+        />
+      </Card>
+
+      <Card size="small" title="注册策略">
+        <SettingsForm groups={['注册与账号']} />
+      </Card>
+
+      <Card
+        size="small"
+        title="邀请码（注册开关 = 邀请制时使用）"
+        extra={
+          <Button
+            onClick={async () => {
+              await api('/api/admin/invites', { method: 'POST', json: { count: 5 } });
+              message.success('已生成 5 枚');
+              void qc.invalidateQueries({ queryKey: ['admin-invites'] });
+            }}
+          >
+            生成 5 枚
+          </Button>
+        }
+      >
+        <Table<Invite>
+          rowKey="code"
+          size="small"
+          dataSource={invitesQ.data?.invites ?? []}
+          pagination={false}
+          columns={[
+            { title: '邀请码', dataIndex: 'code', render: (v: string) => <Typography.Text copyable code>{v}</Typography.Text> },
+            { title: '状态', width: 120, render: (_, r) => (r.usedBy ? <Tag>已使用</Tag> : <Tag color="green">可用</Tag>) },
+            { title: '创建时间', width: 180, render: (_, r) => new Date(r.createdAt).toLocaleString() },
+          ]}
+        />
+      </Card>
 
       <Modal title="创建用户" open={creating} onCancel={() => setCreating(false)} footer={null} destroyOnClose>
         <Form form={form} layout="vertical" onFinish={async (v) => {
@@ -489,161 +739,133 @@ function UsersTab() {
           </Descriptions.Item>
         </Descriptions>
       </Modal>
-    </Card>
+    </Space>
   );
 }
 
-// ---------- 安全策略（settings） ----------
+// ---------- 安全（防爆破/PoW/会话/密钥/Turnstile + 审计日志） ----------
 
-function SettingsTab() {
+function SecurityTab(): ReactNode {
   const qc = useQueryClient();
-  const settingsQ = useQuery({ queryKey: ['admin-settings'], queryFn: () => api<{ settings: SettingRow[] }>('/api/admin/settings') });
-  const [showAdvanced, setShowAdvanced] = useState(false);
-  const [form] = Form.useForm();
-  const [saving, setSaving] = useState(false);
+  const auditQ = useQuery({ queryKey: ['admin-audit'], queryFn: () => api<{ logs: AuditRow[] }>('/api/admin/audit?limit=200') });
+  return (
+    <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+      <Card size="small" title="安全策略">
+        <SettingsForm groups={['安全与限流', '人机验证']} />
+      </Card>
+      <Card
+        size="small"
+        title="审计日志（最近 200 条）"
+        extra={<Button size="small" onClick={() => void qc.invalidateQueries({ queryKey: ['admin-audit'] })}>刷新</Button>}
+      >
+        <Table<AuditRow>
+          rowKey="id"
+          size="small"
+          dataSource={auditQ.data?.logs ?? []}
+          pagination={{ pageSize: 50 }}
+          columns={[
+            { title: '时间', width: 160, render: (_, r) => new Date(r.ts).toLocaleString() },
+            { title: '操作者', dataIndex: 'actor', width: 140, ellipsis: true },
+            { title: '事件', dataIndex: 'action', width: 180 },
+            { title: 'IP', dataIndex: 'ip', width: 130 },
+            {
+              title: '明细',
+              ellipsis: true,
+              render: (_, r) => (
+                <Typography.Text code style={{ fontSize: 11 }}>
+                  {r.detail ? JSON.stringify(r.detail) : '—'}
+                </Typography.Text>
+              ),
+            },
+          ]}
+        />
+      </Card>
+    </Space>
+  );
+}
 
-  const groups = useMemo(() => {
-    const all = settingsQ.data?.settings ?? [];
-    const basic = all.filter((s) => !s.advanced);
-    const advanced = all.filter((s) => s.advanced);
-    // 基础项按 group 分块（保持 settings 定义顺序）
-    const order: string[] = [];
-    const map = new Map<string, SettingRow[]>();
-    for (const s of basic) {
-      const g = s.group || '其他';
-      if (!map.has(g)) {
-        map.set(g, []);
-        order.push(g);
-      }
-      map.get(g)!.push(s);
-    }
-    const advOrder: string[] = [];
-    const advMap = new Map<string, SettingRow[]>();
-    for (const s of advanced) {
-      const g = s.group || '其他';
-      if (!advMap.has(g)) {
-        advMap.set(g, []);
-        advOrder.push(g);
-      }
-      advMap.get(g)!.push(s);
-    }
-    return { basicGroups: order.map((g) => [g, map.get(g)!] as const), advancedGroups: advOrder.map((g) => [g, advMap.get(g)!] as const) };
-  }, [settingsQ.data]);
+// ---------- 邮件通道（SMTP / Resend + 发信测试） ----------
 
-  useEffect(() => {
-    if (settingsQ.data) {
-      const values: Record<string, string> = {};
-      for (const s of settingsQ.data.settings) values[s.key] = s.value;
-      form.setFieldsValue(values);
-    }
-  }, [settingsQ.data, form]);
+function MailTab(): ReactNode {
+  const [testTo, setTestTo] = useState('');
+  const [testing, setTesting] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
 
-  async function save(): Promise<void> {
-    setSaving(true);
+  async function sendTest(): Promise<void> {
+    setTesting(true);
+    setResult(null);
     try {
-      const values = form.getFieldsValue() as Record<string, string | boolean>;
-      const payload: Record<string, string> = {};
-      for (const [k, v] of Object.entries(values)) {
-        if (v === undefined || v === null) continue;
-        payload[k] = typeof v === 'boolean' ? (v ? 'true' : 'false') : String(v);
-      }
-      await api('/api/admin/settings', { method: 'PUT', json: payload });
-      message.success('已保存并即时生效');
-      void qc.invalidateQueries({ queryKey: ['admin-settings'] });
-      void qc.invalidateQueries({ queryKey: ['bootstrap'] });
+      const r = await api<{ to: string }>('/api/admin/mail/test', { method: 'POST', json: { to: testTo || undefined } });
+      setResult(`✓ 测试邮件已发送至 ${r.to}，请查收`);
     } catch (err) {
-      message.error(err instanceof Error ? err.message : '保存失败');
+      setResult(`✗ ${err instanceof Error ? err.message : '发送失败'}`);
     } finally {
-      setSaving(false);
+      setTesting(false);
     }
-  }
-
-  function renderInput(s: SettingRow): ReactNode {
-    if (s.type === 'bool') return <Switch />;
-    if (s.secret) return <Input.Password placeholder="留空保持不变" autoComplete="new-password" />;
-    return <Input placeholder={s.defaultsWork ? '（默认值即可）' : ''} />;
-  }
-
-  function renderItem(s: SettingRow): ReactNode {
-    return (
-      <Form.Item key={s.key} name={s.key} label={
-        <Space size="small" wrap>
-          <span>{s.desc.split('（')[0]}</span>
-          {s.defaultsWork ? <Tag bordered={false} color="green" style={{ fontSize: 11 }}>默认值即可跑</Tag> : null}
-          <Typography.Text code style={{ fontSize: 11 }}>{s.key}</Typography.Text>
-        </Space>
-      } extra={s.desc}>
-        {renderInput(s)}
-      </Form.Item>
-    );
   }
 
   return (
     <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-      {groups.basicGroups.map(([g, items]) => (
-        <Card
-          key={g}
-          size="small"
-          title={g}
-          extra={<Tag bordered={false} style={{ fontSize: 11 }}>{items.length} 项</Tag>}
-        >
-          {items.map(renderItem)}
-        </Card>
-      ))}
-
-      {showAdvanced ? (
-        <>
-          {groups.advancedGroups.map(([g, items]) => (
-            <Card
-              key={`adv-${g}`}
-              size="small"
-              title={`高级 · ${g}`}
-              style={{ opacity: 0.92 }}
-              extra={<Tag bordered={false} color="orange" style={{ fontSize: 11 }}>默认值即可跑，无必要不改</Tag>}
-            >
-              {items.map(renderItem)}
-            </Card>
-          ))}
-        </>
-      ) : null}
-
-      <Card size="small">
-        <Space>
-          <Switch checkedChildren="显示高级项" unCheckedChildren="显示高级项" checked={showAdvanced} onChange={setShowAdvanced} />
-          <Button type="primary" loading={saving} onClick={() => void save()}>
-            保存（即时生效）
+      <Card size="small" title="发信通道（验证码用）" extra={<Tag bordered={false} color="blue" style={{ fontSize: 11 }}>推荐 Resend</Tag>}>
+        <SettingsForm groups={['邮件通道（验证码发信）']} />
+      </Card>
+      <Card size="small" title="发信测试">
+        <Space wrap>
+          <Input
+            style={{ width: 260 }}
+            placeholder="收件邮箱（留空用管理员邮箱）"
+            value={testTo}
+            onChange={(e) => setTestTo(e.target.value)}
+          />
+          <Button type="primary" loading={testing} onClick={() => void sendTest()}>
+            发送测试邮件
           </Button>
         </Space>
+        {result ? (
+          <div style={{ marginTop: 8, fontSize: 12.5 }}>{result}</div>
+        ) : (
+          <div style={{ marginTop: 8, color: 'var(--aap-text-secondary)', fontSize: 12 }}>
+            未配置通道时验证码走服务端日志兜底（内网可离线）。
+          </div>
+        )}
       </Card>
     </Space>
   );
-
 }
 
 // ---------- 证书 ----------
 
-function TlsTab() {
+function TlsTab(): ReactNode {
   const qc = useQueryClient();
-  const tlsQ = useQuery({ queryKey: ['admin-tls'], queryFn: () => api<{ installed: boolean; httpsEnabled: boolean; mode: string; domain: string | null; httpsPort: number; cert: { subject: string; daysRemaining: number } | null; error?: string } | Record<string, unknown>>('/api/admin/tls') });
+  const tlsQ = useQuery({
+    queryKey: ['admin-tls'],
+    queryFn: () =>
+      api<{
+        installed: boolean;
+        httpsEnabled: boolean;
+        mode: string;
+        domain: string | null;
+        httpsPort: number;
+        cert: { subject: string; daysRemaining: number } | null;
+      }>('/api/admin/tls'),
+  });
   const [pemForm] = Form.useForm();
   const [acmeForm] = Form.useForm();
 
-  const st = tlsQ.data as { installed?: boolean; httpsEnabled?: boolean; mode?: string; domain?: string | null; httpsPort?: number; cert?: { subject: string; daysRemaining: number } | null } | undefined;
+  const st = tlsQ.data;
 
   return (
     <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-      <Card title="证书状态">
+      <Card size="small" title="证书状态">
         <Descriptions column={1} size="small">
           <Descriptions.Item label="模式">{st?.mode === 'acme' ? '自动签发' : st?.mode === 'manual' ? '手动上传' : '未启用（纯门户模式）'}</Descriptions.Item>
           <Descriptions.Item label="HTTPS">{st?.httpsEnabled ? <Tag color="green">已启用（端口 {st.httpsPort}）</Tag> : <Tag>未启用</Tag>}</Descriptions.Item>
-          {st?.cert ? (
-            <Descriptions.Item label="证书">{st.cert.subject}（剩余 {st.cert.daysRemaining} 天）</Descriptions.Item>
-          ) : null}
+          {st?.cert ? <Descriptions.Item label="证书">{st.cert.subject}（剩余 {st.cert.daysRemaining} 天）</Descriptions.Item> : null}
           {st?.domain ? <Descriptions.Item label="ACME 域名">{st.domain}</Descriptions.Item> : null}
         </Descriptions>
       </Card>
 
-      <Card title="自动签发（ACME / Let's Encrypt）" extra={<Tag bordered={false} color="blue">推荐</Tag>}>
+      <Card size="small" title="自动签发（ACME / Let's Encrypt）" extra={<Tag bordered={false} color="blue" style={{ fontSize: 11 }}>推荐</Tag>}>
         <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
           要求：域名已解析到本机，且 80 端口可达（HTTP-01 验证）。内网 NAS 无公网 80 时请使用下方手动上传 PEM。
         </Typography.Paragraph>
@@ -666,7 +888,7 @@ function TlsTab() {
         </Form>
       </Card>
 
-      <Card title="手动上传证书（PEM）">
+      <Card size="small" title="手动上传证书（PEM）">
         <Form form={pemForm} layout="vertical" onFinish={async (v) => {
           try {
             await api('/api/admin/tls', { method: 'PUT', json: v });
@@ -699,79 +921,10 @@ function TlsTab() {
           </Space>
         </Form>
       </Card>
+
+      <Card size="small" title="HTTPS 跳转">
+        <SettingsForm groups={['证书与 HTTPS']} excludeKeys={['ACME_DOMAIN', 'ACME_EMAIL', 'ACME_STAGING']} />
+      </Card>
     </Space>
-  );
-}
-
-// ---------- 审计 ----------
-
-function AuditTab() {
-  const qc = useQueryClient();
-  const auditQ = useQuery({ queryKey: ['admin-audit'], queryFn: () => api<{ logs: AuditRow[] }>('/api/admin/audit?limit=200') });
-  return (
-    <Card title="审计日志（最近 200 条）" extra={<Button onClick={() => void qc.invalidateQueries({ queryKey: ['admin-audit'] })}>刷新</Button>}>
-      <Table<AuditRow>
-        rowKey="id"
-        size="small"
-        dataSource={auditQ.data?.logs ?? []}
-        pagination={{ pageSize: 50 }}
-        columns={[
-          { title: '时间', width: 160, render: (_, r) => new Date(r.ts).toLocaleString() },
-          { title: '操作者', dataIndex: 'actor', width: 140, ellipsis: true },
-          { title: '事件', dataIndex: 'action', width: 180 },
-          { title: 'IP', dataIndex: 'ip', width: 130 },
-          {
-            title: '明细',
-            ellipsis: true,
-            render: (_, r) => (
-              <Typography.Text code style={{ fontSize: 11 }}>
-                {r.detail ? JSON.stringify(r.detail) : '—'}
-              </Typography.Text>
-            ),
-          },
-        ]}
-      />
-    </Card>
-  );
-}
-
-// ---------- 邀请码 ----------
-
-function InvitesTab() {
-  const qc = useQueryClient();
-  interface Invite {
-    code: string;
-    usedBy: number | null;
-    createdAt: number;
-  }
-  const invitesQ = useQuery({ queryKey: ['admin-invites'], queryFn: () => api<{ invites: Invite[] }>('/api/admin/invites') });
-  return (
-    <Card
-      title="邀请码（注册开关 = 邀请制时使用）"
-      extra={
-        <Button
-          type="primary"
-          onClick={async () => {
-            await api('/api/admin/invites', { method: 'POST', json: { count: 5 } });
-            message.success('已生成 5 枚');
-            void qc.invalidateQueries({ queryKey: ['admin-invites'] });
-          }}
-        >
-          生成 5 枚
-        </Button>
-      }
-    >
-      <Table<Invite>
-        rowKey="code"
-        size="small"
-        dataSource={invitesQ.data?.invites ?? []}
-        pagination={false}
-        columns={[
-          { title: '邀请码', dataIndex: 'code', render: (v: string) => <Typography.Text copyable code>{v}</Typography.Text> },
-          { title: '状态', width: 120, render: (_, r) => (r.usedBy ? <Tag>已使用</Tag> : <Tag color="green">可用</Tag>) },
-          { title: '创建时间', width: 180, render: (_, r) => new Date(r.createdAt).toLocaleString() },
-        ]}
-      />
-    </Card>
   );
 }
