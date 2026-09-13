@@ -1,0 +1,26 @@
+# AI应用门户 — Docker Compose
+# 用法：cd deploy/docker && docker compose up -d
+# 数据在 ../data（SQLite、证书、密钥）；首次启动看日志获取初始管理员密码：
+#   docker compose logs | grep -A4 "初始管理员凭据"
+name: ai-app-portal
+
+services:
+  portal:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    image: ai-app-portal:latest
+    container_name: ai-app-portal
+    restart: unless-stopped
+    ports:
+      - "8080:8080"   # 业务入口（门户 + /app/<id>/ 应用网关 + ACME 挑战）
+      - "8443:8443"   # HTTPS（配置证书后启用）
+    volumes:
+      - ../../data:/data
+      # 纯门户模式（反代外置给 Caddy/nginx）时不需要暴露 8443
+    environment:
+      TRUST_PROXY: "0"           # 有前置反代（nginx/Caddy）时改为 1
+      # 初始管理员密码（仅首启生效；不填则随机生成并打印到日志）
+      # ADMIN_INITIAL_PASSWORD: ""
+      # 数据库（默认 SQLite；FPK/外部库场景示例）：
+      # DATABASE_URL: "mysql://user:pass@mariadb:3306/ai_app_portal"

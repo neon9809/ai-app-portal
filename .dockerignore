@@ -1,0 +1,22 @@
+# 依赖与构建产物
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+
+# 运行数据与密钥
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# 参考实现与文档（不进镜像）
+office-tool/
+ai-app-portal-docs/
+docs/
+
+# git 与编辑器
+.git/
+.vscode/
+.idea/
+.DS_Store

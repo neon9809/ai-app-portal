@@ -7,13 +7,20 @@ import 'dotenv/config';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+/** 数据库目标：SQLite 文件（默认）或 MySQL URL（FPK / 外部库场景） */
+export type DatabaseTarget =
+  | { kind: 'sqlite'; file: string }
+  | { kind: 'mysql'; url: string };
+
 export interface AapConfig {
   /** 业务监听端口（HTTP；也承载 W6 后的 HTTPS，见 tls） */
   port: number;
   httpsPort: number;
   /** 数据目录：SQLite、证书、密钥、上传件 */
   dataDir: string;
+  /** @deprecated 直接用 databaseTarget */
   databaseFile: string;
+  databaseTarget: DatabaseTarget;
   migrationsDir: string;
   /** 生产模式下前端构建产物目录（不存在则不托管静态资源） */
   webDist: string | null;
@@ -63,11 +70,19 @@ const PKG_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AapConfig {
   const dataDir = path.resolve(env.DATA_DIR ?? path.join(PKG_ROOT, 'data'));
+  // DATABASE_URL 语义（F1）：file: 前缀或路径 = SQLite；mysql:// = MySQL（FPK 场景）；
+  // 未提供时回落 DATA_DIR/app.db
+  const databaseTarget: DatabaseTarget = env.DATABASE_URL
+    ? env.DATABASE_URL.startsWith('mysql')
+      ? { kind: 'mysql', url: env.DATABASE_URL }
+      : { kind: 'sqlite', file: path.resolve(env.DATABASE_URL.replace(/^file:/, '')) }
+    : { kind: 'sqlite', file: env.DATABASE_FILE ? path.resolve(env.DATABASE_FILE) : path.join(dataDir, 'app.db') };
   return {
     port: asInt(env.PORT, 8080),
     httpsPort: asInt(env.HTTPS_PORT, 8443),
     dataDir,
-    databaseFile: env.DATABASE_FILE ? path.resolve(env.DATABASE_FILE) : path.join(dataDir, 'app.db'),
+    databaseFile: databaseTarget.kind === 'sqlite' ? databaseTarget.file : '',
+    databaseTarget,
     migrationsDir: env.MIGRATIONS_DIR
       ? path.resolve(env.MIGRATIONS_DIR)
       : path.join(PKG_ROOT, 'drizzle'),

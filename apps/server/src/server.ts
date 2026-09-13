@@ -15,7 +15,11 @@ import { seedSettings } from './lib/settings.js';
 import { createApp } from './app.js';
 
 function main(): void {
-  initDb({ file: config.databaseFile, migrationsDir: config.migrationsDir });
+  if (config.databaseTarget.kind === 'mysql') {
+    console.error('[aap] MySQL 数据库方言将在 FPK 集成版本中启用，当前版本请使用 SQLite（默认）。');
+    process.exit(1);
+  }
+  initDb({ file: config.databaseTarget.file, migrationsDir: config.migrationsDir });
   seedSettings();
   ensureInitialAdmin(); // F3：users 为空时创建初始管理员（Docker 首启打印密码 + 一次性凭据文件）
   startPurgeLoop();
