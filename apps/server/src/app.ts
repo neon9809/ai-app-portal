@@ -81,7 +81,7 @@ export function createApp(cfg: AapConfig = config): Express {
       if (proto === 'http') {
         // 外部经 443 映射访问容器 8443，跳转一律指向标准 443（不带端口）
         const host = (req.headers.host ?? '').replace(/:\d+$/, '');
-        res.redirect(301, `https://${host}${req.originalUrl}`);
+        res.redirect(302, `https://${host}${req.originalUrl}`);
         return;
       }
     }
