@@ -5,12 +5,14 @@
 import { config } from './config/index.js';
 import { closeDb, initDb } from './db/index.js';
 import { startPurgeLoop, stopPurgeLoop } from './lib/audit.js';
+import { ensureInitialAdmin } from './lib/bootstrap.js';
 import { seedSettings } from './lib/settings.js';
 import { createApp } from './app.js';
 
 function main(): void {
   initDb({ file: config.databaseFile, migrationsDir: config.migrationsDir });
   seedSettings();
+  ensureInitialAdmin(); // F3：users 为空时创建初始管理员（Docker 首启打印密码 + 一次性凭据文件）
   startPurgeLoop();
 
   const app = createApp();

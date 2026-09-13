@@ -10,6 +10,7 @@
  *   login_attempts / ip_bans / pow_* / audit_logs。
  */
 import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import { sql } from 'drizzle-orm';
 
 export const settings = sqliteTable('settings', {
   key: text('key').primaryKey(),
@@ -42,7 +43,16 @@ export const users = sqliteTable(
     lastLoginAt: integer('last_login_at'),
     lastIp: text('last_ip'),
   },
-  (t) => [uniqueIndex('users_username_uq').on(t.username)],
+  (t) => [
+    uniqueIndex('users_username_uq').on(t.username),
+    // 邮箱/手机唯一（A2：邮箱或手机号唯一）；允许多个 NULL（OIDC 用户等）
+    uniqueIndex('users_email_uq')
+      .on(t.email)
+      .where(sql`email IS NOT NULL`),
+    uniqueIndex('users_phone_uq')
+      .on(t.phone)
+      .where(sql`phone IS NOT NULL`),
+  ],
 );
 
 export const localCredentials = sqliteTable('local_credentials', {
@@ -128,3 +138,54 @@ export const auditLogs = sqliteTable(
   },
   (t) => [index('audit_logs_ts_idx').on(t.ts)],
 );
+
+// ---------- A2：注册体系 ----------
+
+/** 验证码（6 位、5 分钟、哈希存储、单次有效） */
+export const verificationCodes = sqliteTable(
+  'verification_codes',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    /** 'email' | 'phone'（M1 首发邮件通道） */
+    channel: text('channel').notNull(),
+    target: text('target').notNull(),
+    /** 'register' | 'reset' | 'bind' */
+    purpose: text('purpose').notNull(),
+    /** sha256(salt:code)，salt:hash 存本列 */
+    codeHash: text('code_hash').notNull(),
+    ip: text('ip'),
+    createdAt: integer('created_at').notNull(),
+    expiresAt: integer('expires_at').notNull(),
+    consumedAt: integer('consumed_at'),
+  },
+  (t) => [index('verification_codes_target_idx').on(t.channel, t.target, t.createdAt)],
+);
+
+/** 待激活注册（验证邮箱/手机通过后才建 users 行；废弃 N 天清理） */
+export const registrations = sqliteTable(
+  'registrations',
+  {
+    id: text('id').primaryKey(),
+    username: text('username').notNull(),
+    passwordHash: text('password_hash').notNull(),
+    email: text('email'),
+    phone: text('phone'),
+    inviteCode: text('invite_code'),
+    ip: text('ip'),
+    /** 验证码尝试次数（≥5 作废整个注册） */
+    attempts: integer('attempts').notNull().default(0),
+    createdAt: integer('created_at').notNull(),
+    expiresAt: integer('expires_at').notNull(),
+  },
+  (t) => [index('registrations_created_idx').on(t.createdAt)],
+);
+
+/** 邀请码（注册开关第三档；管理员签发，单次使用） */
+export const inviteCodes = sqliteTable('invite_codes', {
+  code: text('code').primaryKey(),
+  createdBy: integer('created_by'),
+  note: text('note'),
+  usedBy: integer('used_by'),
+  usedAt: integer('used_at'),
+  createdAt: integer('created_at').notNull(),
+});

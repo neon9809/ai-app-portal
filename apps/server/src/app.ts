@@ -17,6 +17,8 @@ import { sessionMiddleware } from './lib/session.js';
 import { csrfOriginCheck } from './lib/csrf.js';
 import { healthRouter } from './routes/health.js';
 import { portalRouter } from './routes/portal.js';
+import { authRouter } from './routes/auth.js';
+import { HttpError, toBody } from './lib/httpError.js';
 
 export function createApp(cfg: AapConfig = config): Express {
   const app = express();
@@ -43,6 +45,7 @@ export function createApp(cfg: AapConfig = config): Express {
 
   app.use('/api', healthRouter);
   app.use('/api', portalRouter);
+  app.use('/api', authRouter);
 
   // 未知 API 一律 JSON 404（避免 SPA 兜底吞掉打错的接口）
   app.use('/api', (_req, res) => {
@@ -63,6 +66,11 @@ export function createApp(cfg: AapConfig = config): Express {
   app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     if (typeof err === 'object' && err !== null && 'type' in err && (err as { type?: string }).type === 'entity.parse.failed') {
       res.status(400).json({ error: { code: 'BAD_JSON', message: '请求体不是合法 JSON' } });
+      return;
+    }
+    if (err instanceof HttpError) {
+      const { status, body } = toBody(err);
+      res.status(status).json(body);
       return;
     }
     console.error('[server] unhandled error:', err);

@@ -32,6 +32,9 @@ importers:
       express:
         specifier: ^4.21.2
         version: 4.22.2
+      nodemailer:
+        specifier: ^10.0.8
+        version: 10.0.8
     devDependencies:
       '@types/better-sqlite3':
         specifier: ^7.6.13
@@ -45,6 +48,9 @@ importers:
       '@types/node':
         specifier: ^24.5.2
         version: 24.13.4
+      '@types/nodemailer':
+        specifier: ^8.0.1
+        version: 8.0.1
       drizzle-kit:
         specifier: ^0.31.4
         version: 0.31.10
@@ -969,6 +975,9 @@ packages:
   '@types/node@24.13.4':
     resolution: {integrity: sha512-YJ7EqCstVTzIr0fMr7qul/977en+pQHrfmuKIo6Zr9i75Be21dr3MovcfvGtyvi2HAUrRerWps5sMO9I7WaxDw==}
 
+  '@types/nodemailer@8.0.1':
+    resolution: {integrity: sha512-PxpaInm8V1JQDd4j0ds5HfvWQk8JupS1C0Picb96QJsrrRDjBH+DlK7L4ZdNSqNULhiZRQHc40nLVShaGxXAMw==}
+
   '@types/prop-types@15.7.15':
     resolution: {integrity: sha512-F6bEyamV9jKGAFBEmlQnesRPGOQqS2+Uwi0Em15xenOxHaf2hv6L8YCVn3rPdPJOiJfPiCnLIRyvwVaqMY3MIw==}
 
@@ -1545,6 +1554,10 @@ packages:
   node-releases@2.0.55:
     resolution: {integrity: sha512-mIrE/Cw9y+9Au6dS5vDKDhQza9YvG6w+ZrS6X+ZzA7yFW/soAeaups4Qzn1bL6g5FVy8WtP79+0j82oPIbqRjQ==}
     engines: {node: '>=18'}
+
+  nodemailer@10.0.8:
+    resolution: {integrity: sha512-uCZ0AtFDI46sHwJ6mhwNuIoA/KiTC0ZCzX7g01941+H9VMIXEiZjtgjQkzoBRTeQba0cIrKfwk31q99PfcIMRw==}
+    engines: {node: '>=20.0.0'}
 
   object-inspect@1.13.4:
     resolution: {integrity: sha512-W67iLl4J2EXEGTbfeHCffrjDfitvLANg0UlX3wFUUSTx92KXRFegMHUVgSqE+wvhAbi4WqjGg9czysTV2Epbew==}
@@ -2793,6 +2806,10 @@ snapshots:
     dependencies:
       undici-types: 7.18.2
 
+  '@types/nodemailer@8.0.1':
+    dependencies:
+      '@types/node': 24.13.4
+
   '@types/prop-types@15.7.15': {}
 
   '@types/qs@6.15.1': {}
@@ -3395,6 +3412,8 @@ snapshots:
       semver: 7.8.5
 
   node-releases@2.0.55: {}
+
+  nodemailer@10.0.8: {}
 
   object-inspect@1.13.4: {}
 

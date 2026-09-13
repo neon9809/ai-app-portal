@@ -8,6 +8,13 @@
       "when": 1789278422867,
       "tag": "0000_heavy_vulture",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1789278924515,
+      "tag": "0001_heavy_kulan_gath",
+      "breakpoints": true
     }
   ]
 }

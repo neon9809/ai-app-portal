@@ -42,6 +42,12 @@ function purgeBatched(table: string, column: string, olderThan: number): number 
   return total;
 }
 
+/** 其他模块注册的附加清理任务（如验证码/废弃注册） */
+const extraPurges: Array<(now: number) => void> = [];
+export function registerPurgeTask(fn: (now: number) => void): void {
+  extraPurges.push(fn);
+}
+
 /** 清理过期：审计/登录尝试按保留期；会话/PoW/封禁按各自语义 */
 export function purgeExpired(now = Date.now()): void {
   try {
@@ -52,6 +58,7 @@ export function purgeExpired(now = Date.now()): void {
     purgeBatched('pow_challenges', 'expires_at', now);
     purgeBatched('pow_tokens', 'expires_at', now);
     purgeBatched('ip_bans', 'banned_until', now - 30 * DAY_MS); // 过期封禁留 30 天供查看累犯
+    for (const fn of extraPurges) fn(now);
   } catch (err) {
     console.error('[audit] 清理失败:', err);
   }

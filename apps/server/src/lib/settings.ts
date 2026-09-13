@@ -51,6 +51,12 @@ export const SETTING_DEFS: Record<string, SettingDef> = {
     defaultsWork: true,
   },
   MAX_ACCOUNTS_PER_IP_24H: { type: 'int', desc: '同一 IP 24 小时内最多注册账号数', initial: () => '5', defaultsWork: true },
+  CODE_SEND_DAILY_LIMIT: {
+    type: 'int',
+    desc: '同一邮箱/手机 24 小时内最多收到的验证码条数（防轰炸）',
+    initial: () => '10',
+    defaultsWork: true,
+  },
   REGISTRATION_PENDING_TTL_DAYS: {
     type: 'int',
     desc: '废弃注册（未完成验证）N 天后清理',
