@@ -21,10 +21,12 @@ export function useSession() {
   return { me: q.data ?? null, loading: q.isLoading, refetch: q.refetch };
 }
 
-/** 登录成功后的统一跳转：强制改密 → 强制绑 MFA → 回门户 */
+/** 登录成功后的统一跳转：强制改密 → 强制绑 MFA → 回门户；并刷新会话缓存 */
 export function usePostAuthRedirect(): (r: { mustChangePassword?: boolean; mustEnrollMfa?: boolean }) => void {
   const navigate = useNavigate();
+  const qc = useQueryClient();
   return (r) => {
+    void qc.invalidateQueries({ queryKey: ['me'] });
     if (r.mustChangePassword) {
       navigate('/initialize', { replace: true });
     } else if (r.mustEnrollMfa) {

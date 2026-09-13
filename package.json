@@ -10,10 +10,13 @@
     "dev": "pnpm --filter @aap/shared build && pnpm -r --parallel dev",
     "build": "pnpm --filter @aap/shared build && pnpm -r build",
     "test": "pnpm -r test",
+    "test:e2e": "playwright test -c e2e/playwright.config.ts",
     "typecheck": "pnpm -r typecheck",
     "db:generate": "pnpm --filter @aap/server db:generate"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "otplib": "^13.5.0",
     "typescript": "^5.9.2"
   }
 }

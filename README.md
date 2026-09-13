@@ -29,11 +29,29 @@
 ```bash
 pnpm install
 pnpm dev          # server: http://localhost:8080 · web: http://localhost:5173
-pnpm test         # 全部测试
+pnpm test         # 单元/集成测试（服务端 49 个）
+pnpm test:e2e     # Playwright 端到端（自动起真实服务 + mock 上游）
 pnpm typecheck    # 全部类型检查
 ```
 
 要求 Node ≥ 22。
+
+## M1 当前进度（工作包）
+
+| 工作包 | 状态 |
+|---|---|
+| W0 契约文档（app-develop v0.2 / internal v2.1） | ✅ |
+| W1 monorepo 骨架 + 主题系统 | ✅ |
+| W2 安全内核（scrypt/会话/PoW/封禁/审计/CSRF） | ✅ |
+| W3 账号与注册 A2（两步注册/验证码/邀请码） | ✅ |
+| W4 MFA A3（TOTP/Passkey/状态机/步升） | ✅ |
+| W5 应用网关 B1/B2/B4（路径反代/WS/三态门禁/限流） | ✅ |
+| W6 自动 HTTPS B3（PEM 热替换/ACME/续期） | ✅ |
+| W7 门户 UI A1（卡片墙/品牌/6 主题/备案） | ✅ |
+| W8 用户中心 A4（资料/会话/注销冷静期） | ✅ |
+| W9 管理后台 E1/E2（向导/仪表卡/防呆） | ✅ |
+| W10 分发 F1/F2（Dockerfile/compose/FPK 脚手架） | ✅（镜像构建待有 Docker Hub 网络时验证） |
+| W11 集成验收（E2E 主链路 ×3） | ✅（ACME staging 与真人走查待办） |
 
 ## 里程碑
 
