@@ -24,6 +24,7 @@ import { adminAppsRouter } from './routes/adminApps.js';
 import { adminTlsRouter } from './routes/adminTls.js';
 import { userRouter } from './routes/user.js';
 import { adminRouter } from './routes/admin.js';
+import { guideRouter } from './routes/guide.js';
 import { gatewayRouter } from './gateway/proxy.js';
 import { acmeChallengeResponse } from './gateway/tls.js';
 import { getSettingBool } from './lib/settings.js';
@@ -86,6 +87,7 @@ export function createApp(cfg: AapConfig = config): Express {
   app.use('/api', adminTlsRouter);
   app.use('/api', userRouter);
   app.use('/api', adminRouter);
+  app.use('/api', guideRouter);
 
   // 应用网关（B1）：/app/<id>/ 路径反代。必须在 SPA 兜底之前挂载；
   // 不经过 express.json（流式 body 保真），CSRF 不适用（仅 /api 挂载）。

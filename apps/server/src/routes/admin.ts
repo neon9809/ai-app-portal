@@ -129,6 +129,7 @@ adminRouter.get(
         key: s.key,
         value: s.value,
         type: s.def.type,
+        group: s.def.group,
         desc: s.def.desc,
         secret: Boolean(s.def.secret),
         advanced: Boolean(s.def.advanced),

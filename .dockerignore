@@ -10,9 +10,11 @@ data/
 *.db-wal
 *.db-shm
 
-# 参考实现与文档（不进镜像）
+# 参考实现与文档（仅指南文件经 Dockerfile 显式 COPY 进镜像）
 office-tool/
 ai-app-portal-docs/
+!ai-app-portal-docs/app-develop.skill-v0.2.md
+!ai-app-portal-docs/app-develop-internal.skill.md
 docs/
 
 # git 与编辑器

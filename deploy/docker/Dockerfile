@@ -30,6 +30,10 @@ COPY --from=build /app/apps/server/dist ./dist
 COPY --from=build /app/apps/server/drizzle ./drizzle
 # 前端构建产物（server 生产托管 + SPA 兜底）
 COPY --from=build /app/apps/web/dist ./public
+# 开发指南与平台文档（右上角「开发指南」页数据源）
+COPY --from=build /app/ai-app-portal-docs/app-develop.skill-v0.2.md ./assets/app-develop.skill-v0.2.md
+COPY --from=build /app/README.md ./assets/README.md
+COPY --from=build /app/ai-app-portal-docs/app-develop-internal.skill.md ./assets/app-develop-internal.skill.md
 
 ENV NODE_ENV=production \
     DATA_DIR=/data \

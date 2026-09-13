@@ -9,6 +9,8 @@ services:
     build:
       context: ../..
       dockerfile: deploy/docker/Dockerfile
+    # 本地构建镜像；正式部署改为拉取发布镜像：
+    #   image: ghcr.io/neon9809/ai-app-portal:latest（CI 随 tag 自动发布多架构）
     image: ai-app-portal:latest
     container_name: ai-app-portal
     restart: unless-stopped

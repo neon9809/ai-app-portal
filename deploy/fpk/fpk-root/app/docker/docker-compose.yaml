@@ -1,0 +1,14 @@
+services:
+  ai-app-portal:
+    image: __IMAGE_REF__:__VERSION__
+    container_name: ai-app-portal
+    restart: unless-stopped
+    ports:
+      - "${SERVICE_PORT:-8080}:8080"   # service_port：业务流量入口（不走飞牛统一网关）
+    volumes:
+      - /var/apps/ai-app-portal/data:/data
+    environment:
+      NODE_ENV: production
+      DATA_DIR: /data
+      TRIM_APPDEST: "${TRIM_APPDEST}"
+      TRIM_PKGVAR: "${TRIM_PKGVAR}"

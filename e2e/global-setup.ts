@@ -11,7 +11,7 @@ import path from 'node:path';
  */
 
 export const PORTAL = 'http://127.0.0.1:9910';
-export const UPSTREAM = 'http://127.0.0.1:9911';
+export const UPSTREAM = 'http://127.0.0.1:9912'; // 避开本地体验用的 9911
 export const INIT_ADMIN_PASSWORD = 'e2e-init-password';
 export const ADMIN_NEW_PASSWORD = 'e2e-new-password-123';
 
@@ -48,7 +48,7 @@ export async function setup(): Promise<void> {
         `<p>url=${url}</p></body></html>`,
     );
   });
-  await new Promise<void>((r) => upstream!.listen(9911, '127.0.0.1', r));
+  await new Promise<void>((r) => upstream!.listen(9912, '127.0.0.1', r));
 
   // 门户服务（tsx 直跑，生产 web 产物由 WEB_DIST 指定）
   const serverDir = path.join(__dirname, '../apps/server');

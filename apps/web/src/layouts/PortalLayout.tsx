@@ -1,10 +1,10 @@
-import { ColorPicker, Select, Space, Button, theme as antdTheme } from 'antd';
+import { Space, Button, theme as antdTheme } from 'antd';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, Outlet, useNavigate } from 'react-router-dom';
 import { UserOutlined, LogoutOutlined } from '@ant-design/icons';
 import type { PortalBootstrap } from '@aap/shared';
 import { api } from '../api/client';
-import { BUILTIN_THEMES, useTheme } from '../theme/themes';
+import { useTheme } from '../theme/themes';
 import { BeianFooter } from '../components/BeianFooter';
 import { useSession, useLogout } from '../state/session';
 
@@ -21,7 +21,6 @@ export function PortalLayout() {
   });
   const { me } = useSession();
   const logout = useLogout();
-  const { themeId, accent, setThemeId, setAccent } = useTheme();
   const { token } = antdTheme.useToken();
 
   const branding = data?.branding;
@@ -56,22 +55,9 @@ export function PortalLayout() {
         {branding?.tagline ? <span className="aap-tagline">{branding.tagline}</span> : null}
         <div style={{ flex: 1 }} />
         <Space size="small" wrap={false}>
-          <Select
-            size="small"
-            value={themeId}
-            onChange={setThemeId}
-            style={{ width: 120 }}
-            options={BUILTIN_THEMES.map((t) => ({ value: t.id, label: t.name }))}
-            aria-label="选择主题"
-          />
-          <ColorPicker
-            size="small"
-            value={accent ?? undefined}
-            onChange={(c) => setAccent(c.toHexString())}
-            onClear={() => setAccent(null)}
-            allowClear
-            showText={false}
-          />
+          <Link to="/guide" style={{ fontSize: 13 }}>
+            开发指南
+          </Link>
           {me ? (
             <>
               {me.user.role === 'admin' ? (

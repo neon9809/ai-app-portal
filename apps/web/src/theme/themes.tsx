@@ -7,7 +7,9 @@
 import { ConfigProvider, theme as antdTheme, type ThemeConfig } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { BUILTIN_THEME_IDS, type BuiltinThemeId } from '@aap/shared';
+import { useQuery } from '@tanstack/react-query';
+import { BUILTIN_THEME_IDS, type BuiltinThemeId, type PortalBootstrap } from '@aap/shared';
+import { api } from '../api/client';
 
 export interface AapThemeColors {
   primary: string;
@@ -146,6 +148,8 @@ interface ThemeContextValue {
   accent: string | null;
   setThemeId: (id: string) => void;
   setAccent: (c: string | null) => void;
+  /** 清除个人偏好，回到管理员配置的默认主题 */
+  resetPersonal: () => void;
 }
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
@@ -156,23 +160,20 @@ export function useTheme(): ThemeContextValue {
   return v;
 }
 
-export function ThemeProvider({
-  children,
-  initialThemeId,
-  initialAccent,
-}: {
-  children: ReactNode;
-  /** 服务端品牌数据（settings）作为默认值；本地选择覆盖之 */
-  initialThemeId?: string | null;
-  initialAccent?: string | null;
-}): ReactNode {
-  const [themeId, setThemeId] = useState<string>(
-    () => localStorage.getItem(LS_THEME) ?? initialThemeId ?? 'ocean',
-  );
-  const [accent, setAccent] = useState<string | null>(
-    () => localStorage.getItem(LS_ACCENT) || initialAccent || null,
-  );
+export function ThemeProvider({ children }: { children: ReactNode }): ReactNode {
+  // R3 主题归属：默认主题/强调色由管理员在后台配置（settings，经 bootstrap 下发）；
+  // 用户在本页（个人中心-外观）做的选择写入 localStorage，仅覆盖本人浏览器。
+  const boot = useQuery({
+    queryKey: ['bootstrap'],
+    queryFn: () => api<PortalBootstrap>('/api/portal/bootstrap'),
+    staleTime: 60_000,
+    retry: 1,
+  });
+  const [personalThemeId, setPersonalThemeId] = useState<string | null>(() => localStorage.getItem(LS_THEME));
+  const [personalAccent, setPersonalAccent] = useState<string | null>(() => localStorage.getItem(LS_ACCENT));
 
+  const themeId = personalThemeId ?? boot.data?.branding.themeId ?? 'ocean';
+  const accent = personalAccent ?? boot.data?.branding.accentColor ?? null;
   const theme = getTheme(themeId);
 
   useEffect(() => {
@@ -186,12 +187,19 @@ export function ThemeProvider({
       accent,
       setThemeId: (id: string) => {
         localStorage.setItem(LS_THEME, id);
-        setThemeId(id);
+        setPersonalThemeId(id);
       },
       setAccent: (c: string | null) => {
         if (c) localStorage.setItem(LS_ACCENT, c);
         else localStorage.removeItem(LS_ACCENT);
-        setAccent(c);
+        setPersonalAccent(c);
+      },
+      /** 清除个人偏好，回到管理员配置的默认 */
+      resetPersonal: () => {
+        localStorage.removeItem(LS_THEME);
+        localStorage.removeItem(LS_ACCENT);
+        setPersonalThemeId(null);
+        setPersonalAccent(null);
       },
     }),
     [theme, themeId, accent],

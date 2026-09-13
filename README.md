@@ -53,6 +53,14 @@ pnpm typecheck    # 全部类型检查
 | W10 分发 F1/F2（Dockerfile/compose/FPK 脚手架） | ✅（镜像构建待有 Docker Hub 网络时验证） |
 | W11 集成验收（E2E 主链路 ×3） | ✅（ACME staging 与真人走查待办） |
 
+## 发布（CI）
+
+push 到 `main` 或打 `v*` tag 时，GitHub Actions 自动：
+1. 构建多架构镜像（amd64/arm64）并发布到 **ghcr.io/neon9809/ai-app-portal**（main → `latest`，tag → 版本号）
+2. 真实容器冒烟（`/api/health`）→ 打包 **FPK**（镜像引用与版本一致性校验）→ 附着到 GitHub Release
+
+发布只走 ghcr.io（Docker Hub 不使用）。tag 版本必须与根 `package.json.version` 一致。
+
 ## 里程碑
 
 - **M1 门户可用**：路径反代（HTTP+WS/SSE）、自动 HTTPS、本地账号+注册、MFA（TOTP+Passkey）、用户中心、管理后台、Docker/FPK 分发

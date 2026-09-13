@@ -53,6 +53,7 @@ interface SettingRow {
   key: string;
   value: string;
   type: 'string' | 'int' | 'bool';
+  group: string;
   desc: string;
   secret: boolean;
   advanced: boolean;
@@ -503,10 +504,30 @@ function SettingsTab() {
 
   const groups = useMemo(() => {
     const all = settingsQ.data?.settings ?? [];
-    return {
-      basic: all.filter((s) => !s.advanced),
-      advanced: all.filter((s) => s.advanced),
-    };
+    const basic = all.filter((s) => !s.advanced);
+    const advanced = all.filter((s) => s.advanced);
+    // 基础项按 group 分块（保持 settings 定义顺序）
+    const order: string[] = [];
+    const map = new Map<string, SettingRow[]>();
+    for (const s of basic) {
+      const g = s.group || '其他';
+      if (!map.has(g)) {
+        map.set(g, []);
+        order.push(g);
+      }
+      map.get(g)!.push(s);
+    }
+    const advOrder: string[] = [];
+    const advMap = new Map<string, SettingRow[]>();
+    for (const s of advanced) {
+      const g = s.group || '其他';
+      if (!advMap.has(g)) {
+        advMap.set(g, []);
+        advOrder.push(g);
+      }
+      advMap.get(g)!.push(s);
+    }
+    return { basicGroups: order.map((g) => [g, map.get(g)!] as const), advancedGroups: advOrder.map((g) => [g, advMap.get(g)!] as const) };
   }, [settingsQ.data]);
 
   useEffect(() => {
@@ -543,46 +564,60 @@ function SettingsTab() {
     return <Input placeholder={s.defaultsWork ? '（默认值即可）' : ''} />;
   }
 
-  return (
-    <Card
-      title="安全与站点策略"
-      extra={
-        <Space>
-          <Switch checkedChildren="高级" unCheckedChildren="高级" checked={showAdvanced} onChange={setShowAdvanced} />
-          <Button type="primary" loading={saving} onClick={() => void save()}>保存（即时生效）</Button>
+  function renderItem(s: SettingRow): ReactNode {
+    return (
+      <Form.Item key={s.key} name={s.key} label={
+        <Space size="small" wrap>
+          <span>{s.desc.split('（')[0]}</span>
+          {s.defaultsWork ? <Tag bordered={false} color="green" style={{ fontSize: 11 }}>默认值即可跑</Tag> : null}
+          <Typography.Text code style={{ fontSize: 11 }}>{s.key}</Typography.Text>
         </Space>
-      }
-    >
-      <Form form={form} layout="vertical">
-        {groups.basic.map((s) => (
-          <Form.Item key={s.key} name={s.key} label={
-            <Space size="small" wrap>
-              <span>{s.desc.split('（')[0]}</span>
-              {s.defaultsWork ? <Tag bordered={false} color="green" style={{ fontSize: 11 }}>默认值即可跑</Tag> : null}
-              <Typography.Text code style={{ fontSize: 11 }}>{s.key}</Typography.Text>
-            </Space>
-          } extra={s.desc}>
-            {renderInput(s)}
-          </Form.Item>
-        ))}
-        {showAdvanced ? (
-          <>
-            <Typography.Title level={5} style={{ marginTop: 8 }}>高级项（默认值即可跑，无必要时不要修改）</Typography.Title>
-            {groups.advanced.map((s) => (
-              <Form.Item key={s.key} name={s.key} label={
-                <Space size="small" wrap>
-                  <span>{s.desc.split('（')[0]}</span>
-                  <Typography.Text code style={{ fontSize: 11 }}>{s.key}</Typography.Text>
-                </Space>
-              } extra={s.desc}>
-                {renderInput(s)}
-              </Form.Item>
-            ))}
-          </>
-        ) : null}
-      </Form>
-    </Card>
+      } extra={s.desc}>
+        {renderInput(s)}
+      </Form.Item>
+    );
+  }
+
+  return (
+    <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+      {groups.basicGroups.map(([g, items]) => (
+        <Card
+          key={g}
+          size="small"
+          title={g}
+          extra={<Tag bordered={false} style={{ fontSize: 11 }}>{items.length} 项</Tag>}
+        >
+          {items.map(renderItem)}
+        </Card>
+      ))}
+
+      {showAdvanced ? (
+        <>
+          {groups.advancedGroups.map(([g, items]) => (
+            <Card
+              key={`adv-${g}`}
+              size="small"
+              title={`高级 · ${g}`}
+              style={{ opacity: 0.92 }}
+              extra={<Tag bordered={false} color="orange" style={{ fontSize: 11 }}>默认值即可跑，无必要不改</Tag>}
+            >
+              {items.map(renderItem)}
+            </Card>
+          ))}
+        </>
+      ) : null}
+
+      <Card size="small">
+        <Space>
+          <Switch checkedChildren="显示高级项" unCheckedChildren="显示高级项" checked={showAdvanced} onChange={setShowAdvanced} />
+          <Button type="primary" loading={saving} onClick={() => void save()}>
+            保存（即时生效）
+          </Button>
+        </Space>
+      </Card>
+    </Space>
   );
+
 }
 
 // ---------- 证书 ----------

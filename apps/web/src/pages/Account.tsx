@@ -4,6 +4,7 @@
  */
 import {
   Alert,
+  ColorPicker,
   Button,
   Card,
   Descriptions,
@@ -23,6 +24,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../api/client';
 import { obtainPowToken } from '../lib/pow';
 import { useSession } from '../state/session';
+import { BUILTIN_THEMES, useTheme } from '../theme/themes';
 
 // ---------- 步升认证弹窗 ----------
 
@@ -280,6 +282,11 @@ export function AccountPage() {
       <Tabs
         items={[
           {
+            key: 'appearance',
+            label: '外观',
+            children: <AppearanceTab />,
+          },
+          {
             key: 'profile',
             label: '个人资料',
             children: (
@@ -505,5 +512,50 @@ export function AccountPage() {
         </Form>
       </Modal>
     </div>
+  );
+}
+
+// ---------- 外观（R3：个性化主题；默认主题由管理员配置） ----------
+
+function AppearanceTab(): ReactNode {
+  const { theme, themeId, accent, setThemeId, setAccent, resetPersonal } = useTheme();
+  void theme;
+  return (
+    <Card title="个性化外观" extra={<Button size="small" onClick={resetPersonal}>恢复站点默认</Button>}>
+      <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
+        站点默认主题与强调色由管理员统一配置；这里的选择只对你本人当前浏览器生效。
+      </Typography.Paragraph>
+      <Typography.Title level={5} style={{ fontSize: 13 }}>主题</Typography.Title>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 10 }}>
+        {BUILTIN_THEMES.map((t) => (
+          <div
+            key={t.id}
+            onClick={() => setThemeId(t.id)}
+            style={{
+              border: `2px solid ${t.id === themeId ? 'var(--aap-primary)' : 'var(--aap-border)'}`,
+              borderRadius: 10,
+              padding: 10,
+              cursor: 'pointer',
+              background: t.colors.bgLayout,
+            }}
+          >
+            <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+              {[t.colors.primary, t.colors.accent, t.colors.bgContainer].map((c, i) => (
+                <span key={i} style={{ width: 18, height: 18, borderRadius: 5, background: c, border: '1px solid rgba(0,0,0,0.08)', display: 'inline-block' }} />
+              ))}
+            </div>
+            <div style={{ color: t.colors.text, fontSize: 13, fontWeight: 600 }}>
+              {t.name}
+              {t.id === themeId ? <span style={{ color: t.colors.primary }}> · 当前</span> : null}
+            </div>
+          </div>
+        ))}
+      </div>
+      <Typography.Title level={5} style={{ fontSize: 13, marginTop: 16 }}>强调色</Typography.Title>
+      <Space>
+        <ColorPicker value={accent ?? undefined} onChange={(c: { toHexString: () => string }) => setAccent(c.toHexString())} onClear={() => setAccent(null)} allowClear showText />
+        <Typography.Text type="secondary">{accent ?? '跟随主题默认'}</Typography.Text>
+      </Space>
+    </Card>
   );
 }
