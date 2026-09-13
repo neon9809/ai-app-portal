@@ -14,6 +14,8 @@ WORKDIR /app
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json tsconfig.base.json ./
 COPY packages ./packages
 COPY apps ./apps
+COPY ai-app-portal-docs ./ai-app-portal-docs
+COPY README.md ./README.md
 RUN pnpm install --frozen-lockfile
 # 依次构建：shared（被 server/web 引用）→ server → web
 RUN pnpm --filter @aap/shared build \
