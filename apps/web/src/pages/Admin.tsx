@@ -69,6 +69,7 @@ interface GroupRow {
 interface SettingRow {
   key: string;
   value: string;
+  label: string;
   type: 'string' | 'int' | 'bool';
   group: string;
   options?: string[];
@@ -166,19 +167,12 @@ function SettingsForm({ groups, excludeKeys = [] }: { groups: string[]; excludeK
   }
 
   function renderItem(s: SettingRow): ReactNode {
-    const short = s.desc.split('（')[0];
-    const tooltip = short === s.desc ? `配置键：${s.key}` : `${s.desc}\n配置键：${s.key}`;
     return (
       <Form.Item
         key={s.key}
         name={s.key}
-        label={
-          <Space size="small" wrap>
-            <span>{short}</span>
-            {!s.defaultsWork ? <Tag bordered={false} color="orange" style={{ fontSize: 11 }}>需配置</Tag> : null}
-          </Space>
-        }
-        tooltip={tooltip}
+        label={s.label}
+        tooltip={s.desc}
         valuePropName={s.type === 'bool' ? 'checked' : 'value'}
       >
         {renderControl(s, form)}
@@ -1075,8 +1069,8 @@ function MailTab(): ReactNode {
         <Form form={form} layout="vertical">
           <Form.Item
             name="MAIL_PROVIDER"
-            label="发信方式（互斥）"
-            tooltip="Resend API：仅需 API Key 即可发信；配置键 MAIL_PROVIDER"
+            label="发信方式"
+            tooltip="Resend API：仅需 API Key 即可发信；SMTP 与 Resend 互斥（配置键 MAIL_PROVIDER）"
           >
             <Select
               options={[
@@ -1089,20 +1083,11 @@ function MailTab(): ReactNode {
 
           {visible
             .filter((s) => s.key !== 'MAIL_PROVIDER')
-            .map((s) => {
-              const short = s.desc.split('（')[0];
-              const tooltip = short === s.desc ? `配置键：${s.key}` : `${s.desc}\n配置键：${s.key}`;
-              return (
-                <Form.Item
-                  key={s.key}
-                  name={s.key}
-                  label={short}
-                  tooltip={tooltip}
-                >
-                  {renderControl(s, form, true)}
-                </Form.Item>
-              );
-            })}
+            .map((s) => (
+              <Form.Item key={s.key} name={s.key} label={s.label} tooltip={s.desc}>
+                {renderControl(s, form, true)}
+              </Form.Item>
+            ))}
 
           <Button type="primary" loading={saving} onClick={() => void save()}>
             保存（即时生效）

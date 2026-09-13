@@ -11,6 +11,8 @@ import { settings } from '../db/schema.js';
 
 export interface SettingDef {
   type: 'string' | 'int' | 'bool';
+  /** 短名称（管理面板标签） */
+  label: string;
   desc: string;
   /** 下拉选项（value→label）；渲染为 Select */
   choiceLabels?: Record<string, string>;
@@ -33,8 +35,10 @@ export interface SettingDef {
 export const SETTING_DEFS: Record<string, SettingDef> = {
   // ---- 品牌（A1，数据化品牌，默认纯净） ----
   SITE_NAME: {
+    label: '站点名称',
     group: '站点与品牌', type: 'string', desc: '站点名称', initial: () => 'AI应用门户', defaultsWork: true },
   SITE_TAGLINE: {
+    label: '站点标语',
     group: '站点与品牌',
     type: 'string',
     desc: '站点标语（门户副标题）',
@@ -42,8 +46,10 @@ export const SETTING_DEFS: Record<string, SettingDef> = {
     defaultsWork: true,
   },
   LOGO: {
+    label: 'Logo 图片',
     group: '站点与品牌', type: 'string', desc: 'Logo 图片（data URI 或 /uploads 路径，留空用站名文字）', initial: () => '', defaultsWork: true },
   THEME_ID: {
+    label: '默认主题',
     group: '站点与品牌',
     type: 'string',
     choiceLabels: { ocean: '海雾蓝', aurora: '极光青', forest: '松林绿', sunset: '暖阳橙', sakura: '樱粉', graphite: '石墨（暗色）' },
@@ -52,25 +58,32 @@ export const SETTING_DEFS: Record<string, SettingDef> = {
     defaultsWork: true,
   },
   ACCENT_COLOR: {
+    label: '默认强调色',
     group: '站点与品牌', type: 'string', desc: '自定义强调色（#RRGGBB，留空用主题默认）', initial: () => '', defaultsWork: true },
   FOOTER_TEXT: {
+    label: '页脚文案',
     group: '站点与品牌', type: 'string', desc: '页脚文案', initial: () => '', defaultsWork: true },
   ICP_NUMBER: {
+    label: 'ICP 备案号',
     group: '站点与品牌', type: 'string', desc: 'ICP 备案号（自动带工信部查询链接，留空不显示）', initial: () => '', defaultsWork: true },
   POLICE_NUMBER: {
+    label: '公安备案号',
     group: '站点与品牌', type: 'string', desc: '公安备案号（自动带公安备案查询链接，留空不显示）', initial: () => '', defaultsWork: true },
 
   // ---- 注册与账号（A2） ----
   REGISTRATION_MODE: {
+    label: '注册开关',
     group: '注册与账号',
     type: 'string',
-    choiceLabels: { closed: '关闭', open: '开放', invite: '开放+邀请码' },
+    choiceLabels: { closed: '关闭', open: '开放', invite: '邀请注册' },
     desc: '注册开关：closed 关闭 / open 开放 / invite 开放+邀请码（默认关闭）',
     initial: () => 'closed',
     defaultsWork: true,
   },
-  MAX_ACCOUNTS_PER_IP_24H: { group: '注册与账号', type: 'int', desc: '同一 IP 24 小时内最多注册账号数', initial: () => '5', defaultsWork: true },
+  MAX_ACCOUNTS_PER_IP_24H: {
+    label: '同 IP 注册上限（24h）', group: '注册与账号', type: 'int', desc: '同一 IP 24 小时内最多注册账号数', initial: () => '5', defaultsWork: true },
   CODE_SEND_DAILY_LIMIT: {
+    label: '验证码日限额',
     group: '注册与账号',
     type: 'int',
     desc: '同一邮箱/手机 24 小时内最多收到的验证码条数（防轰炸）',
@@ -78,6 +91,7 @@ export const SETTING_DEFS: Record<string, SettingDef> = {
     defaultsWork: true,
   },
   DELETION_COOLDOWN_DAYS: {
+    label: '注销冷静期（天）',
     group: '注册与账号',
     type: 'int',
     desc: '注销冷静期（天）：期内可撤回，到期数据匿名化',
@@ -85,20 +99,25 @@ export const SETTING_DEFS: Record<string, SettingDef> = {
     defaultsWork: true,
   },
   OIDC_ISSUER: {
+    label: 'OIDC Issuer 地址',
     group: '注册与账号', type: 'string',
     desc: 'OIDC Issuer URL（如 https://id.example.com；与 Client ID/Secret 同时配置即启用单点登录，重启生效）',
     initial: () => '', defaultsWork: false },
   OIDC_CLIENT_ID: {
+    label: 'OIDC Client ID',
     group: '注册与账号', type: 'string',
     desc: 'OIDC Client ID', initial: () => '', defaultsWork: false },
   OIDC_CLIENT_SECRET: {
+    label: 'OIDC Client Secret',
     group: '注册与账号', type: 'string',
     desc: 'OIDC Client Secret', initial: () => '', secret: true, defaultsWork: false },
   OIDC_ADMIN_SUBJECTS: {
+    label: 'OIDC 管理员白名单',
     group: '注册与账号', type: 'string',
     desc: '自动提升管理员的 subject/邮箱（逗号分隔；仅首次登录生效）',
     initial: () => '', defaultsWork: true, advanced: true },
   REGISTRATION_PENDING_TTL_DAYS: {
+    label: '废弃注册清理（天）',
     group: '注册与账号',
     type: 'int',
     desc: '废弃注册（未完成验证）N 天后清理',
@@ -109,8 +128,10 @@ export const SETTING_DEFS: Record<string, SettingDef> = {
 
   // ---- 安全栈调优（默认值即可跑） ----
   POW_ENABLED: {
+    label: 'PoW 防爆破开关',
     group: '安全与限流', type: 'bool', desc: '登录失败超阈值后要求 PoW 工作量证明', initial: () => 'true', defaultsWork: true },
   AAP_SIGN_SECRET: {
+    label: '身份签名密钥',
     group: '安全与限流',
     type: 'string',
     desc: '身份注入头 HMAC 签名密钥（应用侧验签用；泄露需轮换）',
@@ -119,32 +140,46 @@ export const SETTING_DEFS: Record<string, SettingDef> = {
     advanced: true,
   },
   SESSION_TTL: {
+    label: '会话有效期（秒）',
     group: '安全与限流', type: 'int', desc: '会话有效期（秒）', initial: () => String(config.sessionTtlSec), defaultsWork: true, advanced: true },
   POW_DIFFICULTY_BASE: {
+    label: 'PoW 基础难度',
     group: '安全与限流', type: 'int', desc: 'PoW 基础难度（前导零位数）', initial: () => String(config.powDifficultyBase), defaultsWork: true, advanced: true },
   POW_DIFFICULTY_STEP: {
+    label: 'PoW 难度步进',
     group: '安全与限流', type: 'int', desc: 'PoW 难度步进（每超阈值失败数 +2）', initial: () => String(config.powDifficultyStep), defaultsWork: true, advanced: true },
   POW_DIFFICULTY_MAX: {
+    label: 'PoW 难度上限',
     group: '安全与限流', type: 'int', desc: 'PoW 难度上限（保证浏览器可解）', initial: () => String(config.powDifficultyMax), defaultsWork: true, advanced: true },
   POW_CHALLENGE_TTL: {
+    label: 'PoW 挑战时效（秒）',
     group: '安全与限流', type: 'int', desc: 'PoW 挑战有效期（秒）', initial: () => String(config.powChallengeTtlSec), defaultsWork: true, advanced: true },
   POW_TOKEN_TTL: {
+    label: 'PoW 凭证时效（秒）',
     group: '安全与限流', type: 'int', desc: 'PoW 凭证有效期（秒）', initial: () => String(config.powTokenTtlSec), defaultsWork: true, advanced: true },
   LOGIN_FAIL_WINDOW: {
+    label: '登录失败窗口（秒）',
     group: '安全与限流', type: 'int', desc: '登录失败计数窗口（秒）', initial: () => String(config.loginFailWindowSec), defaultsWork: true, advanced: true },
   LOGIN_FAIL_THRESHOLD: {
+    label: '登录失败阈值',
     group: '安全与限流', type: 'int', desc: '窗口内失败多少次触发 PoW / 封禁计数', initial: () => String(config.loginFailThreshold), defaultsWork: true, advanced: true },
   IP_BAN_THRESHOLD: {
+    label: 'IP 封禁阈值',
     group: '安全与限流', type: 'int', desc: '窗口内失败多少次自动封禁 IP', initial: () => String(config.ipBanThreshold), defaultsWork: true, advanced: true },
   IP_BAN_BASE_SECONDS: {
+    label: '封禁基础时长（秒）',
     group: '安全与限流', type: 'int', desc: '封禁基础时长（秒）', initial: () => String(config.ipBanBaseSec), defaultsWork: true, advanced: true },
   IP_BAN_MULTIPLIER: {
+    label: '累犯时长倍数',
     group: '安全与限流', type: 'int', desc: '累犯封禁时长倍数（2 = 翻倍）', initial: () => String(config.ipBanMultiplier), defaultsWork: true, advanced: true },
   IP_BAN_MAX_SECONDS: {
+    label: '封禁上限（秒）',
     group: '安全与限流', type: 'int', desc: '封禁时长上限（秒）', initial: () => String(config.ipBanMaxSec), defaultsWork: true, advanced: true },
   AUDIT_RETENTION_DAYS: {
+    label: '审计保留（天）',
     group: '安全与限流', type: 'int', desc: '审计日志保留天数', initial: () => String(config.auditRetentionDays), defaultsWork: true, advanced: true },
   MFA_STEPUP_TTL: {
+    label: '步升认证时效（秒）',
     group: '安全与限流',
     type: 'int',
     desc: '步升认证有效期（秒）：重验一次因子后免重验窗口',
@@ -153,28 +188,37 @@ export const SETTING_DEFS: Record<string, SettingDef> = {
     advanced: true,
   },
   RATE_USER_PER_MIN: {
+    label: '用户限流（次/分）',
     group: '应用网关', type: 'int', desc: '应用网关限流：每用户请求/分', initial: () => String(config.rateUserPerMin), defaultsWork: true, advanced: true },
   SHOW_TOPUP_PANEL: {
+    label: '显示充值面板',
     group: '计费', type: 'bool',
     desc: '用户中心是否显示「额度充值」面板（关闭后用户只能使用兑换码/管理员发放）',
     initial: () => 'true', defaultsWork: true },
   TOPUP_TOKENS_PER_FEN: {
+    label: '充值单价（token/分）',
     group: '计费', type: 'int',
     desc: '充值单价：每 1 分钱到账的 token 数（100 = 1 元 1000 token）',
     initial: () => '1000', defaultsWork: true },
   RATE_LLM_PER_MIN: {
+    label: 'LLM 凭据限流（次/分）',
     group: '应用网关', type: 'int', desc: 'LLM 网关凭据默认限流（请求/分，凭据可单独覆写）', initial: () => '60', defaultsWork: true, advanced: true },
   RATE_IP_PER_MIN: {
+    label: 'IP 限流（次/分）',
     group: '应用网关', type: 'int', desc: '应用网关限流：每 IP 兜底请求/分', initial: () => String(config.rateIpPerMin), defaultsWork: true, advanced: true },
   PROXY_TIMEOUT: {
+    label: '上游超时（秒）',
     group: '应用网关', type: 'int', desc: '应用网关上游超时（秒，仅覆盖首字节/HTML 拉取，不断流式连接）', initial: () => String(config.proxyTimeoutSec), defaultsWork: true, advanced: true },
 
   // ---- HTTPS / 证书（B3；默认纯门户模式 = 不启 HTTPS，反代外置） ----
   ACME_DOMAIN: {
+    label: 'ACME 签发域名',
     group: '证书与 HTTPS', type: 'string', desc: 'ACME 签发域名（填写即启用自动 HTTPS，需 80 端口可达；留空走纯门户模式）', initial: () => '', defaultsWork: true },
   ACME_EMAIL: {
+    label: 'ACME 邮箱',
     group: '证书与 HTTPS', type: 'string', desc: 'ACME 账户邮箱（证书到期通知）', initial: () => '', defaultsWork: false },
   ACME_STAGING: {
+    label: 'LE 测试环境',
     group: '证书与 HTTPS',
     type: 'bool',
     desc: '使用 Let\'s Encrypt 测试环境（避免触发正式环境限频，跑通后关闭）',
@@ -183,33 +227,42 @@ export const SETTING_DEFS: Record<string, SettingDef> = {
     advanced: true,
   },
   HTTPS_REDIRECT: {
+    label: 'HTTP 跳转 HTTPS',
     group: '证书与 HTTPS', type: 'bool', desc: 'HTTP 请求自动跳转 HTTPS（ACME 挑战路径除外）', initial: () => 'false', defaultsWork: true },
 
   // ---- 人机验证（可选，填 key 即启用，默认 PoW 兜底） ----
   TURNSTILE_SITE_KEY: {
-    group: '人机验证', type: 'string', desc: 'Cloudflare Turnstile 站点密钥（留空则只用 PoW）', initial: () => '', defaultsWork: true },
+    group: '人机验证', label: 'Turnstile 站点密钥', type: 'string', desc: 'Cloudflare Turnstile 站点密钥（留空则只用 PoW）', initial: () => '', defaultsWork: true },
   TURNSTILE_SECRET_KEY: {
-    group: '人机验证', type: 'string', desc: 'Turnstile 服务端密钥', initial: () => '', secret: true, defaultsWork: true },
+    group: '人机验证', label: 'Turnstile 服务端密钥', type: 'string', desc: 'Turnstile 服务端密钥', initial: () => '', secret: true, defaultsWork: true },
 
   // ---- 通知通道（A2，验证码发信：邮件 [Resend/SMTP] 与未来短信） ----
   SMTP_HOST: {
+    label: 'SMTP 服务器',
     group: '通知通道（验证码发信）', type: 'string', desc: 'SMTP 服务器（注册/找回/绑定邮箱验证码发信）', initial: () => '', defaultsWork: false },
   SMTP_PORT: {
+    label: 'SMTP 端口',
     group: '通知通道（验证码发信）', type: 'int', desc: 'SMTP 端口（465/587）', initial: () => '465', defaultsWork: false },
   SMTP_USER: {
+    label: 'SMTP 用户名',
     group: '通知通道（验证码发信）', type: 'string', desc: 'SMTP 用户名', initial: () => '', defaultsWork: false },
   SMTP_PASS: {
+    label: 'SMTP 密码',
     group: '通知通道（验证码发信）', type: 'string', desc: 'SMTP 密码/授权码', initial: () => '', secret: true, defaultsWork: false },
   SMTP_FROM: {
+    label: 'SMTP 发件人',
     group: '通知通道（验证码发信）', type: 'string', desc: '发件人（如 "AI应用门户 <no-reply@example.com>"）', initial: () => '', defaultsWork: false },
   MAIL_PROVIDER: {
+    label: '发信方式',
     group: '通知通道（验证码发信）', type: 'string', options: ['smtp', 'resend'],
     desc: '发信方式：smtp 经典 SMTP / resend API（仅需 API Key）', initial: () => 'smtp', defaultsWork: false },
   RESEND_API_KEY: {
+    label: 'Resend API Key',
     group: '通知通道（验证码发信）', type: 'string',
     desc: 'Resend API Key（resend.com 后台获取，以 re_ 开头）。发信方式选 resend 时仅需填这一项即可发信',
     initial: () => '', secret: true, defaultsWork: false },
   RESEND_FROM: {
+    label: 'Resend 发件人',
     group: '通知通道（验证码发信）', type: 'string',
     desc: 'Resend 发件人（留空：默认用沙箱发件人 onboarding@resend.dev，仅能发给本 Resend 账号注册邮箱；绑定自有域名后填 "AI应用门户 <no-reply@mail.example.com>" 即可发给任意用户）',
     initial: () => '', defaultsWork: true },

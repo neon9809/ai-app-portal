@@ -130,6 +130,7 @@ adminRouter.get(
       settings: listSettingsForAdmin().map((s) => ({
         key: s.key,
         value: s.value,
+        label: s.def.label,
         type: s.def.type,
         group: s.def.group,
         options: s.def.options,
