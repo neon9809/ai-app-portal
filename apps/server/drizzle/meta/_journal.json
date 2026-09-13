@@ -78,6 +78,13 @@
       "when": 1789291326669,
       "tag": "0010_petite_rockslide",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1789291895116,
+      "tag": "0011_hard_captain_midlands",
+      "breakpoints": true
     }
   ]
 }

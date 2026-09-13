@@ -30,12 +30,19 @@ export interface AppTokenRow {
   name: string;
   enabled: boolean;
   perMinuteLimit: number | null;
+  auto: boolean;
   createdAt: number;
   lastUsedAt: number | null;
 }
 
-export function createAppToken(appId: string, name: string, perMinuteLimit: number | null): string {
+export function createAppToken(
+  appId: string,
+  name: string,
+  perMinuteLimit: number | null,
+  opts?: { auto?: boolean },
+): string {
   const token = `aapk_${randomBytes(24).toString('base64url')}`;
+  const auto = opts?.auto === true;
   getDb()
     .insert(llmAppTokens)
     .values({
@@ -43,10 +50,39 @@ export function createAppToken(appId: string, name: string, perMinuteLimit: numb
       appId,
       name: name.slice(0, 64),
       perMinuteLimit,
+      auto,
+      // 自动签发的凭据：明文加密保管，供运行时（M4 沙箱）按 appId 注入，不再人工下发
+      tokenEnc: auto ? encryptSecret(token) : null,
       createdAt: Date.now(),
     })
     .run();
   return token;
+}
+
+/** 已为应用自动签发的网关凭据（解密明文）；无则 null。M4 运行时启动注入用 */
+export function getAppLlmProvision(appId: string): { token: string; perMinuteLimit: number | null } | null {
+  const row = getDb()
+    .select()
+    .from(llmAppTokens)
+    .where(and(eq(llmAppTokens.appId, appId), eq(llmAppTokens.auto, true), eq(llmAppTokens.enabled, true)))
+    .get();
+  if (!row?.tokenEnc) return null;
+  try {
+    return { token: decryptSecret(row.tokenEnc), perMinuteLimit: row.perMinuteLimit };
+  } catch {
+    return null;
+  }
+}
+
+/** manifest 声明 llm 能力的包：确保存在自动签发凭据（幂等；重复上传复用） */
+export function ensureAutoProvisionedToken(appId: string): void {
+  const existing = getDb()
+    .select()
+    .from(llmAppTokens)
+    .where(and(eq(llmAppTokens.appId, appId), eq(llmAppTokens.auto, true)))
+    .get();
+  if (existing && existing.enabled) return;
+  createAppToken(appId, '自动签发（manifest llm）', null, { auto: true });
 }
 
 /** Bearer token → 凭据行；未命中/已吊销 → null */

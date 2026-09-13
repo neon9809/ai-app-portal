@@ -139,6 +139,7 @@ adminLlmRouter.get(
         appId: t.appId,
         name: t.name,
         enabled: t.enabled,
+        auto: t.auto,
         perMinuteLimit: t.perMinuteLimit,
         createdAt: new Date(t.createdAt).toISOString(),
         lastUsedAt: t.lastUsedAt ? new Date(t.lastUsedAt).toISOString() : null,

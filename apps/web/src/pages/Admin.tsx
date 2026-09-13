@@ -469,7 +469,7 @@ function AppsTab(): ReactNode {
     }
     try {
       const acl = form.getFieldsValue() as { allowedGroupIds?: number[]; allowedUserIds?: number[]; passUser?: boolean; urlSecret?: string; visibility?: string };
-      const r = await api<{ app: Record<string, unknown> }>('/api/admin/apps/package', {
+      const r = await api<{ app: Record<string, unknown>; llmProvisioned: boolean }>('/api/admin/apps/package', {
         method: 'POST',
         json: {
           filename: pkgFile.name,
@@ -482,9 +482,10 @@ function AppsTab(): ReactNode {
         },
       });
       setPkgInfo(r.app);
-      message.success('包校验通过并已接入');
+      message.success(r.llmProvisioned ? '包校验通过并已接入；已自动签发 LLM 网关凭据' : '包校验通过并已接入');
       void qc.invalidateQueries({ queryKey: ['admin-apps'] });
       void qc.invalidateQueries({ queryKey: ['apps'] });
+      void qc.invalidateQueries({ queryKey: ['llm-tokens'] });
     } catch (err) {
       message.error(err instanceof Error ? err.message : '包校验失败');
     }
@@ -697,7 +698,15 @@ function AppsTab(): ReactNode {
         {pkgInfo ? (
           <Alert type="success" showIcon style={{ marginTop: 10 }}
             message={`已接入：${String(pkgInfo.displayName)} v${String(pkgInfo.version)}（${String(pkgInfo.type)}）`}
-            description={pkgInfo.pendingRuntime ? 'python 包已保存，等待 M4 运行时启用。' : 'HTML 包已托管生效。'} />
+            description={
+              pkgInfo.llmProvisioned
+                ? pkgInfo.pendingRuntime
+                  ? '已自动签发 LLM 网关凭据（运行时启动时自动注入）。python 运行时将在 M4 启用。'
+                  : '已自动签发 LLM 网关凭据。HTML 包已托管生效。'
+                : pkgInfo.pendingRuntime
+                  ? 'python 包已保存，等待 M4 运行时启用。'
+                  : 'HTML 包已托管生效。'
+            } />
         ) : null}
       </Modal>
     </Space>
@@ -1090,6 +1099,7 @@ interface LlmToken {
   appId: string;
   name: string;
   enabled: boolean;
+  auto: boolean;
   perMinuteLimit: number | null;
   createdAt: string;
   lastUsedAt: string | null;
@@ -1292,7 +1302,7 @@ function LlmTab(): ReactNode {
           dataSource={tokensQ.data?.tokens ?? []}
           columns={[
             { title: '应用', dataIndex: 'appId', width: 140 },
-            { title: '名称', dataIndex: 'name', width: 140 },
+            { title: '名称', dataIndex: 'name', width: 140, render: (_, r) => (r.auto ? <Space size={4}><Tag color="blue" style={{ fontSize: 11 }}>自动签发</Tag>{r.name}</Space> : r.name) },
             { title: '限流/分', dataIndex: 'perMinuteLimit', width: 90, render: (v: number | null) => v ?? '默认' },
             { title: '状态', width: 90, render: (_, r) => (r.enabled ? <Tag color="green">启用</Tag> : <Tag color="red">已吊销</Tag>) },
             { title: '最近使用', width: 170, render: (_, r) => (r.lastUsedAt ? new Date(r.lastUsedAt).toLocaleString() : '—') },

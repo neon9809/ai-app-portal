@@ -355,6 +355,9 @@ export const llmAppTokens = sqliteTable(
     name: text('name').notNull().default(''),
     enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
     perMinuteLimit: integer('per_minute_limit'), // 应用级限流（请求/分），null = 默认
+    /** manifest 声明 llm 能力的包：上传时自动签发，明文加密保存供运行时注入（M4） */
+    auto: integer('auto', { mode: 'boolean' }).notNull().default(false),
+    tokenEnc: text('token_enc'),
     createdAt: integer('created_at').notNull(),
     lastUsedAt: integer('last_used_at'),
   },

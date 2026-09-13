@@ -11,6 +11,7 @@ import { HttpError, h } from '../lib/httpError.js';
 import { requireAdmin } from '../lib/auth.js';
 import { isSlug, listApps, findApp, getAcl, setAcl } from '../gateway/registry.js';
 import { writeHtmlApp, storePackageFiles, validateManifest, appSiteDir } from '../gateway/staticApp.js';
+import { ensureAutoProvisionedToken } from '../lib/llm.js';
 import { encryptSecret } from '../lib/cryptoSecrets.js';
 import { getSettingBool } from '../lib/settings.js';
 import { audit } from '../lib/audit.js';
@@ -326,6 +327,12 @@ adminAppsRouter.post(
       allowGroupIds: body.allowedGroupIds ?? [],
       allowUserIds: body.allowedUserIds ?? [],
     });
+    // manifest 声明 llm 能力 → 自动签发网关凭据（幂等），运行时（M4）按 appId 注入，无需手动下发
+    let llmProvisioned = false;
+    if (manifest.capabilities.includes('llm')) {
+      ensureAutoProvisionedToken(manifest.name);
+      llmProvisioned = true;
+    }
     audit(`${req.user!.kind}:${req.user!.id}`, req.clientIp ?? null, 'app.package.create', {
       name: manifest.name,
       type: manifest.type,
@@ -335,6 +342,7 @@ adminAppsRouter.post(
     });
     res.json({
       ok: true,
+      llmProvisioned,
       app: {
         id: manifest.name,
         displayName: manifest.displayName,
