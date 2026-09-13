@@ -17,7 +17,7 @@ import { HttpError, h } from '../lib/httpError.js';
 import { dummyVerify, hashPassword, randomToken, verifyPassword } from '../lib/passwords.js';
 import { consumePowToken, isBanned, needsPow, recordFailure, recordSuccess } from '../lib/security.js';
 import { issueChallenge, verifyPow } from '../lib/pow.js';
-import { createSession, destroySession } from '../lib/session.js';
+import { createSession, destroySession, markStepUp } from '../lib/session.js';
 import { getSetting, getSettingInt } from '../lib/settings.js';
 import { verifyTurnstile, turnstileEnabled } from '../lib/turnstile.js';
 import { issueCode, maskEmail, verifyCode } from '../lib/verification.js';
@@ -341,6 +341,26 @@ authRouter.post(
       mfaRequired: mfaEnabled,
       mustChangePassword: user.mustChangePassword,
     });
+  }),
+);
+
+// 步升认证：密码通道（无 MFA 的用户用重输密码完成敏感操作前置验证）
+authRouter.post(
+  '/auth/step-up/password',
+  h(async (req, res) => {
+    const u = req.user;
+    if (!u) throw new HttpError(401, 'UNAUTHENTICATED', '请先登录');
+    if (u.authState !== 'full') throw new HttpError(403, 'MFA_REQUIRED', '请先完成多因子认证', { action: 'mfa' });
+    const body = (req.body ?? {}) as { password?: string };
+    const hash = getLocalPasswordHash(u.id);
+    const ok = await verifyPassword(String(body.password ?? ''), hash);
+    if (!ok) {
+      audit(`${u.kind}:${u.id}`, req.clientIp ?? null, 'auth.stepup.fail', { via: 'password' });
+      throw new HttpError(401, 'BAD_CREDENTIALS', '密码错误');
+    }
+    const until = markStepUp(u.sessionId);
+    audit(`${u.kind}:${u.id}`, req.clientIp ?? null, 'auth.stepup', { via: 'password' });
+    res.json({ stepUpUntil: until });
   }),
 );
 

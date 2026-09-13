@@ -57,6 +57,12 @@ export const SETTING_DEFS: Record<string, SettingDef> = {
     initial: () => '10',
     defaultsWork: true,
   },
+  DELETION_COOLDOWN_DAYS: {
+    type: 'int',
+    desc: '注销冷静期（天）：期内可撤回，到期数据匿名化',
+    initial: () => '7',
+    defaultsWork: true,
+  },
   REGISTRATION_PENDING_TTL_DAYS: {
     type: 'int',
     desc: '废弃注册（未完成验证）N 天后清理',
