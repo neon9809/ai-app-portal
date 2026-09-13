@@ -76,7 +76,8 @@ export function createApp(cfg: AapConfig = config): Express {
 
   // HTTP → HTTPS 跳转开关（B3；默认关，ACME 挑战已在上方处理）
   app.use((req, res, next) => {
-    if (getSettingBool('HTTPS_REDIRECT', false) && !req.path.startsWith('/.well-known/acme-challenge/')) {
+    const exempt = req.path.startsWith('/.well-known/acme-challenge/') || req.path === '/api/health';
+    if (getSettingBool('HTTPS_REDIRECT', false) && !exempt) {
       const proto = req.protocol;
       if (proto === 'http') {
         // 外部经 443 映射访问容器 8443，跳转一律指向标准 443（不带端口）
