@@ -1142,13 +1142,18 @@ function TlsTab(): ReactNode {
 
   return (
     <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-      <Card size="small" title="证书状态">
+      <Card size="small" title="证书状态" extra={st?.mode === 'acme' ? <Tag bordered={false} color="green" style={{ fontSize: 11 }}>自动续期已启用</Tag> : null}>
         <Descriptions column={1} size="small">
           <Descriptions.Item label="模式">{st?.mode === 'acme' ? '自动签发' : st?.mode === 'manual' ? '手动上传' : '未启用（纯门户模式）'}</Descriptions.Item>
           <Descriptions.Item label="HTTPS">{st?.httpsEnabled ? <Tag color="green">已启用（端口 {st.httpsPort}）</Tag> : <Tag>未启用</Tag>}</Descriptions.Item>
           {st?.cert ? <Descriptions.Item label="证书">{st.cert.subject}（剩余 {st.cert.daysRemaining} 天）</Descriptions.Item> : null}
           {st?.domain ? <Descriptions.Item label="ACME 域名">{st.domain}</Descriptions.Item> : null}
         </Descriptions>
+        {st?.mode === 'acme' ? (
+          <Typography.Paragraph type="secondary" style={{ margin: '8px 0 0', fontSize: 12 }}>
+            到期前 30 天自动重签并热替换，无需人工操作。
+          </Typography.Paragraph>
+        ) : null}
       </Card>
 
       <Card size="small" title="自动签发（ACME / Let's Encrypt）" extra={<Tag bordered={false} color="blue" style={{ fontSize: 11 }}>推荐</Tag>}>
