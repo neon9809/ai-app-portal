@@ -11,7 +11,8 @@ import { useSession } from '../state/session';
 const VISIBILITY_LABEL: Record<AppCard['visibility'], string> = {
   public: '公开',
   login: '需登录',
-  member: '会员',
+  restricted: '指定可见',
+  private: '仅自己',
 };
 
 function StatusDot({ status }: { status: AppCard['status'] }) {
@@ -82,7 +83,7 @@ function AppTile({ app }: { app: AppCard }) {
           <span style={{ color: 'var(--aap-primary)', fontSize: 12 }}>打开 →</span>
         ) : (
           <span style={{ color: 'var(--aap-text-secondary)', fontSize: 12 }}>
-            {app.visibility === 'member' ? '开通会员可用' : '登录后可用'}
+            {app.visibility === 'login' || app.visibility === 'restricted' ? '登录后可用' : '暂不可用'}
           </span>
         )}
       </div>

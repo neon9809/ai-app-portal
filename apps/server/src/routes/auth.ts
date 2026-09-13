@@ -365,6 +365,17 @@ authRouter.post(
   }),
 );
 
+// GET 登出：统一页面元素（chrome）用；next 仅允许站内 / 与 /app/ 路径
+authRouter.get('/auth/logout', (req, res) => {
+  if (req.user) {
+    audit(`${req.user.kind}:${req.user.id}`, req.clientIp ?? null, 'logout', { via: 'chrome' });
+  }
+  destroySession(req, res);
+  const next = String((req.query.next as string | undefined) ?? '/');
+  const safe = next.startsWith('/app/') || next === '/' || next.startsWith('/?');
+  res.redirect(302, safe ? next : '/');
+});
+
 authRouter.post(
   '/auth/logout',
   h(async (req, res) => {

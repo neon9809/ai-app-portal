@@ -20,6 +20,7 @@ import { canAccess, findApp, getUrlSecret, type UrlSecret } from './registry.js'
 import { signIdentity } from './identity.js';
 import { allowRequest } from './limiter.js';
 import { getSettingInt } from '../lib/settings.js';
+import { injectChrome, serveHtmlApp } from './staticApp.js';
 
 export const gatewayRouter = Router();
 
@@ -49,6 +50,14 @@ const RESP_STRIP = new Set([
   'strict-transport-security',
   'access-control-allow-origin',
 ]);
+
+function decodeSafe(sub: string): string {
+  try {
+    return decodeURIComponent(sub);
+  } catch {
+    return sub;
+  }
+}
 
 function htmlError(res: Response, status: number, title: string, detail: string): void {
   res
@@ -198,13 +207,19 @@ gatewayRouter.all('/app/:id/*', async (req: Request, res: Response) => {
     if (user.authState !== 'full') {
       return htmlError(res, 403, '需要完成验证', '请先完成多因子认证');
     }
-    return htmlError(res, 403, '需要会员', `应用「${app.name}」面向会员开放`);
+    return htmlError(res, 403, '无权访问', `应用「${app.name}」未对你所在的分组或账号开放`);
   }
 
   // 双维度限流
   const userKey = user ? `${user.kind}:${user.id}` : null;
   if (!allowRequest(userKey, req.clientIp ?? 'unknown')) {
     return htmlError(res, 429, '请求过于频繁', '请稍后再试');
+  }
+
+  // 门户托管应用（简单 HTML / .neon-aap html 包 / 等待运行时的包）不走上游
+  if (app.kind !== 'upstream') {
+    const sub = decodeSafe((req.params[0] as string | undefined) ?? '');
+    return serveHtmlApp(req, res, app, sub);
   }
 
   const base = (() => {
@@ -291,6 +306,8 @@ gatewayRouter.all('/app/:id/*', async (req: Request, res: Response) => {
       } else {
         html = baseTag + routeFix + html;
       }
+      // 统一页面元素（P3）：应用门户 / 个人中心 / 退出登录（幂等、失败静默）
+      html = injectChrome(html, id);
       return res.send(html);
     }
 

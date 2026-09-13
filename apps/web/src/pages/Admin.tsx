@@ -44,14 +44,24 @@ interface AdminApp {
   name: string;
   description: string;
   category: string;
-  visibility: 'public' | 'login' | 'member';
+  visibility: 'public' | 'login' | 'restricted' | 'private';
   passUser: boolean;
   upstream: string;
+  kind: 'upstream' | 'html' | 'package';
+  ownerUserId: number | null;
   hasUrlSecret: boolean;
   enabled: boolean;
   sort: number;
   healthState: 'ok' | 'down' | 'unknown';
   lastProbeAt: number | null;
+  allowGroupIds: number[];
+  allowUserIds: number[];
+}
+interface GroupRow {
+  id: number;
+  name: string;
+  note: string;
+  memberCount: number;
 }
 interface SettingRow {
   key: string;
@@ -398,27 +408,83 @@ function AppsTab(): ReactNode {
   const qc = useQueryClient();
   const [form] = Form.useForm();
   const [editing, setEditing] = useState<AdminApp | null>(null);
-  const [creating, setCreating] = useState(false);
+  const [creating, setCreating] = useState<null | 'upstream' | 'html' | 'package'>(null);
   const [testResult, setTestResult] = useState<Record<string, string>>({});
+  const [visMode, setVisMode] = useState<string>('login');
+  const [pkgFile, setPkgFile] = useState<{ name: string; dataBase64: string } | null>(null);
+  const [pkgInfo, setPkgInfo] = useState<Record<string, unknown> | null>(null);
 
+  const groupsQ = useQuery({ queryKey: ['admin-groups'], queryFn: () => api<{ groups: GroupRow[] }>('/api/admin/groups') });
+  const usersQ = useQuery({ queryKey: ['admin-users'], queryFn: () => api<{ users: PublicUser[] }>('/api/admin/users') });
   const appsQ = useQuery({ queryKey: ['admin-apps'], queryFn: () => api<{ apps: AdminApp[] }>('/api/admin/apps') });
 
-  async function save(values: Record<string, unknown>): Promise<void> {
+  const groupOptions = (groupsQ.data?.groups ?? []).map((g) => ({ value: g.id, label: g.name }));
+  const userOptions = (usersQ.data?.users ?? []).map((u) => ({ value: u.id, label: `${u.name}（${u.username ?? u.id}）` }));
+
+  const VIS_OPTIONS = [
+    { value: 'public', label: '公开（免登录）' },
+    { value: 'login', label: '需登录（全部用户）' },
+    { value: 'restricted', label: '指定分组与账号' },
+    { value: 'private', label: '仅自己（私有）' },
+  ];
+
+  function visExtra(): ReactNode {
+    if (visMode !== 'restricted') return null;
+    return (
+      <>
+        <Form.Item name="allowedGroupIds" label="可见分组" extra="命中任一分组的用户可见（分组即会员等级）">
+          <Select mode="multiple" placeholder="选择分组（可留空）" options={groupOptions} />
+        </Form.Item>
+        <Form.Item name="allowedUserIds" label="可见账号" extra="与分组任一命中即可见">
+          <Select mode="multiple" placeholder="选择账号（可留空）" options={userOptions} />
+        </Form.Item>
+      </>
+    );
+  }
+
+  async function saveApp(values: Record<string, unknown>): Promise<void> {
     try {
-      if (editing) {
-        await api(`/api/admin/apps/${editing.id}`, { method: 'PUT', json: values });
-        message.success('已保存并生效');
+      if (creating === 'html') {
+        await api('/api/admin/apps/html', { method: 'POST', json: values });
+        message.success('HTML 应用已接入并生效');
       } else {
         await api('/api/admin/apps', { method: 'POST', json: values });
         message.success('应用已接入并生效');
       }
-      setEditing(null);
-      setCreating(false);
+      setCreating(null);
       form.resetFields();
       void qc.invalidateQueries({ queryKey: ['admin-apps'] });
       void qc.invalidateQueries({ queryKey: ['apps'] });
     } catch (err) {
       message.error(err instanceof Error ? err.message : '保存失败');
+    }
+  }
+
+  async function uploadPackage(): Promise<void> {
+    if (!pkgFile) {
+      message.warning('请先选择 .neon-aap 包文件');
+      return;
+    }
+    try {
+      const acl = form.getFieldsValue() as { allowedGroupIds?: number[]; allowedUserIds?: number[]; passUser?: boolean; urlSecret?: string; visibility?: string };
+      const r = await api<{ app: Record<string, unknown> }>('/api/admin/apps/package', {
+        method: 'POST',
+        json: {
+          filename: pkgFile.name,
+          dataBase64: pkgFile.dataBase64,
+          visibility: acl.visibility ?? 'private',
+          allowedGroupIds: acl.allowedGroupIds ?? [],
+          allowedUserIds: acl.allowedUserIds ?? [],
+          passUser: acl.passUser ?? false,
+          urlSecret: acl.urlSecret || undefined,
+        },
+      });
+      setPkgInfo(r.app);
+      message.success('包校验通过并已接入');
+      void qc.invalidateQueries({ queryKey: ['admin-apps'] });
+      void qc.invalidateQueries({ queryKey: ['apps'] });
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : '包校验失败');
     }
   }
 
@@ -439,11 +505,44 @@ function AppsTab(): ReactNode {
     }
   }
 
+  async function saveEdit(values: Record<string, unknown>): Promise<void> {
+    if (!editing) return;
+    try {
+      await api(`/api/admin/apps/${editing.id}`, {
+        method: 'PUT',
+        json: {
+          name: values.name,
+          description: values.description,
+          visibility: values.visibility,
+          allowedGroupIds: values.allowedGroupIds ?? [],
+          allowedUserIds: values.allowedUserIds ?? [],
+          passUser: values.passUser,
+          ...(values.urlSecret ? { urlSecret: values.urlSecret } : {}),
+          ...(editing.kind === 'upstream' ? { upstream: values.upstream } : {}),
+        },
+      });
+      message.success('已保存并生效');
+      setEditing(null);
+      void qc.invalidateQueries({ queryKey: ['admin-apps'] });
+      void qc.invalidateQueries({ queryKey: ['apps'] });
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : '保存失败');
+    }
+  }
+
+  const KIND_LABEL: Record<string, string> = { upstream: '反代', html: 'HTML', package: '包(待M4)' };
+
   return (
     <Space direction="vertical" size="middle" style={{ width: '100%' }}>
       <Card
         title="应用列表"
-        extra={<Button type="primary" onClick={() => { setEditing(null); setCreating(true); form.resetFields(); }}>接入应用</Button>}
+        extra={
+          <Space size="small">
+            <Button type="primary" onClick={() => { form.resetFields(); setVisMode('login'); setPkgFile(null); setPkgInfo(null); setEditing(null); setCreating('upstream'); }}>接入上游应用</Button>
+            <Button onClick={() => { form.resetFields(); setVisMode('restricted'); setEditing(null); setCreating('html'); }}>接入 HTML 页</Button>
+            <Button onClick={() => { form.resetFields(); setVisMode('private'); setPkgFile(null); setPkgInfo(null); setEditing(null); setCreating('package'); }}>上传 .neon-aap</Button>
+          </Space>
+        }
       >
         <Table<AdminApp>
           rowKey="id"
@@ -451,14 +550,15 @@ function AppsTab(): ReactNode {
           pagination={false}
           size="small"
           columns={[
-            { title: 'ID', dataIndex: 'id', width: 110 },
+            { title: 'ID', dataIndex: 'id', width: 120 },
             { title: '名称', dataIndex: 'name', width: 130 },
-            { title: '上游', dataIndex: 'upstream', ellipsis: true },
+            { title: '形态', width: 90, render: (_, r) => <Tag>{KIND_LABEL[r.kind] ?? r.kind}</Tag> },
+            { title: '上游', dataIndex: 'upstream', ellipsis: true, render: (v: string) => v || '—' },
             {
-              title: '策略',
-              width: 90,
+              title: '可见性',
+              width: 100,
               render: (_, r) => (
-                <Tag>{r.visibility === 'public' ? '公开' : r.visibility === 'member' ? '会员' : '登录'}</Tag>
+                <Tag>{r.visibility === 'public' ? '公开' : r.visibility === 'restricted' ? '指定可见' : r.visibility === 'private' ? '仅自己' : '登录'}</Tag>
               ),
             },
             { title: '健康', width: 90, render: (_, r) => dot(r.healthState) },
@@ -467,12 +567,12 @@ function AppsTab(): ReactNode {
               width: 230,
               render: (_, r) => (
                 <Space size="small">
-                  <Button size="small" onClick={() => void testApp(r)}>测试</Button>
+                  {r.kind === 'upstream' ? <Button size="small" onClick={() => void testApp(r)}>测试</Button> : null}
                   <Button
                     size="small"
                     onClick={() => {
                       setEditing(r);
-                      setCreating(true);
+                      setVisMode(r.visibility);
                       form.setFieldsValue({ ...r, urlSecret: undefined });
                     }}
                   >
@@ -504,68 +604,99 @@ function AppsTab(): ReactNode {
         <SettingsForm groups={['应用网关']} />
       </Card>
 
+      {/* 接入 / 编辑 弹窗 */}
       <Modal
-        title={editing ? `编辑应用：${editing.name}` : '接入应用'}
-        open={creating}
-        onCancel={() => {
-          setCreating(false);
-          setEditing(null);
-        }}
+        title={editing ? `编辑应用：${editing.name}` : creating === 'html' ? '接入 HTML 页' : creating === 'package' ? '上传 .neon-aap 包' : '接入上游应用'}
+        open={Boolean(creating)}
+        onCancel={() => { setCreating(null); setEditing(null); }}
         footer={null}
-        width={560}
+        width={580}
         destroyOnClose
       >
-        <Form form={form} layout="vertical" onFinish={save}>
+        <Form form={form} layout="vertical" onFinish={creating === 'package' ? uploadPackage : saveApp}>
           {!editing ? (
             <Form.Item
               name="id"
               label="应用 ID（URL 前缀）"
-              rules={[
-                { required: true, message: '必填' },
-                { pattern: /^[a-z0-9][a-z0-9-]*$/, message: '小写字母/数字/连字符' },
-              ]}
-              extra="访问地址为 https://你的域名/app/<ID>/"
+              rules={[{ required: creating !== 'package', message: '必填' }, { pattern: /^[a-z0-9][a-z0-9-]*$/, message: '小写字母/数字/连字符' }]}
+              extra={creating === 'package' ? '留空：自动取包内 manifest.name' : '访问地址为 https://你的域名/app/<ID>/'}
             >
-              <Input disabled={Boolean(editing)} placeholder="my-dify" />
+              <Input disabled={Boolean(editing) || creating === 'package'} placeholder="my-app" />
             </Form.Item>
           ) : null}
-          <Form.Item name="name" label="应用名称" rules={[{ required: true, message: '必填' }]}>
-            <Input placeholder="Dify 聊天" />
+          <Form.Item name="name" label="应用名称" rules={[{ required: creating !== 'package', message: '必填' }]}
+            extra={creating === 'package' ? '留空：自动取包内 display_name' : undefined}>
+            <Input placeholder="应用名" disabled={creating === 'package'} />
           </Form.Item>
           <Form.Item name="description" label="描述" extra="显示在门户卡片上">
             <Input placeholder="一句话介绍" />
           </Form.Item>
-          <Form.Item
-            name="upstream"
-            label="上游地址"
-            rules={[{ required: true, message: '必填' }]}
-            extra="仅允许本机/内网地址，如 http://127.0.0.1:8001（公网地址需在高级设置放开）"
-          >
-            <Input placeholder="http://127.0.0.1:8001" />
-          </Form.Item>
-          <Form.Item name="visibility" label="访问策略" initialValue="login" extra="公开=无需登录；需登录；会员=M3 上线">
-            <Select
-              options={[
-                { value: 'public', label: '公开（免登录）' },
-                { value: 'login', label: '需登录' },
-                { value: 'member', label: '仅会员' },
-              ]}
-            />
-          </Form.Item>
-          <Form.Item name="passUser" label="注入用户身份" valuePropName="checked" extra="向应用转发 X-AAP-Identity 签名头（自研应用识别登录用户用）">
-            <Switch />
-          </Form.Item>
-          <Form.Item
-            name="urlSecret"
-            label="上游凭据（可选）"
-            extra='查询参数型如 "token=xxx"；路径即凭据型（Dify）填 "__path__=/chat/xxx"。保存后加密存储、不下发浏览器'
-          >
-            <Input placeholder="token=xxx 或 __path__=/chat/xxx" />
-          </Form.Item>
-          <Button type="primary" htmlType="submit" block>
-            {editing ? '保存（即时生效）' : '接入'}
-          </Button>
+
+          {creating === 'package' ? (
+            <Form.Item label="包文件（.zip / .neon-aap）" required extra="自动校验完整性与 manifest；python 包需等待 M4 运行时">
+              <input
+                type="file"
+                accept=".zip,.neon-aap"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (!f) return;
+                  const reader = new FileReader();
+                  reader.onload = () => setPkgFile({ name: f.name, dataBase64: String(reader.result).split(',')[1] ?? '' });
+                  reader.readAsDataURL(f);
+                }}
+              />
+              {pkgFile ? <div style={{ fontSize: 12, color: 'var(--aap-text-secondary)' }}>已选择：{pkgFile.name}</div> : null}
+            </Form.Item>
+          ) : null}
+
+          {creating === 'upstream' || editing?.kind === 'upstream' ? (
+            <Form.Item
+              name="upstream"
+              label="上游地址"
+              rules={[{ required: true, message: '必填' }]}
+              extra="仅允许本机/内网地址，如 http://127.0.0.1:8001"
+            >
+              <Input placeholder="http://127.0.0.1:8001" />
+            </Form.Item>
+          ) : null}
+
+          {creating === 'html' ? (
+            <Form.Item name="html" label="页面 HTML" rules={[{ required: true, message: '请填写页面内容' }]}
+              extra="门户直接托管在 /app/<ID>/ 下；整页粘贴即可">
+              <Input.TextArea rows={8} placeholder="<!doctype html>…" style={{ fontFamily: 'monospace', fontSize: 12 }} />
+            </Form.Item>
+          ) : null}
+
+          {creating !== 'package' || pkgFile ? (
+            <>
+              <Form.Item name="visibility" label="可见性" initialValue={visMode} extra="指定分组与账号：命中任一即可见；分组可当会员等级用">
+                <Select options={VIS_OPTIONS} onChange={(v) => setVisMode(String(v))} />
+              </Form.Item>
+              {visExtra()}
+              <Form.Item name="passUser" label="注入用户身份" valuePropName="checked" extra="向应用转发 X-AAP-Identity 签名头（自研应用识别登录用户）">
+                <Switch />
+              </Form.Item>
+              <Form.Item
+                name="urlSecret"
+                label="上游凭据（可选）"
+                extra='如 "token=xxx" 或 "__path__=/chat/xxx"，加密存储不下发'
+              >
+                <Input placeholder="token=xxx" />
+              </Form.Item>
+            </>
+          ) : null}
+
+          {creating === 'package' ? (
+            <Button type="primary" htmlType="submit" block>校验并接入</Button>
+          ) : (
+            <Button type="primary" htmlType="submit" block>{editing ? '保存（即时生效）' : '接入'}</Button>
+          )}
         </Form>
+        {pkgInfo ? (
+          <Alert type="success" showIcon style={{ marginTop: 10 }}
+            message={`已接入：${String(pkgInfo.displayName)} v${String(pkgInfo.version)}（${String(pkgInfo.type)}）`}
+            description={pkgInfo.pendingRuntime ? 'python 包已保存，等待 M4 运行时启用。' : 'HTML 包已托管生效。'} />
+        ) : null}
       </Modal>
     </Space>
   );
@@ -670,6 +801,8 @@ function UsersRegTab(): ReactNode {
       <Card size="small" title="注册策略">
         <SettingsForm groups={['注册与账号']} />
       </Card>
+
+      <GroupsCard />
 
       <Card
         size="small"
@@ -1254,5 +1387,109 @@ function LlmTab(): ReactNode {
         </Typography.Paragraph>
       </Modal>
     </Space>
+  );
+}
+
+// ---------- 用户分组管理（会员等级 / 自定义组） ----------
+
+function GroupsCard(): ReactNode {
+  const qc = useQueryClient();
+  const groupsQ = useQuery({ queryKey: ['admin-groups'], queryFn: () => api<{ groups: GroupRow[] }>('/api/admin/groups') });
+  const usersQ = useQuery({ queryKey: ['admin-users'], queryFn: () => api<{ users: PublicUser[] }>('/api/admin/users') });
+  const [form] = Form.useForm();
+  const [editing, setEditing] = useState<GroupRow | null>(null);
+  const [editMemberIds, setEditMemberIds] = useState<number[]>([]);
+
+  const userOptions = (usersQ.data?.users ?? []).map((u) => ({ value: u.id, label: `${u.name}（${u.username ?? u.id}）` }));
+
+  async function reload(): Promise<void> {
+    void qc.invalidateQueries({ queryKey: ['admin-groups'] });
+  }
+
+  return (
+    <Card
+      size="small"
+      title="用户分组（会员等级 / 自定义组；应用可见性与额度按分组配置）"
+      extra={
+        <Button
+          size="small"
+          type="primary"
+          onClick={async () => {
+            const name = window.prompt('新分组名称（如：会员-高级）');
+            if (!name) return;
+            try {
+              await api('/api/admin/groups', { method: 'POST', json: { name } });
+              void reload();
+            } catch (err) {
+              message.error(err instanceof Error ? err.message : '创建失败');
+            }
+          }}
+        >
+          新建分组
+        </Button>
+      }
+    >
+      <Table<GroupRow>
+        rowKey="id"
+        size="small"
+        pagination={false}
+        dataSource={groupsQ.data?.groups ?? []}
+        columns={[
+          { title: '分组', dataIndex: 'name', width: 180 },
+          { title: '备注', dataIndex: 'note', ellipsis: true },
+          { title: '成员数', dataIndex: 'memberCount', width: 90 },
+          {
+            title: '操作',
+            width: 160,
+            render: (_, r) => (
+              <Space size="small">
+                <Button
+                  size="small"
+                  onClick={async () => {
+                    const res = await api<{ memberIds: number[] }>(`/api/admin/groups/${r.id}/members`);
+                    setEditMemberIds(res.memberIds);
+                    setEditing(r);
+                  }}
+                >
+                  成员
+                </Button>
+                <Popconfirm title="删除分组？应用可见性配置将失去该组。" onConfirm={async () => {
+                  await api(`/api/admin/groups/${r.id}`, { method: 'DELETE' });
+                  void reload();
+                }}>
+                  <Button size="small" danger>删除</Button>
+                </Popconfirm>
+              </Space>
+            ),
+          },
+        ]}
+      />
+
+      <Modal
+        title={`分组成员：${editing?.name ?? ''}`}
+        open={Boolean(editing)}
+        onCancel={() => setEditing(null)}
+        onOk={async () => {
+          if (!editing) return;
+          await api(`/api/admin/groups/${editing.id}`, { method: 'PUT', json: { memberIds: editMemberIds } });
+          message.success('成员已更新');
+          setEditing(null);
+          void reload();
+        }}
+        okText="保存成员"
+      >
+        <Select
+          mode="multiple"
+          style={{ width: '100%' }}
+          placeholder="选择该分组的成员"
+          value={editMemberIds}
+          onChange={(v) => setEditMemberIds(v as number[])}
+          options={userOptions}
+        />
+      </Modal>
+      <Form form={form} layout="inline" style={{ display: 'none' }}>
+        <Form.Item name="noop">{null}</Form.Item>
+      </Form>
+    </Card>
   );
 }

@@ -41,7 +41,10 @@ export function AppFramePage() {
         style={{ position: 'relative', top: 0, padding: '0 16px', height: 48 }}
       >
         <Button size="small" icon={<ArrowLeftOutlined />} onClick={() => history.back()}>
-          返回门户
+          返回
+        </Button>
+        <Button size="small" type="primary" ghost onClick={() => (window.location.href = '/')}>
+          应用门户
         </Button>
         <strong style={{ fontSize: 14 }}>{app.name}</strong>
         {app.description ? (

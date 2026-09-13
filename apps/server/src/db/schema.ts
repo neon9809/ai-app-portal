@@ -9,7 +9,7 @@
  * - W1+W2 首批迁移：settings / users / local_credentials / sessions /
  *   login_attempts / ip_bans / pow_* / audit_logs。
  */
-import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 import { sql } from 'drizzle-orm';
 
 export const settings = sqliteTable('settings', {
@@ -203,8 +203,12 @@ export const apps = sqliteTable('apps', {
   description: text('description').notNull().default(''),
   icon: text('icon'),
   category: text('category').notNull().default('未分类'),
-  /** 'public' 公开 | 'login' 需登录 | 'member' 会员（M3 计费打通） */
+  /** 'public' 公开 | 'login' 需登录 | 'restricted' 指定分组与账号 | 'private' 仅归属者 */
   visibility: text('visibility').notNull().default('login'),
+  /** 应用形态：upstream 反代上游 | html 门户托管的静态页（简单 HTML / .neon-aap html 包） */
+  kind: text('kind').notNull().default('upstream'),
+  /** 归属者（用户自建应用默认私有可见的依据；管理员创建 = 该管理员 id） */
+  ownerUserId: integer('owner_user_id'),
   /** 是否向上游注入签名身份头（X-AAP-Identity） */
   passUser: integer('pass_user', { mode: 'boolean' }).notNull().default(false),
   /** 上游地址 http(s)://host[:port]/path?query（凭据不写这里，走 urlSecret） */
@@ -218,6 +222,38 @@ export const apps = sqliteTable('apps', {
   lastProbeAt: integer('last_probe_at'),
   createdAt: integer('created_at').notNull(),
   updatedAt: integer('updated_at').notNull(),
+});
+
+// ---------- 用户分组（会员等级 / 自定义组；应用可见性的目标集合） ----------
+
+export const userGroups = sqliteTable('user_groups', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  name: text('name').notNull().unique(),
+  note: text('note').notNull().default(''),
+  createdAt: integer('created_at').notNull(),
+});
+
+export const userGroupMembers = sqliteTable(
+  'user_group_members',
+  {
+    groupId: integer('group_id')
+      .notNull()
+      .references(() => userGroups.id, { onDelete: 'cascade' }),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    createdAt: integer('created_at').notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.groupId, t.userId] })],
+);
+
+/** 应用可见性 ACL（visibility=restricted 时生效：任一命中即可见；两者皆空 = 全部登录用户） */
+export const appAcl = sqliteTable('app_acl', {
+  appId: text('app_id')
+    .primaryKey()
+    .references(() => apps.id, { onDelete: 'cascade' }),
+  allowGroupIds: text('allow_group_ids').notNull().default('[]'), // JSON number[]
+  allowUserIds: text('allow_user_ids').notNull().default('[]'), // JSON number[]
 });
 
 // ---------- A3：MFA ----------

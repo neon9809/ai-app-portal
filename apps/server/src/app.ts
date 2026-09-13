@@ -25,6 +25,7 @@ import { adminTlsRouter } from './routes/adminTls.js';
 import { userRouter } from './routes/user.js';
 import { adminRouter } from './routes/admin.js';
 import { guideRouter } from './routes/guide.js';
+import { portalChromeJs } from './gateway/staticApp.js';
 import { llmGatewayRouter } from './routes/llmGateway.js';
 import { adminLlmRouter } from './routes/adminLlm.js';
 import { gatewayRouter } from './gateway/proxy.js';
@@ -53,6 +54,9 @@ export function createApp(cfg: AapConfig = config): Express {
   app.use(sessionMiddleware);
 
   // /api 下的 JSON body 与 CSRF Origin 校验；/app 代理路径不经过这里（W5 起独立挂载）
+  // .neon-aap 包上传需要更大的 JSON 体积（仅此路径）
+  app.use('/api/admin/apps/package', express.json({ limit: '15mb' }));
+
   app.use('/api', csrfOriginCheck);
   app.use('/api', express.json({ limit: '1mb' }));
 
@@ -94,6 +98,11 @@ export function createApp(cfg: AapConfig = config): Express {
 
   // 应用网关（B1）：/app/<id>/ 路径反代。必须在 SPA 兜底之前挂载；
   // 不经过 express.json（流式 body 保真），CSRF 不适用（仅 /api 挂载）。
+  // 统一页面元素脚本（P3）：被注入到所有门户代理/托管的 HTML 应用
+  app.get('/portal-chrome.js', (_req, res) => {
+    res.type('text/javascript; charset=utf-8').send(portalChromeJs());
+  });
+
   // LLM 网关（M2，C1）：/v1/* OpenAI 兼容端点，独立于 /api（SDK 直连，无 cookie/CSRF）
   app.use('/v1', express.json({ limit: '2mb' }));
   app.use(llmGatewayRouter);

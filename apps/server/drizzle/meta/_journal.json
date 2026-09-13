@@ -43,6 +43,20 @@
       "when": 1789289497740,
       "tag": "0005_easy_abomination",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1789290012587,
+      "tag": "0006_left_cassandra_nova",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1789290026975,
+      "tag": "0007_purple_amphibian",
+      "breakpoints": true
     }
   ]
 }

@@ -132,7 +132,7 @@ beforeAll(async () => {
   // 注册应用：公开(passUser) / 需登录 / 会员 / path 型凭据
   await createAppViaAdmin({ id: 'pub', name: '公开应用', upstream: `http://127.0.0.1:${upPort}`, visibility: 'public', passUser: true });
   await createAppViaAdmin({ id: 'priv', name: '登录应用', upstream: `http://127.0.0.1:${upPort}`, visibility: 'login' });
-  await createAppViaAdmin({ id: 'vip', name: '会员应用', upstream: `http://127.0.0.1:${upPort}`, visibility: 'member' });
+  await createAppViaAdmin({ id: 'vip', name: '受限应用', upstream: `http://127.0.0.1:${upPort}`, visibility: 'restricted', allowedGroupIds: [999999] });
   await createAppViaAdmin({
     id: 'pathsecret',
     name: '路径凭据',
@@ -252,7 +252,7 @@ describe('W5 访问策略（B4 三态）', () => {
     expect(await priv.text()).toContain('需要登录');
   });
 
-  it('member 应用：free 用户 403 提示会员', async () => {
+  it('restricted 应用：非 ACL 用户 403', async () => {
     const base = `http://127.0.0.1:${gwPort}`;
     const login = await fetch(`${base}/api/auth/login`, {
       method: 'POST',
@@ -262,7 +262,7 @@ describe('W5 访问策略（B4 三态）', () => {
     const cookie = cookieOf(login);
     const res = await fetch(`${base}/app/vip/`, { headers: { cookie } });
     expect(res.status).toBe(403);
-    expect(await res.text()).toContain('会员');
+    expect(await res.text()).toContain('未对你');
   });
 
   it('卡片墙：accessible 标记按会话计算', async () => {
@@ -300,6 +300,88 @@ describe('W5 WebSocket（B2）', () => {
     });
     expect(outcome).not.toBe('open');
     ws.close();
+  });
+});
+
+describe('P 可见性新模型（restricted/private/分组）', () => {
+  it('restricted + ACL：指定账号可见、其它登录用户不可见；private 仅归属者', async () => {
+    const base = `http://127.0.0.1:${gwPort}`;
+    // 直插分组/成员/ACL（走 DB，管理 API 已在别处覆盖）
+    const { getDb } = await import('../db/index.js');
+    const { userGroups, userGroupMembers, appAcl, apps } = await import('../db/schema.js');
+    const now = Date.now();
+    const g = getDb().insert(userGroups).values({ name: 'vip-test', createdAt: now }).run();
+    const gid = Number(g.lastInsertRowid);
+    // 建两个测试用户
+    const u1 = getDb().insert(users).values({ kind: 'local', username: 'aclvip', role: 'user', createdAt: now }).run();
+    const u1id = Number(u1.lastInsertRowid);
+    const u2 = getDb().insert(users).values({ kind: 'local', username: 'aclnone', role: 'user', createdAt: now }).run();
+    const u2id = Number(u2.lastInsertRowid);
+    getDb().insert(userGroupMembers).values({ groupId: gid, userId: u1id, createdAt: now }).run();
+    // restricted 应用：仅 gid 组可见
+    getDb().insert(apps).values({
+      id: 'acl-app', name: 'ACL', visibility: 'restricted', upstream: `http://127.0.0.1:${upPort}`,
+      ownerUserId: 1, kind: 'upstream', createdAt: now, updatedAt: now,
+    }).run();
+    getDb().insert(appAcl).values({ appId: 'acl-app', allowGroupIds: JSON.stringify([gid]), allowUserIds: '[]' }).run();
+    // private 应用：归属 u1
+    getDb().insert(apps).values({
+      id: 'priv-app', name: 'PRIV', visibility: 'private', upstream: `http://127.0.0.1:${upPort}`,
+      ownerUserId: u1id, kind: 'upstream', createdAt: now, updatedAt: now,
+    }).run();
+
+    const login = async (username: string): Promise<string> => {
+      const r = await fetch(`${base}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', origin: base },
+        body: JSON.stringify({ username, password: 'x' }),
+      });
+      void r;
+      return '';
+    };
+    void login;
+
+    // aclvip 登录 → restricted 可访问；priv（归属他人）403
+    const pw = 'acl-password';
+    const { writeLocalCredentials } = await import('../lib/bootstrap.js');
+    await writeLocalCredentials(u1id, pw);
+    await writeLocalCredentials(u2id, pw);
+    const l1 = await fetch(`${base}/api/auth/login`, {
+      method: 'POST', headers: { 'content-type': 'application/json', origin: base },
+      body: JSON.stringify({ username: 'aclvip', password: pw }),
+    });
+    const c1 = cookieOf(l1);
+    expect((await fetch(`${base}/app/acl-app/`, { headers: { cookie: c1 } })).status).toBe(200);
+    // aclvip 是 priv-app 归属者 → 自己可见
+    expect((await fetch(`${base}/app/priv-app/`, { headers: { cookie: c1 } })).status).toBe(200);
+
+    const l2 = await fetch(`${base}/api/auth/login`, {
+      method: 'POST', headers: { 'content-type': 'application/json', origin: base },
+      body: JSON.stringify({ username: 'aclnone', password: pw }),
+    });
+    const c2 = cookieOf(l2);
+    expect((await fetch(`${base}/app/acl-app/`, { headers: { cookie: c2 } })).status).toBe(403);
+    // 非归属者 → private 403
+    expect((await fetch(`${base}/app/priv-app/`, { headers: { cookie: c2 } })).status).toBe(403);
+    void u2id;
+  });
+
+  it('HTML 托管应用 + 统一页面元素注入', async () => {
+    const base = `http://127.0.0.1:${gwPort}`;
+    const { writeHtmlApp } = await import('../gateway/staticApp.js');
+    const { apps } = await import('../db/schema.js');
+    writeHtmlApp('htmltest', '<!doctype html><html><body><h1 id="h">HELLO-HTML</h1></body></html>');
+    getDb().insert(apps).values({
+      id: 'htmltest', name: 'HTML', visibility: 'public', upstream: '', kind: 'html',
+      ownerUserId: 1, createdAt: Date.now(), updatedAt: Date.now(),
+    }).run();
+    const res = await fetch(`${base}/app/htmltest/`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('HELLO-HTML');
+    expect(html).toContain('/portal-chrome.js');
+    const chrome = await fetch(`${base}/portal-chrome.js`);
+    expect((await chrome.text())).toContain('应用门户');
   });
 });
 

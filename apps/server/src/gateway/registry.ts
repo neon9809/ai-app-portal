@@ -7,8 +7,45 @@ import { eq } from 'drizzle-orm';
 import { getDb } from '../db/index.js';
 import { apps } from '../db/schema.js';
 import { decryptSecret } from '../lib/cryptoSecrets.js';
+import { appAcl } from '../db/schema.js';
+import { userGroupIds } from '../lib/groups.js';
 
 export type AppRow = typeof apps.$inferSelect;
+
+export interface AppAcl {
+  allowGroupIds: number[];
+  allowUserIds: number[];
+}
+
+function aclOf(appId: string): AppAcl {
+  const row = getDb().select().from(appAcl).where(eq(appAcl.appId, appId)).get();
+  const parse = (v: string): number[] => {
+    try {
+      const arr = JSON.parse(v) as unknown;
+      return Array.isArray(arr) ? arr.map(Number) : [];
+    } catch {
+      return [];
+    }
+  };
+  return row
+    ? { allowGroupIds: parse(row.allowGroupIds), allowUserIds: parse(row.allowUserIds) }
+    : { allowGroupIds: [], allowUserIds: [] };
+}
+
+export function getAcl(appId: string): AppAcl {
+  return aclOf(appId);
+}
+
+export function setAcl(appId: string, acl: AppAcl): void {
+  getDb()
+    .insert(appAcl)
+    .values({ appId, allowGroupIds: JSON.stringify(acl.allowGroupIds), allowUserIds: JSON.stringify(acl.allowUserIds) })
+    .onConflictDoUpdate({
+      target: appAcl.appId,
+      set: { allowGroupIds: JSON.stringify(acl.allowGroupIds), allowUserIds: JSON.stringify(acl.allowUserIds) },
+    })
+    .run();
+}
 
 export const PATH_SECRET_KEY = '__path__';
 
@@ -48,19 +85,45 @@ export function getUrlSecret(app: AppRow): UrlSecret | null {
   }
 }
 
-/** 访问策略三态（B4）：public 全员 / login 需登录 / member 需会员 */
+/** 管理员可见一切（含 private） */
+function isAdminUser(user: { role: string } | null | undefined): boolean {
+  return Boolean(user && user.role === 'admin');
+}
+
+/**
+ * 可见性模型（P）：
+ *  - public：全员（含匿名）
+ *  - login：全部登录用户
+ *  - restricted：登录 + 指定分组/指定账号任一命中；ACL 为空 = 全部登录用户；归属者与管理员始终可见
+ *  - private：仅归属者（用户自建应用默认）
+ */
 export function canAccess(
   app: AppRow,
-  user: { authState: string; plan: string } | null | undefined,
+  user: { id: number; authState: string; role: string } | null | undefined,
 ): boolean {
+  if (isAdminUser(user)) return true;
   switch (app.visibility) {
     case 'public':
       return true;
-    case 'login':
-      return Boolean(user && user.authState === 'full');
-    case 'member':
-      return Boolean(user && user.authState === 'full' && user.plan === 'member');
+    case 'private':
+      return Boolean(user && user.authState === 'full' && app.ownerUserId === user.id);
+    case 'restricted': {
+      if (!user || user.authState !== 'full') return false;
+      if (app.ownerUserId === user.id) return true;
+      const acl = aclOf(app.id);
+      if (acl.allowGroupIds.length === 0 && acl.allowUserIds.length === 0) return true;
+      if (acl.allowUserIds.includes(user.id)) return true;
+      const groupIds = userGroupIds(user.id);
+      return acl.allowGroupIds.some((g) => groupIds.has(g));
+    }
     default:
       return false;
   }
+}
+
+/** 门户卡片是否对该用户展示（private 且非归属者/管理员 → 直接隐藏） */
+export function isVisibleInPortal(app: AppRow, user: { id: number; role: string } | null | undefined): boolean {
+  if (app.visibility !== 'private') return true;
+  if (isAdminUser(user)) return true;
+  return Boolean(user && app.ownerUserId === user.id);
 }

@@ -14,6 +14,7 @@ import { getEmailChannel, outboundMailConfigured } from '../lib/verification.js'
 import { generatePassword, hashPassword } from '../lib/passwords.js';
 import { listSettingsForAdmin, updateSettingFromAdmin, SETTING_DEFS, getSetting } from '../lib/settings.js';
 import { audit } from '../lib/audit.js';
+import { createGroup, deleteGroup, groupMemberIds, listGroups, setGroupMembers, updateGroup } from '../lib/groups.js';
 import { status as tlsStatus } from '../gateway/tls.js';
 
 export const adminRouter = Router();
@@ -171,6 +172,53 @@ adminRouter.post(
     await getEmailChannel().send(to, '123456', 'bind');
     audit(`${req.user!.kind}:${req.user!.id}`, req.clientIp ?? null, 'admin.mail.test', { to });
     res.json({ ok: true, to });
+  }),
+);
+
+// ---------- 用户分组（会员等级/自定义组） ----------
+
+adminRouter.get(
+  '/admin/groups',
+  h(async (_req, res) => {
+    res.json({ groups: listGroups() });
+  }),
+);
+
+adminRouter.post(
+  '/admin/groups',
+  h(async (req, res) => {
+    const body = (req.body ?? {}) as { name?: string; note?: string };
+    if (!body.name?.trim()) throw new HttpError(400, 'INVALID_NAME', '分组名称必填');
+    const id = createGroup(body.name, body.note ?? '');
+    audit(`${req.user!.kind}:${req.user!.id}`, req.clientIp ?? null, 'admin.group.create', { id, name: body.name });
+    res.json({ ok: true, id });
+  }),
+);
+
+adminRouter.put(
+  '/admin/groups/:id',
+  h(async (req, res) => {
+    const body = (req.body ?? {}) as { name?: string; note?: string; memberIds?: number[] };
+    updateGroup(Number(req.params.id), body);
+    if (body.memberIds !== undefined) setGroupMembers(Number(req.params.id), body.memberIds);
+    audit(`${req.user!.kind}:${req.user!.id}`, req.clientIp ?? null, 'admin.group.update', { id: Number(req.params.id) });
+    res.json({ ok: true });
+  }),
+);
+
+adminRouter.delete(
+  '/admin/groups/:id',
+  h(async (req, res) => {
+    deleteGroup(Number(req.params.id));
+    audit(`${req.user!.kind}:${req.user!.id}`, req.clientIp ?? null, 'admin.group.delete', { id: Number(req.params.id) });
+    res.json({ ok: true });
+  }),
+);
+
+adminRouter.get(
+  '/admin/groups/:id/members',
+  h(async (req, res) => {
+    res.json({ memberIds: groupMemberIds(Number(req.params.id)) });
   }),
 );
 
