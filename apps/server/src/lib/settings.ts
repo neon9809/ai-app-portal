@@ -163,15 +163,15 @@ export const SETTING_DEFS: Record<string, SettingDef> = {
 
   // ---- 验证码通道（A2，SMTP 首发配置） ----
   SMTP_HOST: {
-    group: '邮件通道（验证码发信）', type: 'string', desc: 'SMTP 服务器（注册/找回/绑定邮箱验证码发信）', initial: () => '', defaultsWork: false },
+    group: '通知通道（验证码发信）', type: 'string', desc: 'SMTP 服务器（注册/找回/绑定邮箱验证码发信）', initial: () => '', defaultsWork: false },
   SMTP_PORT: {
-    group: '邮件通道（验证码发信）', type: 'int', desc: 'SMTP 端口（465/587）', initial: () => '465', defaultsWork: false },
+    group: '通知通道（验证码发信）', type: 'int', desc: 'SMTP 端口（465/587）', initial: () => '465', defaultsWork: false },
   SMTP_USER: {
-    group: '邮件通道（验证码发信）', type: 'string', desc: 'SMTP 用户名', initial: () => '', defaultsWork: false },
+    group: '通知通道（验证码发信）', type: 'string', desc: 'SMTP 用户名', initial: () => '', defaultsWork: false },
   SMTP_PASS: {
-    group: '邮件通道（验证码发信）', type: 'string', desc: 'SMTP 密码/授权码', initial: () => '', secret: true, defaultsWork: false },
+    group: '通知通道（验证码发信）', type: 'string', desc: 'SMTP 密码/授权码', initial: () => '', secret: true, defaultsWork: false },
   SMTP_FROM: {
-    group: '邮件通道（验证码发信）', type: 'string', desc: '发件人（如 "AI应用门户 <no-reply@example.com>"）', initial: () => '', defaultsWork: false },
+    group: '通知通道（验证码发信）', type: 'string', desc: '发件人（如 "AI应用门户 <no-reply@example.com>"）', initial: () => '', defaultsWork: false },
 };
 
 /** 首启把全部默认值种入 settings（INSERT OR IGNORE，env 只作初值不覆盖已存值） */

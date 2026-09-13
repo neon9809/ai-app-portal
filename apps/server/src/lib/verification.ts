@@ -93,7 +93,7 @@ class SmtpEmailChannel implements CodeChannel {
   }
 }
 
-/** email 通道：按 MAIL_PROVIDER 选择 Resend / SMTP；都未配置时日志兜底 */
+/** email 通道：按 MAIL_PROVIDER 选择 Resend / SMTP；都未配置时日志兜底（短信通道未来接入） */
 export function getEmailChannel(): CodeChannel {
   const provider = (getSetting('MAIL_PROVIDER') ?? 'smtp').toLowerCase();
   if (provider === 'resend') {

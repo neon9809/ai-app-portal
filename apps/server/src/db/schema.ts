@@ -146,7 +146,7 @@ export const verificationCodes = sqliteTable(
   'verification_codes',
   {
     id: integer('id').primaryKey({ autoIncrement: true }),
-    /** 'email' | 'phone'（M1 首发邮件通道） */
+    /** 'email' | 'phone'（M1 首发邮件；phone 为短信通道预留） */
     channel: text('channel').notNull(),
     target: text('target').notNull(),
     /** 'register' | 'reset' | 'bind' */

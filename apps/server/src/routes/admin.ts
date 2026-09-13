@@ -155,7 +155,7 @@ adminRouter.put(
   }),
 );
 
-/** 邮件通道发信测试（R：直给结果） */
+/** 通知通道发信测试（邮件；短信未来接入） */
 adminRouter.post(
   '/admin/mail/test',
   h(async (req, res) => {

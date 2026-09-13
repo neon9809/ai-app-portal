@@ -5,7 +5,7 @@
  *   应用管理（应用列表 + 网关限流）
  *   用户与注册（用户列表 + 注册策略 + 邀请码）
  *   安全（防爆破/PoW/会话/签名密钥/Turnstile + 审计日志）
- *   邮件通道（SMTP / Resend + 发信测试）
+ *   通知通道（邮件 [SMTP/Resend] / 未来短信 + 发信测试）
  *   证书（状态/ACME/PEM/HTTPS 跳转）
  * E2 七条：①同源主题 ②首配向导（左侧竖向） ③一句话说明+默认值标注+高级折叠
  * ④危险操作防呆 ⑤状态仪表卡 ⑥移动端可看状态 ⑦保存即生效+测试按钮
@@ -301,7 +301,7 @@ export function AdminPage() {
               { key: 'apps', label: '应用管理', children: <AppsTab /> },
               { key: 'users', label: '用户与注册', children: <UsersRegTab /> },
               { key: 'security', label: '安全', children: <SecurityTab /> },
-              { key: 'mail', label: '邮件通道', children: <MailTab /> },
+              { key: 'mail', label: '通知通道', children: <MailTab /> },
               { key: 'tls', label: '证书', children: <TlsTab /> },
             ]}
           />
@@ -784,7 +784,7 @@ function SecurityTab(): ReactNode {
   );
 }
 
-// ---------- 邮件通道（SMTP / Resend + 发信测试） ----------
+// ---------- 通知通道（邮件 [SMTP/Resend] / 未来短信 + 发信测试） ----------
 
 function MailTab(): ReactNode {
   const [testTo, setTestTo] = useState('');
@@ -806,8 +806,8 @@ function MailTab(): ReactNode {
 
   return (
     <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-      <Card size="small" title="发信通道（验证码用）" extra={<Tag bordered={false} color="blue" style={{ fontSize: 11 }}>推荐 Resend</Tag>}>
-        <SettingsForm groups={['邮件通道（验证码发信）']} />
+      <Card size="small" title="邮件发信（验证码用；短信通道后续版本接入）" extra={<Tag bordered={false} color="blue" style={{ fontSize: 11 }}>推荐 Resend</Tag>}>
+        <SettingsForm groups={['通知通道（验证码发信）']} />
       </Card>
       <Card size="small" title="发信测试">
         <Space wrap>
