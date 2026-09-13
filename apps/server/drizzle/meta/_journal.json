@@ -29,6 +29,20 @@
       "when": 1789280544988,
       "tag": "0003_round_dreaming_celestial",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1789288929983,
+      "tag": "0004_freezing_hercules",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1789289497740,
+      "tag": "0005_easy_abomination",
+      "breakpoints": true
     }
   ]
 }

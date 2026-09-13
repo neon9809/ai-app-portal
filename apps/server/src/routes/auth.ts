@@ -21,6 +21,7 @@ import { createSession, destroySession, markStepUp } from '../lib/session.js';
 import { getSetting, getSettingInt } from '../lib/settings.js';
 import { verifyTurnstile, turnstileEnabled } from '../lib/turnstile.js';
 import { issueCode, maskEmail, verifyCode } from '../lib/verification.js';
+import { buildLoginRedirect, exchangeCallback, isAdminSubject } from '../lib/oidc.js';
 import { adminCount, disposeCredentialsFile, getLocalPasswordHash, writeLocalCredentials } from '../lib/bootstrap.js';
 import { audit, registerPurgeTask } from '../lib/audit.js';
 import { publicUserOf } from './shared.js';
@@ -400,6 +401,60 @@ authRouter.get(
     res.json(info);
   }),
 );
+
+// ---------- OIDC 登录（A5；MFA 委托 IdP） ----------
+
+authRouter.get('/auth/oidc/start', h(async (req, res) => {
+  const url = await buildLoginRedirect(req);
+  res.redirect(302, url);
+}));
+
+authRouter.get('/auth/oidc/callback', h(async (req, res) => {
+  const ip = req.clientIp ?? 'unknown';
+  try {
+    const profile = await exchangeCallback(req, req.query as { code?: string; state?: string });
+    // 按 subject upsert（统一 users 表，无 (kind,uid) 串号面）
+    let row = getDb().select().from(users).where(eq(users.subject, profile.subject)).get();
+    const now = Date.now();
+    if (!row) {
+      const promote = isAdminSubject(profile);
+      const info = getDb()
+        .insert(users)
+        .values({
+          kind: 'oidc',
+          subject: profile.subject,
+          email: profile.email,
+          name: profile.name,
+          role: promote ? 'admin' : 'user',
+          createdAt: now,
+        })
+        .run();
+      row = getDb().select().from(users).where(eq(users.id, Number(info.lastInsertRowid))).get();
+      audit(`oidc:${profile.subject}`, ip, 'user.oidc.created', { userId: row!.id, promoted: promote });
+    } else {
+      getDb()
+        .update(users)
+        .set({ email: profile.email ?? row.email, name: profile.name || row.name, lastLoginAt: now, lastIp: ip })
+        .where(eq(users.id, row.id))
+        .run();
+    }
+    if (row!.status === 'disabled') {
+      res.redirect(302, '/login?error=account_disabled');
+      return;
+    }
+    recordSuccess(ip, `oidc:${profile.subject}`);
+    createSession(res, { id: row!.id }, { ip, userAgent: req.headers['user-agent'], authState: 'full' });
+    audit(`oidc:${profile.subject}`, ip, 'oidc.login', { userId: row!.id });
+    res.redirect(302, '/');
+  } catch (err) {
+    if (err instanceof HttpError) {
+      res.redirect(302, `/login?error=${encodeURIComponent(err.code)}`);
+      return;
+    }
+    console.error('[oidc] callback failed:', err);
+    res.redirect(302, '/login?error=oidc_failed');
+  }
+}));
 
 // ---------- 找回密码 ----------
 

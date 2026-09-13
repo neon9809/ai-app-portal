@@ -81,6 +81,8 @@ export interface PortalBootstrap {
   };
   /** 首个账号尚未创建 → 前端引导「初始化管理员」流程 */
   needsInit: boolean;
+  /** OIDC 单点登录是否已配置启用 */
+  oidc: { enabled: boolean };
 }
 
 // ---------- 应用（B4 / 门户卡片墙） ----------

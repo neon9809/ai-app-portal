@@ -5,7 +5,7 @@
 import { Router } from 'express';
 import { and, eq, gt, ne, sql } from 'drizzle-orm';
 import { getDb } from '../db/index.js';
-import { sessions, users } from '../db/schema.js';
+import { llmLedger, sessions, users } from '../db/schema.js';
 import { HttpError, h } from '../lib/httpError.js';
 import { requireAuth, requireStepUp } from '../lib/auth.js';
 import { publicUserOf } from './shared.js';
@@ -13,6 +13,7 @@ import { registerPurgeTask } from '../lib/audit.js';
 import { getSetting, getSettingInt } from '../lib/settings.js';
 import { issueCode, verifyCode } from '../lib/verification.js';
 import { audit } from '../lib/audit.js';
+import { recomputeBalance } from '../lib/llm.js';
 
 export const userRouter = Router();
 
@@ -141,12 +142,30 @@ userRouter.delete(
 userRouter.get(
   '/user/billing',
   h(async (req, res) => {
-    const row = getDb().select({ plan: users.plan }).from(users).where(eq(users.id, req.user!.id)).get();
+    const uid = req.user!.id;
+    const row = getDb().select({ plan: users.plan }).from(users).where(eq(users.id, uid)).get();
+    // M2：余额与用量来自 LLM 网关账本（M3 接充值与结算引擎）
+    const balance = recomputeBalance(uid);
+    const usage = getDb()
+      .select()
+      .from(llmLedger)
+      .where(and(eq(llmLedger.userId, uid), eq(llmLedger.kind, 'usage')))
+      .orderBy(sql`id DESC`)
+      .limit(10)
+      .all();
     res.json({
       plan: row?.plan ?? 'free',
+      tokenBalance: balance,
       membershipUntil: null,
-      tokenBalance: null,
-      note: '会员与 token 充值在 M3（计费闭环）上线后开放',
+      recentUsage: usage.map((u) => ({
+        ts: u.ts,
+        model: u.model,
+        appId: u.appId,
+        promptTokens: u.promptTokens,
+        completionTokens: u.completionTokens,
+        delta: u.delta,
+      })),
+      note: '会员订阅与自助充值在 M3（计费闭环）上线后开放；当前额度由管理员发放',
     });
   }),
 );

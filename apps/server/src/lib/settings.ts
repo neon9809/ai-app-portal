@@ -78,6 +78,20 @@ export const SETTING_DEFS: Record<string, SettingDef> = {
     initial: () => '7',
     defaultsWork: true,
   },
+  OIDC_ISSUER: {
+    group: '注册与账号', type: 'string',
+    desc: 'OIDC Issuer URL（如 https://id.example.com；与 Client ID/Secret 同时配置即启用单点登录，重启生效）',
+    initial: () => '', defaultsWork: false },
+  OIDC_CLIENT_ID: {
+    group: '注册与账号', type: 'string',
+    desc: 'OIDC Client ID', initial: () => '', defaultsWork: false },
+  OIDC_CLIENT_SECRET: {
+    group: '注册与账号', type: 'string',
+    desc: 'OIDC Client Secret', initial: () => '', secret: true, defaultsWork: false },
+  OIDC_ADMIN_SUBJECTS: {
+    group: '注册与账号', type: 'string',
+    desc: '自动提升管理员的 subject/邮箱（逗号分隔；仅首次登录生效）',
+    initial: () => '', defaultsWork: true, advanced: true },
   REGISTRATION_PENDING_TTL_DAYS: {
     group: '注册与账号',
     type: 'int',
@@ -134,6 +148,8 @@ export const SETTING_DEFS: Record<string, SettingDef> = {
   },
   RATE_USER_PER_MIN: {
     group: '应用网关', type: 'int', desc: '应用网关限流：每用户请求/分', initial: () => String(config.rateUserPerMin), defaultsWork: true, advanced: true },
+  RATE_LLM_PER_MIN: {
+    group: '应用网关', type: 'int', desc: 'LLM 网关凭据默认限流（请求/分，凭据可单独覆写）', initial: () => '60', defaultsWork: true, advanced: true },
   RATE_IP_PER_MIN: {
     group: '应用网关', type: 'int', desc: '应用网关限流：每 IP 兜底请求/分', initial: () => String(config.rateIpPerMin), defaultsWork: true, advanced: true },
   PROXY_TIMEOUT: {

@@ -6,6 +6,8 @@ import { Alert, Button, Card, Form, Input, Tabs, Typography, message } from 'ant
 import { KeyOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import type { PortalBootstrap } from '@aap/shared';
 import { startAuthentication } from '@simplewebauthn/browser';
 import { api, ApiError } from '../api/client';
 import { obtainPowToken, solvePow, type PowChallenge } from '../lib/pow';
@@ -16,6 +18,10 @@ type LoginResult = SessionInfo & { mfaRequired: boolean };
 
 export function LoginPage() {
   const navigate = useNavigate();
+  const { data: boot } = useQuery({
+    queryKey: ['bootstrap'],
+    queryFn: () => api<PortalBootstrap>('/api/portal/bootstrap'),
+  });
   const redirect = usePostAuthRedirect();
   const [loading, setLoading] = useState(false);
   const [mfaRequired, setMfaRequired] = useState(false);
@@ -173,6 +179,18 @@ export function LoginPage() {
           </Form>
           {powHint ? (
             <Alert type="warning" showIcon message={powHint} style={{ marginTop: 12 }} />
+          ) : null}
+          {boot?.oidc.enabled ? (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '12px 0' }}>
+                <div style={{ flex: 1, height: 1, background: 'var(--aap-border)' }} />
+                <span style={{ color: 'var(--aap-text-secondary)', fontSize: 12 }}>或</span>
+                <div style={{ flex: 1, height: 1, background: 'var(--aap-border)' }} />
+              </div>
+              <Button block href="/api/auth/oidc/start">
+                使用 OIDC 单点登录
+              </Button>
+            </>
           ) : null}
           <div style={{ marginTop: 16, display: 'flex', justifyContent: 'space-between' }}>
             <Link to="/register">注册账号</Link>

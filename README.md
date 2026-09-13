@@ -52,6 +52,8 @@ pnpm typecheck    # 全部类型检查
 | W9 管理后台 E1/E2（向导/仪表卡/防呆） | ✅ |
 | W10 分发 F1/F2（Dockerfile/compose/FPK 脚手架） | ✅（镜像构建待有 Docker Hub 网络时验证） |
 | W11 集成验收（E2E 主链路 ×3） | ✅（ACME staging 与真人走查待办） |
+| **M2 LLM 网关（C1–C6）+ A5 OIDC** | ✅（OpenAI 兼容端点+流式、多上游 failover、凭据、账本与预检 402、OIDC SSO；真实 IdP/上游联调待办） |
+| M3 计费闭环 | ⬜（账本/余额缓存/调额已预埋，充值与结算引擎待做） |
 
 ## 发布（CI）
 

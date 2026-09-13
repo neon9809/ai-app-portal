@@ -4,6 +4,7 @@ import type { PortalBootstrap, RegistrationMode } from '@aap/shared';
 import { getDb } from '../db/index.js';
 import { users } from '../db/schema.js';
 import { getSetting } from '../lib/settings.js';
+import { oidcEnabled } from '../lib/oidc.js';
 
 /**
  * 门户公共引导信息（未登录可读）：品牌数据（A1）+ 注册开关状态 + 初始化标记。
@@ -31,6 +32,7 @@ portalRouter.get('/portal/bootstrap', (_req, res) => {
       turnstileEnabled: Boolean(getSetting('TURNSTILE_SITE_KEY')),
     },
     needsInit: (getDb().select({ n: sql<number>`count(*)` }).from(users).get()?.n ?? 0) === 0,
+    oidc: { enabled: oidcEnabled() },
   };
   res.json(bootstrap);
 });

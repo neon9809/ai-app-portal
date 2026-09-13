@@ -20,7 +20,7 @@ import {
   message,
 } from 'antd';
 import { useEffect, useState, type ReactNode } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../api/client';
 import { obtainPowToken } from '../lib/pow';
 import { useSession } from '../state/session';
@@ -405,19 +405,7 @@ export function AccountPage() {
           {
             key: 'billing',
             label: '账务',
-            children: (
-              <Card title="会员与 Token">
-                <Descriptions column={1}>
-                  <Descriptions.Item label="当前计划">
-                    {user.plan === 'member' ? <Tag color="gold">会员</Tag> : <Tag>免费版</Tag>}
-                  </Descriptions.Item>
-                  <Descriptions.Item label="Token 余额">—</Descriptions.Item>
-                </Descriptions>
-                <Typography.Paragraph type="secondary" style={{ marginTop: 12 }}>
-                  会员订阅与 Token 充值将在 M3（计费闭环）上线后开放。
-                </Typography.Paragraph>
-              </Card>
-            ),
+            children: <BillingTab />,
           },
           {
             key: 'danger',
@@ -557,5 +545,66 @@ function AppearanceTab(): ReactNode {
         <Typography.Text type="secondary">{accent ?? '跟随主题默认'}</Typography.Text>
       </Space>
     </Card>
+  );
+}
+
+// ---------- 账务（M2：LLM 额度与用量；M3 上线充值） ----------
+
+interface BillingData {
+  plan: string;
+  tokenBalance: number | null;
+  recentUsage: Array<{
+    ts: number;
+    model: string | null;
+    appId: string | null;
+    promptTokens: number | null;
+    completionTokens: number | null;
+    delta: number;
+  }>;
+  note: string;
+}
+
+function BillingTab(): ReactNode {
+  const billing = useQuery({ queryKey: ['billing'], queryFn: () => api<BillingData>('/api/user/billing') });
+  const d = billing.data;
+  return (
+    <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+      <Card size="small" title="Token 额度（LLM 网关）">
+        <Descriptions column={1}>
+          <Descriptions.Item label="当前计划">
+            {d?.plan === 'member' ? <Tag color="gold">会员</Tag> : <Tag>免费版</Tag>}
+          </Descriptions.Item>
+          <Descriptions.Item label="剩余额度">
+            <Typography.Text strong>{d?.tokenBalance?.toLocaleString() ?? '—'}</Typography.Text>
+          </Descriptions.Item>
+        </Descriptions>
+        <Typography.Paragraph type="secondary" style={{ marginTop: 10 }}>
+          {d?.note ?? ''}
+        </Typography.Paragraph>
+      </Card>
+      <Card size="small" title="最近调用">
+        {d?.recentUsage?.length ? (
+          <Table
+            rowKey={(r, i) => `${r.ts}-${i}`}
+            size="small"
+            dataSource={d.recentUsage}
+            pagination={false}
+            columns={[
+              { title: '时间', width: 160, render: (_, r) => new Date(r.ts).toLocaleString() },
+              { title: '模型', dataIndex: 'model', ellipsis: true },
+              { title: '应用', dataIndex: 'appId', width: 110 },
+              { title: 'tokens', width: 110, render: (_, r) => `${r.promptTokens ?? 0}+${r.completionTokens ?? 0}` },
+              {
+                title: '扣减',
+                width: 90,
+                render: (_, r) => <Typography.Text type="danger">{r.delta}</Typography.Text>,
+              },
+            ]}
+          />
+        ) : (
+          <Typography.Text type="secondary">暂无调用记录</Typography.Text>
+        )}
+      </Card>
+    </Space>
   );
 }

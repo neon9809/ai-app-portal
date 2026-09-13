@@ -24,8 +24,10 @@ export const users = sqliteTable(
     id: integer('id').primaryKey({ autoIncrement: true }),
     /** 'local' | 'oidc'（M2） */
     kind: text('kind').notNull().default('local'),
-    /** local 唯一；oidc 为 null（其唯一性走 subject，M2） */
+    /** local 唯一；oidc 为 null */
     username: text('username'),
+    /** OIDC IdP 的 subject（稳定标识，唯一；local 为 null） */
+    subject: text('subject'),
     email: text('email'),
     phone: text('phone'),
     name: text('name').notNull().default(''),
@@ -52,6 +54,9 @@ export const users = sqliteTable(
     uniqueIndex('users_phone_uq')
       .on(t.phone)
       .where(sql`phone IS NOT NULL`),
+    uniqueIndex('users_subject_uq')
+      .on(t.subject)
+      .where(sql`subject IS NOT NULL`),
   ],
 );
 
@@ -266,3 +271,92 @@ export const passkeys = sqliteTable(
   },
   (t) => [index('passkeys_user_idx').on(t.userId)],
 );
+
+// ---------- C：LLM 网关（M2） ----------
+
+/** 上游（OpenAI 兼容端点；真实 key 加密落盘，永不下发） */
+export const llmUpstreams = sqliteTable('llm_upstreams', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  name: text('name').notNull(),
+  baseUrl: text('base_url').notNull(), // 如 https://dashscope.aliyuncs.com/compatible-mode/v1
+  apiKeyEnc: text('api_key_enc').notNull(),
+  enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+  createdAt: integer('created_at').notNull(),
+});
+
+/** 模型路由：公开模型名 → 上游实际模型；同 model 多行 = failover 候选（priority 小者优先，同优先级按 weight 加权） */
+export const llmRoutes = sqliteTable(
+  'llm_routes',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    model: text('model').notNull(), // 应用请求里的 model 名（公开目录名）
+    upstreamId: integer('upstream_id')
+      .notNull()
+      .references(() => llmUpstreams.id, { onDelete: 'cascade' }),
+    upstreamModel: text('upstream_model').notNull(), // 上游侧真实模型名
+    multiplier: integer('multiplier').notNull().default(100), // 计费倍率（千分比，100 = 1:1），M3 定价沿用
+    priority: integer('priority').notNull().default(100),
+    weight: integer('weight').notNull().default(100),
+    enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+    createdAt: integer('created_at').notNull(),
+  },
+  (t) => [index('llm_routes_model_idx').on(t.model)],
+);
+
+/** 网关凭据（应用级；只存 SHA-256，明文仅创建时展示一次；可吊销可限额） */
+export const llmAppTokens = sqliteTable(
+  'llm_app_tokens',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    tokenHash: text('token_hash').notNull().unique(),
+    appId: text('app_id').notNull(), // apps.id 或外部应用标识
+    name: text('name').notNull().default(''),
+    enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+    perMinuteLimit: integer('per_minute_limit'), // 应用级限流（请求/分），null = 默认
+    createdAt: integer('created_at').notNull(),
+    lastUsedAt: integer('last_used_at'),
+  },
+  (t) => [index('llm_tokens_app_idx').on(t.appId)],
+);
+
+/** 用量/调额账本（append-only，只记不判；余额 = SUM(delta)） */
+export const llmLedger = sqliteTable(
+  'llm_ledger',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    ts: integer('ts').notNull(),
+    userId: integer('user_id'), // null = 纯应用级调用（无用户归因）
+    appId: text('app_id'),
+    kind: text('kind').notNull(), // 'usage' | 'grant' | 'adjust'
+    model: text('model'),
+    promptTokens: integer('prompt_tokens'),
+    completionTokens: integer('completion_tokens'),
+    /** 有符号变动量（usage 为负；grant/adjust 为正）；余额 = SUM(delta) */
+    delta: integer('delta').notNull(),
+    latencyMs: integer('latency_ms'),
+    status: text('status').notNull().default('ok'), // usage 行：ok | error
+    requestId: text('request_id'),
+    note: text('note'),
+  },
+  (t) => [
+    index('llm_ledger_user_idx').on(t.userId, t.ts),
+    index('llm_ledger_app_idx').on(t.appId, t.ts),
+  ],
+);
+
+/** 余额缓存（C6 预检闸门；由结算/事件失效重算，非账本） */
+export const llmBalanceCache = sqliteTable('llm_balance_cache', {
+  userId: integer('user_id').primaryKey(),
+  balance: integer('balance').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+});
+
+/** OIDC 登录状态（state/nonce/PKCE，一次性） */
+export const oidcStates = sqliteTable('oidc_states', {
+  state: text('state').primaryKey(),
+  nonce: text('nonce').notNull(),
+  codeVerifier: text('code_verifier').notNull(),
+  ip: text('ip'),
+  createdAt: integer('created_at').notNull(),
+  expiresAt: integer('expires_at').notNull(),
+});

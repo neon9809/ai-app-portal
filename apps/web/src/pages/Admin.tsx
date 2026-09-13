@@ -303,6 +303,7 @@ export function AdminPage() {
               { key: 'security', label: '安全', children: <SecurityTab /> },
               { key: 'mail', label: '通知通道', children: <MailTab /> },
               { key: 'tls', label: '证书', children: <TlsTab /> },
+              { key: 'llm', label: 'LLM 网关', children: <LlmTab /> },
             ]}
           />
         </div>
@@ -925,6 +926,333 @@ function TlsTab(): ReactNode {
       <Card size="small" title="HTTPS 跳转">
         <SettingsForm groups={['证书与 HTTPS']} excludeKeys={['ACME_DOMAIN', 'ACME_EMAIL', 'ACME_STAGING']} />
       </Card>
+    </Space>
+  );
+}
+
+// ---------- LLM 网关（M2：上游 / 模型路由 / 网关凭据 / 调额 / 用量） ----------
+
+interface LlmUpstream {
+  id: number;
+  name: string;
+  baseUrl: string;
+  enabled: boolean;
+  hasKey: boolean;
+}
+interface LlmRoute {
+  id: number;
+  model: string;
+  upstreamId: number;
+  upstreamName: string;
+  upstreamModel: string;
+  multiplier: number;
+  priority: number;
+  weight: number;
+  enabled: boolean;
+}
+interface LlmToken {
+  id: number;
+  appId: string;
+  name: string;
+  enabled: boolean;
+  perMinuteLimit: number | null;
+  createdAt: string;
+  lastUsedAt: string | null;
+}
+interface LedgerRow {
+  id: number;
+  ts: number;
+  kind: string;
+  userId: number | null;
+  appId: string | null;
+  model: string | null;
+  promptTokens: number | null;
+  completionTokens: number | null;
+  delta: number;
+  latencyMs: number | null;
+  status: string;
+}
+
+function LlmTab(): ReactNode {
+  const qc = useQueryClient();
+  const upstreamsQ = useQuery({ queryKey: ['llm-upstreams'], queryFn: () => api<{ upstreams: LlmUpstream[] }>('/api/admin/llm/upstreams') });
+  const routesQ = useQuery({ queryKey: ['llm-routes'], queryFn: () => api<{ routes: LlmRoute[] }>('/api/admin/llm/routes') });
+  const tokensQ = useQuery({ queryKey: ['llm-tokens'], queryFn: () => api<{ tokens: LlmToken[] }>('/api/admin/llm/tokens') });
+  const usersQ = useQuery({ queryKey: ['admin-users'], queryFn: () => api<{ users: PublicUser[] }>('/api/admin/users') });
+  const usageQ = useQuery({ queryKey: ['llm-usage'], queryFn: () => api<{ rows: LedgerRow[] }>('/api/admin/llm/usage?limit=50') });
+
+  const [upForm] = Form.useForm();
+  const [routeForm] = Form.useForm();
+  const [tokenForm] = Form.useForm();
+  const [adjustForm] = Form.useForm();
+  const [createdToken, setCreatedToken] = useState<string | null>(null);
+
+  function invalidate(): void {
+    for (const k of ['llm-upstreams', 'llm-routes', 'llm-tokens', 'llm-usage']) void qc.invalidateQueries({ queryKey: [k] });
+  }
+
+  const upstreamOptions = (upstreamsQ.data?.upstreams ?? []).map((u) => ({ value: u.id, label: `${u.name}（${u.baseUrl}）` }));
+
+  return (
+    <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+      <Card
+        size="small"
+        title="上游（OpenAI 兼容）"
+        extra={
+          <Button
+            size="small"
+            type="primary"
+            onClick={async () => {
+              const v = await upForm.validateFields();
+              try {
+                await api('/api/admin/llm/upstreams', { method: 'POST', json: v });
+                message.success('上游已添加');
+                upForm.resetFields();
+                invalidate();
+              } catch (err) {
+                message.error(err instanceof Error ? err.message : '添加失败');
+              }
+            }}
+          >
+            添加上游
+          </Button>
+        }
+      >
+        <Table<LlmUpstream>
+          rowKey="id"
+          size="small"
+          pagination={false}
+          dataSource={upstreamsQ.data?.upstreams ?? []}
+          columns={[
+            { title: '名称', dataIndex: 'name', width: 140 },
+            { title: 'Base URL', dataIndex: 'baseUrl', ellipsis: true },
+            { title: 'Key', width: 80, render: (_, r) => (r.hasKey ? <Tag color="green">已配置</Tag> : <Tag>无</Tag>) },
+            {
+              title: '操作',
+              width: 150,
+              render: (_, r) => (
+                <Space size="small">
+                  <Button
+                    size="small"
+                    onClick={async () => {
+                      await api(`/api/admin/llm/upstreams/${r.id}`, { method: 'PUT', json: { enabled: !r.enabled } });
+                      invalidate();
+                    }}
+                  >
+                    {r.enabled ? '停用' : '启用'}
+                  </Button>
+                  <Popconfirm title="删除该上游？其模型路由将一并删除。" onConfirm={async () => {
+                    await api(`/api/admin/llm/upstreams/${r.id}`, { method: 'DELETE' });
+                    invalidate();
+                  }}>
+                    <Button size="small" danger>删除</Button>
+                  </Popconfirm>
+                </Space>
+              ),
+            },
+          ]}
+        />
+        <Form form={upForm} layout="inline" style={{ marginTop: 10, rowGap: 8 }}>
+          <Form.Item name="name" rules={[{ required: true, message: '必填' }]}>
+            <Input placeholder="名称（如 智谱）" style={{ width: 140 }} />
+          </Form.Item>
+          <Form.Item name="baseUrl" rules={[{ required: true, message: '必填' }]}>
+            <Input placeholder="https://.../compatible-mode/v1" style={{ width: 300 }} />
+          </Form.Item>
+          <Form.Item name="apiKey" rules={[{ required: true, message: '必填' }]}>
+            <Input.Password placeholder="API Key" style={{ width: 220 }} autoComplete="new-password" />
+          </Form.Item>
+        </Form>
+      </Card>
+
+      <Card size="small" title="模型路由（公开模型名 → 上游模型；同名多条 = failover 候选）">
+        <Table<LlmRoute>
+          rowKey="id"
+          size="small"
+          pagination={false}
+          dataSource={routesQ.data?.routes ?? []}
+          columns={[
+            { title: '模型名', dataIndex: 'model', width: 150 },
+            { title: '上游', dataIndex: 'upstreamName', width: 140 },
+            { title: '上游模型', dataIndex: 'upstreamModel', width: 160, ellipsis: true },
+            { title: '倍率‰', dataIndex: 'multiplier', width: 80 },
+            { title: '优先级', dataIndex: 'priority', width: 80 },
+            { title: '权重', dataIndex: 'weight', width: 70 },
+            {
+              title: '',
+              width: 80,
+              render: (_, r) => (
+                <Popconfirm title="删除该路由？" onConfirm={async () => {
+                  await api(`/api/admin/llm/routes/${r.id}`, { method: 'DELETE' });
+                  invalidate();
+                }}>
+                  <Button size="small" danger>删除</Button>
+                </Popconfirm>
+              ),
+            },
+          ]}
+        />
+        <Form form={routeForm} layout="inline" style={{ marginTop: 10, rowGap: 8 }} onFinish={async (v) => {
+          try {
+            await api('/api/admin/llm/routes', { method: 'POST', json: { ...v, upstreamId: Number(v.upstreamId), multiplier: Number(v.multiplier ?? 100), priority: Number(v.priority ?? 100), weight: Number(v.weight ?? 100) } });
+            message.success('路由已添加');
+            routeForm.resetFields();
+            invalidate();
+          } catch (err) {
+            message.error(err instanceof Error ? err.message : '添加失败');
+          }
+        }}>
+          <Form.Item name="model" rules={[{ required: true, message: '必填' }]}>
+            <Input placeholder="公开模型名" style={{ width: 150 }} />
+          </Form.Item>
+          <Form.Item name="upstreamId" rules={[{ required: true, message: '必选' }]}>
+            <Select placeholder="上游" style={{ width: 180 }} options={upstreamOptions} />
+          </Form.Item>
+          <Form.Item name="upstreamModel" rules={[{ required: true, message: '必填' }]}>
+            <Input placeholder="上游侧模型名" style={{ width: 170 }} />
+          </Form.Item>
+          <Form.Item name="multiplier" initialValue={100}>
+            <Input placeholder="倍率‰=100" style={{ width: 110 }} />
+          </Form.Item>
+          <Form.Item name="priority" initialValue={100}>
+            <Input placeholder="优先级=100" style={{ width: 110 }} />
+          </Form.Item>
+          <Form.Item name="weight" initialValue={100}>
+            <Input placeholder="权重=100" style={{ width: 100 }} />
+          </Form.Item>
+          <Button htmlType="submit" type="primary">添加路由</Button>
+        </Form>
+      </Card>
+
+      <Card
+        size="small"
+        title="网关凭据（应用调用 LLM 的 Bearer Token）"
+        extra={
+          <Button
+            size="small"
+            type="primary"
+            onClick={async () => {
+              const v = await tokenForm.validateFields();
+              try {
+                const r = await api<{ token: string }>('/api/admin/llm/tokens', {
+                  method: 'POST',
+                  json: { appId: v.appId, name: v.name, perMinuteLimit: v.perMinuteLimit ? Number(v.perMinuteLimit) : null },
+                });
+                tokenForm.resetFields();
+                invalidate();
+                setCreatedToken(r.token);
+              } catch (err) {
+                message.error(err instanceof Error ? err.message : '创建失败');
+              }
+            }}
+          >
+            签发凭据
+          </Button>
+        }
+      >
+        <Table<LlmToken>
+          rowKey="id"
+          size="small"
+          pagination={false}
+          dataSource={tokensQ.data?.tokens ?? []}
+          columns={[
+            { title: '应用', dataIndex: 'appId', width: 140 },
+            { title: '名称', dataIndex: 'name', width: 140 },
+            { title: '限流/分', dataIndex: 'perMinuteLimit', width: 90, render: (v: number | null) => v ?? '默认' },
+            { title: '状态', width: 90, render: (_, r) => (r.enabled ? <Tag color="green">启用</Tag> : <Tag color="red">已吊销</Tag>) },
+            { title: '最近使用', width: 170, render: (_, r) => (r.lastUsedAt ? new Date(r.lastUsedAt).toLocaleString() : '—') },
+            {
+              title: '',
+              width: 90,
+              render: (_, r) => (
+                <Popconfirm title="吊销该凭据？使用它的应用将立即 401。" onConfirm={async () => {
+                  await api(`/api/admin/llm/tokens/${r.id}`, { method: 'DELETE' });
+                  invalidate();
+                }}>
+                  <Button size="small" danger>吊销</Button>
+                </Popconfirm>
+              ),
+            },
+          ]}
+        />
+        <Form form={tokenForm} layout="inline" style={{ marginTop: 10, rowGap: 8 }}>
+          <Form.Item name="appId" rules={[{ required: true, message: '必填' }]}>
+            <Input placeholder="应用标识（如 demo）" style={{ width: 180 }} />
+          </Form.Item>
+          <Form.Item name="name">
+            <Input placeholder="备注" style={{ width: 150 }} />
+          </Form.Item>
+          <Form.Item name="perMinuteLimit">
+            <Input placeholder="限流/分（可选）" style={{ width: 140 }} />
+          </Form.Item>
+        </Form>
+      </Card>
+
+      <Card size="small" title="用户额度发放 / 调减">
+        <Form layout="inline" form={adjustForm} onFinish={async (v) => {
+          try {
+            const r = await api<{ balance: number }>('/api/admin/llm/adjust', {
+              method: 'POST',
+              json: { userId: Number(v.userId), delta: Number(v.delta), note: v.note },
+            });
+            message.success(`已调整，当前余额 ${r.balance}`);
+            adjustForm.resetFields();
+            invalidate();
+          } catch (err) {
+            message.error(err instanceof Error ? err.message : '调整失败');
+          }
+        }}>
+          <Form.Item name="userId" rules={[{ required: true, message: '必选' }]}>
+            <Select
+              placeholder="选择用户"
+              style={{ width: 180 }}
+              showSearch
+              optionFilterProp="label"
+              options={(usersQ.data?.users ?? []).map((u) => ({ value: u.id, label: `${u.name}（${u.username ?? u.id}）` }))}
+            />
+          </Form.Item>
+          <Form.Item name="delta" rules={[{ required: true, message: '必填' }]}>
+            <Input placeholder="变动量（±token）" style={{ width: 160 }} />
+          </Form.Item>
+          <Form.Item name="note">
+            <Input placeholder="备注" style={{ width: 180 }} />
+          </Form.Item>
+          <Button htmlType="submit" type="primary">确认调整</Button>
+        </Form>
+      </Card>
+
+      <Card size="small" title="调用账本（最近 50 条）">
+        <Table<LedgerRow>
+          rowKey="id"
+          size="small"
+          dataSource={usageQ.data?.rows ?? []}
+          pagination={false}
+          columns={[
+            { title: '时间', width: 160, render: (_, r) => new Date(r.ts).toLocaleString() },
+            { title: '类型', dataIndex: 'kind', width: 80 },
+            { title: '用户', dataIndex: 'userId', width: 70 },
+            { title: '应用', dataIndex: 'appId', width: 110 },
+            { title: '模型', dataIndex: 'model', width: 140, ellipsis: true },
+            { title: 'tokens', width: 110, render: (_, r) => (r.kind === 'usage' ? `${r.promptTokens ?? 0}+${r.completionTokens ?? 0}` : '—') },
+            { title: '变动', dataIndex: 'delta', width: 90, render: (v: number) => <Typography.Text type={v < 0 ? 'danger' : undefined}>{v > 0 ? `+${v}` : v}</Typography.Text> },
+            { title: '耗时', dataIndex: 'latencyMs', width: 90, render: (v: number | null) => (v != null ? `${v}ms` : '—') },
+          ]}
+        />
+      </Card>
+
+      <Modal
+        title="网关凭据（仅显示一次）"
+        open={Boolean(createdToken)}
+        onCancel={() => setCreatedToken(null)}
+        footer={<Button type="primary" onClick={() => setCreatedToken(null)}>我已保存</Button>}
+      >
+        <Alert type="warning" showIcon style={{ marginBottom: 10 }} message="请立即保存，关闭后无法再次查看" />
+        <Input readOnly value={createdToken ?? ''} style={{ fontFamily: 'monospace' }} />
+        <Typography.Paragraph type="secondary" style={{ marginTop: 10, fontSize: 12 }}>
+          应用接入：OpenAI SDK 将 base_url 设为 <code>https://你的域名/v1</code>，api_key 使用本凭据；
+          用户归因请在请求头转发门户注入的 X-AAP-Identity(+Sig)。
+        </Typography.Paragraph>
+      </Modal>
     </Space>
   );
 }
