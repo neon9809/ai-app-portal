@@ -9,6 +9,15 @@ import { membershipPlans, users } from '../db/schema.js';
 import { HttpError, h } from '../lib/httpError.js';
 import { requireAdmin } from '../lib/auth.js';
 import { audit } from '../lib/audit.js';
+import { normalizeCode } from '../lib/redeem.js';
+import {
+  generateBatch,
+  batchSummaries,
+  listCodes,
+  disableCode,
+  type RedeemKind,
+  type RedeemStatus,
+} from '../lib/redeem.js';
 import {
   cancelOrder,
   confirmOrder,
@@ -104,6 +113,62 @@ adminBillingRouter.post(
   '/admin/billing/orders/:id/cancel',
   h(async (req, res) => {
     cancelOrder(String(req.params.id), req.user!.id, true);
+    res.json({ ok: true });
+  }),
+);
+
+// ---------- 卡券码（充值码/会员码） ----------
+
+adminBillingRouter.get(
+  '/admin/redeem/batches',
+  h(async (_req, res) => {
+    res.json({ batches: batchSummaries() });
+  }),
+);
+
+adminBillingRouter.get(
+  '/admin/redeem/codes',
+  h(async (req, res) => {
+    const status = String(req.query.status ?? 'all') as RedeemStatus | 'all';
+    const codes = listCodes({
+      batchId: (req.query.batchId as string | undefined) || undefined,
+      status,
+      limit: Number(req.query.limit ?? 200),
+    });
+    res.json({ codes });
+  }),
+);
+
+adminBillingRouter.post(
+  '/admin/redeem/batches',
+  h(async (req, res) => {
+    const body = (req.body ?? {}) as {
+      kind?: RedeemKind;
+      count?: number;
+      tokens?: number;
+      planId?: number;
+      expiresInDays?: number | null;
+      note?: string;
+    };
+    const r = generateBatch({
+      kind: (body.kind as RedeemKind) ?? 'tokens',
+      count: Number(body.count ?? 1),
+      tokens: body.tokens != null ? Number(body.tokens) : null,
+      planId: body.planId != null ? Number(body.planId) : null,
+      expiresInDays: body.expiresInDays != null ? Number(body.expiresInDays) : null,
+      note: body.note,
+      byUserId: req.user!.id,
+    });
+    res.json({ ok: true, batchId: r.batchId, codes: r.codes });
+  }),
+);
+
+adminBillingRouter.post(
+  '/admin/redeem/disable',
+  h(async (req, res) => {
+    const body = (req.body ?? {}) as { code?: string };
+    disableCode(normalizeCode(String(body.code ?? '')));
+    audit(`${req.user!.kind}:${req.user!.id}`, req.clientIp ?? null, 'redeem.disable', { code: body.code });
     res.json({ ok: true });
   }),
 );

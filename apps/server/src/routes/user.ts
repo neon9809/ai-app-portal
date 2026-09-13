@@ -13,6 +13,7 @@ import { registerPurgeTask } from '../lib/audit.js';
 import { getSetting, getSettingInt } from '../lib/settings.js';
 import { issueCode, verifyCode } from '../lib/verification.js';
 import { cancelOrder } from '../lib/billing.js';
+import { redeem as redeemCodeLib } from '../lib/redeem.js';
 import { audit } from '../lib/audit.js';
 import { recomputeBalance } from '../lib/llm.js';
 
@@ -217,6 +218,27 @@ userRouter.post(
     if (priceFen < 100) throw new HttpError(400, 'INVALID_AMOUNT', '最低充值 1.00 元');
     const order = createOrder(req.user!.id, 'tokens', { priceFen, tokens: priceFen * perFen });
     res.json({ ok: true, orderId: order.id, tokens: order.tokens, priceFen: order.priceFen });
+  }),
+);
+
+const redeemHits = new Map<number, { start: number; count: number }>();
+
+/** 兑换卡券码（额度/会员）；按用户限速 10/分 防穷举 */
+userRouter.post(
+  '/user/redeem',
+  h(async (req, res) => {
+    const uid = req.user!.id;
+    const now = Date.now();
+    const hit = redeemHits.get(uid);
+    if (!hit || now - hit.start >= 60_000) {
+      redeemHits.set(uid, { start: now, count: 1 });
+    } else {
+      hit.count++;
+      if (hit.count > 10) throw new HttpError(429, 'TOO_MANY_REQUESTS', '兑换太频繁，请稍后再试');
+    }
+    const body = (req.body ?? {}) as { code?: string };
+    const result = redeemCodeLib(uid, String(body.code ?? ''), req.clientIp ?? null);
+    res.json({ ok: true, ...result });
   }),
 );
 

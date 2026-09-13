@@ -71,6 +71,13 @@
       "when": 1789290917167,
       "tag": "0009_jazzy_silver_fox",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1789291326669,
+      "tag": "0010_petite_rockslide",
+      "breakpoints": true
     }
   ]
 }

@@ -137,3 +137,75 @@ describe('M3 结算对账（D2a）', () => {
     }
   });
 });
+
+// ---------- 卡券码（充值码/会员码） ----------
+
+import { disableCode, generateBatch, normalizeCode, redeem } from '../lib/redeem.js';
+
+describe('M3 卡券码（兑换）', () => {
+  it('额度码：生成 → 兑换入账 → 双花拒绝 → 作废拒绝', () => {
+    const uid = 601;
+    getDb()
+      .insert(users)
+      .values({ kind: 'local', username: 'redeem1', createdAt: Date.now() })
+      .run();
+    void uid;
+    // 先取真实 user id
+    const row = getDb().select().from(users).where(eq(users.username, 'redeem1')).get()!;
+    const before = cachedBalance(row.id) ?? 0;
+
+    const { batchId, codes } = generateBatch({ kind: 'tokens', count: 2, tokens: 777, note: 'test', byUserId: 1 });
+    expect(codes).toHaveLength(2);
+    expect(codes[0]).toMatch(/^AAP-[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}$/);
+
+    const r = redeem(row.id, codes[0]!, null);
+    expect(r).toMatchObject({ kind: 'tokens', tokens: 777 });
+    expect(cachedBalance(row.id)).toBe(before + 777);
+
+    // 双花（含输入归一化：去掉连字符也应识别同一张）
+    expect(() => redeem(row.id, codes[0]!.replace(/-/g, ''), null)).toThrow(/已被使用/);
+    // 第二张仍可用
+    expect(redeem(row.id, codes[1]!, null).kind).toBe('tokens');
+
+    // 作废：未用的第三张码先作废再兑换
+    const { codes: c2 } = generateBatch({ kind: 'tokens', count: 1, tokens: 1, byUserId: 1 });
+    disableCode(normalizeCode(c2[0]!));
+    expect(() => redeem(row.id, c2[0]!, null)).toThrow(/作废/);
+    void batchId;
+  });
+
+  it('会员码：兑换开通套餐并加入分组；过期码拒绝', () => {
+    const g = getDb().insert(userGroups).values({ name: '会员码分组', createdAt: Date.now() }).run();
+    const gid = Number(g.lastInsertRowid);
+    const pid = createPlan({ name: '月卡', groupId: gid, durationDays: 30, priceFen: 0 });
+
+    const u = getDb()
+      .insert(users)
+      .values({ kind: 'local', username: 'redeem2', createdAt: Date.now() })
+      .run();
+    const uid = Number(u.lastInsertRowid);
+
+    const { codes } = generateBatch({ kind: 'membership', count: 1, planId: pid, byUserId: 1 });
+    const r = redeem(uid, codes[0]!, null);
+    expect(r).toMatchObject({ kind: 'membership', planName: '月卡' });
+    const me = getDb().select().from(users).where(eq(users.id, uid)).get()!;
+    expect(me.membershipExpiresAt).toBeGreaterThan(Date.now() + 29 * 86_400_000);
+    const inGroup = getDb()
+      .select()
+      .from(userGroupMembers)
+      .where(eq(userGroupMembers.userId, uid))
+      .all()
+      .map((m) => m.groupId);
+    expect(inGroup).toContain(gid);
+
+    // 过期码
+    const { codes: exp } = generateBatch({
+      kind: 'tokens',
+      count: 1,
+      tokens: 1,
+      expiresInDays: -1,
+      byUserId: 1,
+    });
+    expect(() => redeem(uid, exp[0]!, null)).toThrow(/过期/);
+  });
+});

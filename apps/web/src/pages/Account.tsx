@@ -648,6 +648,8 @@ function MembershipTopupTab(): ReactNode {
   const data = useQuery({ queryKey: ['membership'], queryFn: () => api<MembershipData>('/api/user/membership') });
   const [amount, setAmount] = useState('');
   const [busy, setBusy] = useState(false);
+  const [redeemCode, setRedeemCode] = useState('');
+  const [redeeming, setRedeeming] = useState(false);
 
   async function subscribe(planId: number): Promise<void> {
     setBusy(true);
@@ -707,6 +709,42 @@ function MembershipTopupTab(): ReactNode {
           ))}
           {(d?.plans.length ?? 0) === 0 ? <Typography.Text type="secondary">暂无在售套餐</Typography.Text> : null}
         </div>
+      </Card>
+
+      <Card size="small" title="兑换码">
+        <Space wrap>
+          <Input
+            style={{ width: 240 }}
+            placeholder="输入兑换码，如 AAP-XXXX-XXXX-XXXX"
+            value={redeemCode}
+            onChange={(e) => setRedeemCode(e.target.value.toUpperCase())}
+          />
+          <Button
+            type="primary"
+            loading={redeeming}
+            onClick={async () => {
+              if (!redeemCode.trim()) return message.warning('请输入兑换码');
+              setRedeeming(true);
+              try {
+                const r = await api<{ kind: string; tokens?: number; planName?: string }>('/api/user/redeem', {
+                  method: 'POST',
+                  json: { code: redeemCode },
+                });
+                if (r.kind === 'tokens') message.success(`兑换成功：到账 ${r.tokens?.toLocaleString()} 额度`);
+                else message.success(`兑换成功：会员「${r.planName}」已开通`);
+                setRedeemCode('');
+                void qc.invalidateQueries({ queryKey: ['membership'] });
+                void qc.invalidateQueries({ queryKey: ['billing'] });
+              } catch (err) {
+                message.error(err instanceof Error ? err.message : '兑换失败');
+              } finally {
+                setRedeeming(false);
+              }
+            }}
+          >
+            立即兑换
+          </Button>
+        </Space>
       </Card>
 
       <Card size="small" title="额度充值">

@@ -444,3 +444,21 @@ export const topupOrders = sqliteTable(
   },
   (t) => [index('topup_orders_user_idx').on(t.userId, t.createdAt)],
 );
+
+/** 充值/会员卡券码（管理员批量生成，用户兑换；一次性） */
+export const redeemCodes = sqliteTable('redeem_codes', {
+  code: text('code').primaryKey(),
+  batchId: text('batch_id').notNull(),
+  /** 'tokens' 额度码 | 'membership' 会员码 */
+  kind: text('kind').notNull(),
+  tokens: integer('tokens'),
+  planId: integer('plan_id'),
+  /** 'unused' | 'used' | 'disabled' */
+  status: text('status').notNull().default('unused'),
+  note: text('note'),
+  expiresAt: integer('expires_at'),
+  createdBy: integer('created_by'),
+  createdAt: integer('created_at').notNull(),
+  usedBy: integer('used_by'),
+  usedAt: integer('used_at'),
+});

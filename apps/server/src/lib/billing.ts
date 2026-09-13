@@ -160,7 +160,7 @@ export function createOrder(
 }
 
 /** 开通/续费会员：顺延到期 + 入组 + 赠送额度 */
-function activateMembership(userId: number, planId: number): void {
+export function activateMembership(userId: number, planId: number): string {
   const plan = getDb().select().from(membershipPlans).where(eq(membershipPlans.id, planId)).get();
   if (!plan) throw new HttpError(404, 'PLAN_NOT_FOUND', '套餐不存在');
   const me = getDb().select().from(users).where(eq(users.id, userId)).get();
@@ -183,6 +183,7 @@ function activateMembership(userId: number, planId: number): void {
   if (plan.tokenGrant > 0) {
     grantTokens(userId, plan.tokenGrant, `会员开通赠送（${plan.name}）`, 0);
   }
+  return plan.name;
 }
 
 /** 确认到账（D3 manual 确认点；真实渠道 adapter 回调最终也走这里） */

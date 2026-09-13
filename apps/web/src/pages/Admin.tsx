@@ -32,6 +32,7 @@ import {
   message,
 } from 'antd';
 import { useEffect, useState } from 'react';
+import { CopyOutlined } from '@ant-design/icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import { useSession } from '../state/session';
@@ -1668,6 +1669,8 @@ function OpsTab(): ReactNode {
         />
       </Card>
 
+      <RedeemCard />
+
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 12 }}>
         <Card size="small" title="余额排行">
           {(ops?.balanceTop ?? []).map((r, i) => (
@@ -1694,6 +1697,186 @@ function OpsTab(): ReactNode {
           ))}
         </Card>
       </div>
+    </Space>
+  );
+}
+
+// ---------- 卡券码（充值码/会员码批量生成与兑换管理） ----------
+
+interface RedeemBatch {
+  batchId: string;
+  kind: 'tokens' | 'membership';
+  total: number;
+  used: number;
+  tokens: number | null;
+  planId: number | null;
+  note: string | null;
+  expiresAt: number | null;
+  createdAt: number;
+}
+interface RedeemCodeRowUI {
+  code: string;
+  kind: string;
+  tokens: number | null;
+  status: 'unused' | 'used' | 'disabled';
+  usedBy: number | null;
+  expiresAt: number | null;
+}
+
+function RedeemCard(): ReactNode {
+  const qc = useQueryClient();
+  const batchesQ = useQuery({ queryKey: ['redeem-batches'], queryFn: () => api<{ batches: RedeemBatch[] }>('/api/admin/redeem/batches') });
+  const plansQ = useQuery({ queryKey: ['billing-plans'], queryFn: () => api<{ plans: PlanRowUI[] }>('/api/admin/billing/plans') });
+  const [form] = Form.useForm();
+  const [kind, setKind] = useState<'tokens' | 'membership'>('tokens');
+  const [generated, setGenerated] = useState<string[] | null>(null);
+  const [viewBatch, setViewBatch] = useState<string>('');
+
+  const codesQ = useQuery({
+    queryKey: ['redeem-codes', viewBatch],
+    queryFn: () => api<{ codes: RedeemCodeRowUI[] }>(`/api/admin/redeem/codes?limit=200${viewBatch ? `&batchId=${viewBatch}` : ''}`),
+  });
+
+  function invalidate(): void {
+    void qc.invalidateQueries({ queryKey: ['redeem-batches'] });
+    void qc.invalidateQueries({ queryKey: ['redeem-codes'] });
+  }
+
+  return (
+    <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+      <Card size="small" title="生成卡券码（额度码 / 会员码）">
+        <Form form={form} layout="inline" style={{ rowGap: 8 }} onFinish={async (v) => {
+          try {
+            const r = await api<{ batchId: string; codes: string[] }>('/api/admin/redeem/batches', {
+              method: 'POST',
+              json: {
+                kind,
+                count: Number(v.count),
+                tokens: kind === 'tokens' ? Number(v.tokens) : undefined,
+                planId: kind === 'membership' ? Number(v.planId) : undefined,
+                expiresInDays: v.expiresInDays ? Number(v.expiresInDays) : null,
+                note: v.note || undefined,
+              },
+            });
+            setGenerated(r.codes);
+            invalidate();
+          } catch (err) {
+            message.error(err instanceof Error ? err.message : '生成失败');
+          }
+        }}>
+          <Form.Item name="kind" initialValue="tokens" rules={[{ required: true }]}>
+            <Select
+              style={{ width: 120 }}
+              onChange={(v) => setKind(v as 'tokens' | 'membership')}
+              options={[
+                { value: 'tokens', label: '额度码' },
+                { value: 'membership', label: '会员码' },
+              ]}
+            />
+          </Form.Item>
+          {kind === 'tokens' ? (
+            <Form.Item name="tokens" rules={[{ required: true, message: '必填' }]}>
+              <Input placeholder="每张面额(token)" style={{ width: 150 }} />
+            </Form.Item>
+          ) : (
+            <Form.Item name="planId" rules={[{ required: true, message: '必选' }]}>
+              <Select
+                placeholder="绑定套餐"
+                style={{ width: 170 }}
+                options={(plansQ.data?.plans ?? []).map((p) => ({ value: p.id, label: `${p.name}（${p.durationDays}天）` }))}
+              />
+            </Form.Item>
+          )}
+          <Form.Item name="count" rules={[{ required: true, message: '必填' }]}>
+            <Input placeholder="数量=10" style={{ width: 100 }} />
+          </Form.Item>
+          <Form.Item name="expiresInDays">
+            <Input placeholder="有效天数(可选)" style={{ width: 120 }} />
+          </Form.Item>
+          <Form.Item name="note">
+            <Input placeholder="备注" style={{ width: 140 }} />
+          </Form.Item>
+          <Button htmlType="submit" type="primary">生成</Button>
+        </Form>
+
+        {generated ? (
+          <div style={{ marginTop: 10 }}>
+            <Space style={{ marginBottom: 6 }}>
+              <Button
+                size="small"
+                type="primary"
+                icon={<CopyOutlined />}
+                onClick={async () => {
+                  await navigator.clipboard.writeText(generated.join('\n'));
+                  message.success(`已复制 ${generated.length} 个码`);
+                }}
+              >
+                复制全部（{generated.length} 个）
+              </Button>
+              <Typography.Text type="secondary">每行一个码，仅本次展示（可随时按批次查询）</Typography.Text>
+            </Space>
+            <Input.TextArea rows={Math.min(8, generated.length)} readOnly value={generated.join('\n')} style={{ fontFamily: 'monospace', fontSize: 12 }} />
+          </div>
+        ) : null}
+      </Card>
+
+      <Card
+        size="small"
+        title="批次与码查询"
+        extra={
+          <Button size="small" onClick={() => { invalidate(); }}>刷新</Button>
+        }
+      >
+        <Table<RedeemBatch>
+          rowKey="batchId"
+          size="small"
+          pagination={false}
+          dataSource={batchesQ.data?.batches ?? []}
+          columns={[
+            { title: '批次', dataIndex: 'batchId', width: 110 },
+            { title: '类型', width: 90, render: (_, r) => (r.kind === 'tokens' ? '额度码' : '会员码') },
+            { title: '面额/套餐', width: 130, render: (_, r) => (r.kind === 'tokens' ? `${r.tokens?.toLocaleString()} 额度` : `套餐 #${r.planId}`) },
+            { title: '用量', width: 110, render: (_, r) => `${r.used}/${r.total}` },
+            { title: '备注', dataIndex: 'note', ellipsis: true },
+            {
+              title: '',
+              width: 110,
+              render: (_, r) => (
+                <Button size="small" onClick={() => setViewBatch(r.batchId)}>查看码</Button>
+              ),
+            },
+          ]}
+        />
+        {viewBatch ? (
+          <div style={{ marginTop: 10 }}>
+            <Typography.Text type="secondary">批次 {viewBatch}：</Typography.Text>
+            <Table<RedeemCodeRowUI>
+              rowKey="code"
+              size="small"
+              pagination={false}
+              dataSource={(codesQ.data?.codes ?? []).filter((c) => c.status !== 'disabled')}
+              columns={[
+                { title: '码', dataIndex: 'code', render: (v: string) => <Typography.Text copyable code>{v}</Typography.Text> },
+                { title: '状态', width: 100, render: (_, r) => (r.status === 'unused' ? <Tag color="green">未用</Tag> : r.status === 'used' ? <Tag>已用</Tag> : <Tag color="red">作废</Tag>) },
+                { title: '使用者', dataIndex: 'usedBy', width: 90 },
+                {
+                  title: '',
+                  width: 90,
+                  render: (_, r) =>
+                    r.status === 'unused' ? (
+                      <Popconfirm title="作废该码？" onConfirm={async () => {
+                        await api('/api/admin/redeem/disable', { method: 'POST', json: { code: r.code } });
+                        invalidate();
+                      }}>
+                        <Button size="small" danger>作废</Button>
+                      </Popconfirm>
+                    ) : null,
+                },
+              ]}
+            />
+          </div>
+        ) : null}
+      </Card>
     </Space>
   );
 }
