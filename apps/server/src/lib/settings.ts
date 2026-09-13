@@ -148,6 +148,10 @@ export const SETTING_DEFS: Record<string, SettingDef> = {
   },
   RATE_USER_PER_MIN: {
     group: '应用网关', type: 'int', desc: '应用网关限流：每用户请求/分', initial: () => String(config.rateUserPerMin), defaultsWork: true, advanced: true },
+  SHOW_TOPUP_PANEL: {
+    group: '计费', type: 'bool',
+    desc: '用户中心是否显示「额度充值」面板（关闭后用户只能使用兑换码/管理员发放）',
+    initial: () => 'true', defaultsWork: true },
   TOPUP_TOKENS_PER_FEN: {
     group: '计费', type: 'int',
     desc: '充值单价：每 1 分钱到账的 token 数（100 = 1 元 1000 token）',

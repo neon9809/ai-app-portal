@@ -434,7 +434,7 @@ function AppsTab(): ReactNode {
     if (visMode !== 'restricted') return null;
     return (
       <>
-        <Form.Item name="allowedGroupIds" label="可见分组" extra="命中任一分组的用户可见（分组即会员等级）">
+        <Form.Item name="allowedGroupIds" label="可见分组" extra="命中任一分组的用户可见（分组即订阅等级）">
           <Select mode="multiple" placeholder="选择分组（可留空）" options={groupOptions} />
         </Form.Item>
         <Form.Item name="allowedUserIds" label="可见账号" extra="与分组任一命中即可见">
@@ -671,7 +671,7 @@ function AppsTab(): ReactNode {
 
           {creating !== 'package' || pkgFile ? (
             <>
-              <Form.Item name="visibility" label="可见性" initialValue={visMode} extra="指定分组与账号：命中任一即可见；分组可当会员等级用">
+              <Form.Item name="visibility" label="可见性" initialValue={visMode} extra="指定分组与账号：命中任一即可见；分组可当订阅等级用">
                 <Select options={VIS_OPTIONS} onChange={(v) => setVisMode(String(v))} />
               </Form.Item>
               {visExtra()}
@@ -1392,7 +1392,7 @@ function LlmTab(): ReactNode {
   );
 }
 
-// ---------- 用户分组管理（会员等级 / 自定义组） ----------
+// ---------- 用户分组管理（订阅等级 / 自定义组） ----------
 
 function GroupsCard(): ReactNode {
   const qc = useQueryClient();
@@ -1411,13 +1411,13 @@ function GroupsCard(): ReactNode {
   return (
     <Card
       size="small"
-      title="用户分组（会员等级 / 自定义组；应用可见性与额度按分组配置）"
+      title="用户分组（订阅等级 / 自定义组；应用可见性与额度按分组配置）"
       extra={
         <Button
           size="small"
           type="primary"
           onClick={async () => {
-            const name = window.prompt('新分组名称（如：会员-高级）');
+            const name = window.prompt('新分组名称（如：订阅-高级）');
             if (!name) return;
             try {
               await api('/api/admin/groups', { method: 'POST', json: { name } });
@@ -1563,7 +1563,7 @@ function OpsTab(): ReactNode {
         </Card>
       </div>
 
-      <Card size="small" title="会员套餐">
+      <Card size="small" title="功能订阅套餐">
         <Table<PlanRowUI>
           rowKey="id"
           size="small"
@@ -1614,7 +1614,7 @@ function OpsTab(): ReactNode {
           }
         }}>
           <Form.Item name="name" rules={[{ required: true, message: '必填' }]}>
-            <Input placeholder="套餐名（会员-高级）" style={{ width: 160 }} />
+            <Input placeholder="套餐名（订阅-高级）" style={{ width: 160 }} />
           </Form.Item>
           <Form.Item name="groupId" rules={[{ required: true, message: '必选' }]}>
             <Select placeholder="对应分组" style={{ width: 150 }} options={groupsQ.data?.groups.map((g) => ({ value: g.id, label: g.name }))} />
@@ -1641,9 +1641,9 @@ function OpsTab(): ReactNode {
           columns={[
             { title: '订单号', dataIndex: 'id', width: 170 },
             { title: '用户', dataIndex: 'userId', width: 70 },
-            { title: '类型', width: 90, render: (_, r) => (r.kind === 'membership' ? '会员' : '额度') },
+            { title: '类型', width: 90, render: (_, r) => (r.kind === 'membership' ? '订阅' : '额度') },
             { title: '金额', width: 90, render: (_, r) => `¥${fen2yuan(r.priceFen)}` },
-            { title: '到账', width: 110, render: (_, r) => (r.kind === 'tokens' ? `${r.tokens?.toLocaleString()} 额度` : '会员权益') },
+            { title: '到账', width: 110, render: (_, r) => (r.kind === 'tokens' ? `${r.tokens?.toLocaleString()} 额度` : '订阅权益') },
             { title: '创建时间', width: 160, render: (_, r) => new Date(r.createdAt).toLocaleString() },
             {
               title: '操作',
@@ -1701,7 +1701,7 @@ function OpsTab(): ReactNode {
   );
 }
 
-// ---------- 卡券码（充值码/会员码批量生成与兑换管理） ----------
+// ---------- 卡券码（充值码/订阅码批量生成与兑换管理） ----------
 
 interface RedeemBatch {
   batchId: string;
@@ -1744,7 +1744,7 @@ function RedeemCard(): ReactNode {
 
   return (
     <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-      <Card size="small" title="生成卡券码（额度码 / 会员码）">
+      <Card size="small" title="生成卡券码（额度码 / 订阅码）">
         <Form form={form} layout="inline" style={{ rowGap: 8 }} onFinish={async (v) => {
           try {
             const r = await api<{ batchId: string; codes: string[] }>('/api/admin/redeem/batches', {
@@ -1770,7 +1770,7 @@ function RedeemCard(): ReactNode {
               onChange={(v) => setKind(v as 'tokens' | 'membership')}
               options={[
                 { value: 'tokens', label: '额度码' },
-                { value: 'membership', label: '会员码' },
+                { value: 'membership', label: '订阅码' },
               ]}
             />
           </Form.Item>
@@ -1834,7 +1834,7 @@ function RedeemCard(): ReactNode {
           dataSource={batchesQ.data?.batches ?? []}
           columns={[
             { title: '批次', dataIndex: 'batchId', width: 110 },
-            { title: '类型', width: 90, render: (_, r) => (r.kind === 'tokens' ? '额度码' : '会员码') },
+            { title: '类型', width: 90, render: (_, r) => (r.kind === 'tokens' ? '额度码' : '订阅码') },
             { title: '面额/套餐', width: 130, render: (_, r) => (r.kind === 'tokens' ? `${r.tokens?.toLocaleString()} 额度` : `套餐 #${r.planId}`) },
             { title: '用量', width: 110, render: (_, r) => `${r.used}/${r.total}` },
             { title: '备注', dataIndex: 'note', ellipsis: true },

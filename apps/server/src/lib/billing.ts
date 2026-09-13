@@ -181,7 +181,7 @@ export function activateMembership(userId: number, planId: number): string {
     .onConflictDoNothing()
     .run();
   if (plan.tokenGrant > 0) {
-    grantTokens(userId, plan.tokenGrant, `会员开通赠送（${plan.name}）`, 0);
+    grantTokens(userId, plan.tokenGrant, `功能订阅赠送（${plan.name}）`, 0);
   }
   return plan.name;
 }
@@ -242,7 +242,7 @@ export function downgradeExpired(now = Date.now()): number {
         .where(and(eq(userGroupMembers.groupId, plan.groupId), eq(userGroupMembers.userId, u.id)))
         .run();
     }
-    audit(`user:${u.id}`, null, 'billing.membership.expired', { planId: u.membershipPlanId });
+    audit(`user:${u.id}`, null, 'billing.subscription.expired', { planId: u.membershipPlanId });
     n++;
   }
   return n;

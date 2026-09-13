@@ -404,7 +404,7 @@ export function AccountPage() {
           },
           {
             key: 'billing',
-            label: '会员与充值',
+            label: '订阅与充值',
             children: <MembershipTopupTab />,
           },
           {
@@ -572,7 +572,7 @@ function BillingTab(): ReactNode {
       <Card size="small" title="Token 额度（LLM 网关）">
         <Descriptions column={1}>
           <Descriptions.Item label="当前计划">
-            {d?.plan === 'member' ? <Tag color="gold">会员</Tag> : <Tag>免费版</Tag>}
+            {d?.plan === 'member' ? <Tag color="gold">已订阅</Tag> : <Tag>免费版</Tag>}
           </Descriptions.Item>
           <Descriptions.Item label="剩余额度">
             <Typography.Text strong>{d?.tokenBalance?.toLocaleString() ?? '—'}</Typography.Text>
@@ -609,7 +609,7 @@ function BillingTab(): ReactNode {
   );
 }
 
-// ---------- 会员与充值（M3：manual 渠道下单，管理员确认到账后生效） ----------
+// ---------- 功能订阅与充值（M3：manual 渠道下单，管理员确认到账后生效） ----------
 
 interface PlanUI {
   id: number;
@@ -646,6 +646,11 @@ function yuan(fen: number): string {
 function MembershipTopupTab(): ReactNode {
   const qc = useQueryClient();
   const data = useQuery({ queryKey: ['membership'], queryFn: () => api<MembershipData>('/api/user/membership') });
+  const billing = useQuery({
+    queryKey: ['billing'],
+    queryFn: () => api<{ showTopupPanel: boolean }>('/api/user/billing'),
+  });
+  const showTopup = billing.data?.showTopupPanel !== false;
   const [amount, setAmount] = useState('');
   const [busy, setBusy] = useState(false);
   const [redeemCode, setRedeemCode] = useState('');
@@ -680,20 +685,20 @@ function MembershipTopupTab(): ReactNode {
   const d = data.data;
   return (
     <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-      <Card size="small" title="我的会员">
+      <Card size="small" title="我的功能订阅">
         {d?.membership ? (
           <Alert
             type="success"
             showIcon
-            message={`会员生效中：${d.membership.planName}`}
+            message={`订阅生效中：${d.membership.planName}`}
             description={`到期时间：${new Date(d.membership.expiresAt).toLocaleString()}（到期自动降级，数据保留）`}
           />
         ) : (
-          <Typography.Text type="secondary">当前为免费版。开通会员解锁对应分组的应用。</Typography.Text>
+          <Typography.Text type="secondary">当前未开通功能订阅。开通后解锁对应分组的应用。</Typography.Text>
         )}
       </Card>
 
-      <Card size="small" title="会员套餐">
+      <Card size="small" title="功能订阅套餐">
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 10 }}>
           {(d?.plans ?? []).map((p) => (
             <Card key={p.id} size="small" style={{ borderColor: 'var(--aap-border)' }}>
@@ -711,7 +716,7 @@ function MembershipTopupTab(): ReactNode {
         </div>
       </Card>
 
-      <Card size="small" title="兑换码">
+      <Card size="small" title="兑换码（额度/订阅）">
         <Space wrap>
           <Input
             style={{ width: 240 }}
@@ -731,7 +736,7 @@ function MembershipTopupTab(): ReactNode {
                   json: { code: redeemCode },
                 });
                 if (r.kind === 'tokens') message.success(`兑换成功：到账 ${r.tokens?.toLocaleString()} 额度`);
-                else message.success(`兑换成功：会员「${r.planName}」已开通`);
+                else message.success(`兑换成功：功能订阅「${r.planName}」已开通`);
                 setRedeemCode('');
                 void qc.invalidateQueries({ queryKey: ['membership'] });
                 void qc.invalidateQueries({ queryKey: ['billing'] });
@@ -747,6 +752,7 @@ function MembershipTopupTab(): ReactNode {
         </Space>
       </Card>
 
+      {showTopup ? (
       <Card size="small" title="额度充值">
         <Space wrap>
           {[1000, 5000, 10000].map((fen) => (
@@ -774,6 +780,7 @@ function MembershipTopupTab(): ReactNode {
           计费单价：1 元 = 1000 额度（管理员可调）。订单创建后等待确认到账，到账即入账。
         </Typography.Paragraph>
       </Card>
+      ) : null}
 
       <Card size="small" title="我的订单">
         <Table<OrderUI>
@@ -783,9 +790,9 @@ function MembershipTopupTab(): ReactNode {
           dataSource={d?.orders ?? []}
           columns={[
             { title: '订单号', dataIndex: 'id', width: 170 },
-            { title: '类型', width: 80, render: (_, r) => (r.kind === 'membership' ? '会员' : '额度') },
+            { title: '类型', width: 80, render: (_, r) => (r.kind === 'membership' ? '订阅' : '额度') },
             { title: '金额', width: 90, render: (_, r) => yuan(r.priceFen) },
-            { title: '到账', width: 110, render: (_, r) => (r.kind === 'tokens' ? `${r.tokens?.toLocaleString()} 额度` : '会员权益') },
+            { title: '到账', width: 110, render: (_, r) => (r.kind === 'tokens' ? `${r.tokens?.toLocaleString()} 额度` : '订阅权益') },
             {
               title: '状态',
               width: 90,

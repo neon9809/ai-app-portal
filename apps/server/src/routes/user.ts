@@ -10,7 +10,7 @@ import { HttpError, h } from '../lib/httpError.js';
 import { requireAuth, requireStepUp } from '../lib/auth.js';
 import { publicUserOf } from './shared.js';
 import { registerPurgeTask } from '../lib/audit.js';
-import { getSetting, getSettingInt } from '../lib/settings.js';
+import { getSetting, getSettingBool, getSettingInt } from '../lib/settings.js';
 import { issueCode, verifyCode } from '../lib/verification.js';
 import { cancelOrder } from '../lib/billing.js';
 import { redeem as redeemCodeLib } from '../lib/redeem.js';
@@ -158,7 +158,7 @@ userRouter.get(
     res.json({
       plan: row?.plan ?? 'free',
       tokenBalance: balance,
-      membershipUntil: null,
+      showTopupPanel: getSettingBool('SHOW_TOPUP_PANEL', true),
       recentUsage: usage.map((u) => ({
         ts: u.ts,
         model: u.model,
@@ -167,7 +167,7 @@ userRouter.get(
         completionTokens: u.completionTokens,
         delta: u.delta,
       })),
-      note: '会员订阅与自助充值在 M3（计费闭环）上线后开放；当前额度由管理员发放',
+      note: '额度充值与功能订阅订单经管理员确认到账后生效',
     });
   }),
 );
