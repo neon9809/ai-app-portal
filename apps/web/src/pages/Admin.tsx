@@ -16,9 +16,11 @@ import {
   Badge,
   Button,
   Card,
+  ColorPicker,
   Descriptions,
   Form,
   Input,
+  InputNumber,
   Modal,
   Popconfirm,
   Select,
@@ -70,6 +72,8 @@ interface SettingRow {
   type: 'string' | 'int' | 'bool';
   group: string;
   options?: string[];
+  choiceLabels?: Record<string, string>;
+  exclusiveOf?: string;
   desc: string;
   secret: boolean;
   advanced: boolean;
@@ -126,9 +130,19 @@ function SettingsForm({ groups, excludeKeys = [] }: { groups: string[]; excludeK
     }
   }, [settingsQ.data, form]);
 
+  // 互斥（如 MAIL_PROVIDER=smtp|resend）：只显示选中方式的配置
+  const provider = Form.useWatch('MAIL_PROVIDER', form) ?? (settingsQ.data?.settings.find((s) => s.key === 'MAIL_PROVIDER')?.value ?? 'smtp');
+  const all = (settingsQ.data?.settings ?? []).filter((s) => {
+    if (excludeKeys.includes(s.key)) return false;
+    if (s.exclusiveOf === 'MAIL_PROVIDER') {
+      return s.key.toUpperCase().startsWith(provider.toUpperCase());
+    }
+    return true;
+  });
+
   const ordered: Array<[string, SettingRow[]]> = groups.map((g) => [
     g,
-    (settingsQ.data?.settings ?? []).filter((s) => s.group === g && !excludeKeys.includes(s.key)),
+    all.filter((s) => s.group === g),
   ]);
 
   async function save(): Promise<void> {
@@ -166,15 +180,7 @@ function SettingsForm({ groups, excludeKeys = [] }: { groups: string[]; excludeK
         extra={s.desc}
         valuePropName={s.type === 'bool' ? 'checked' : 'value'}
       >
-        {s.type === 'bool' ? (
-          <Switch />
-        ) : s.options ? (
-          <Select options={s.options.map((o) => ({ value: o, label: o }))} />
-        ) : s.secret ? (
-          <Input.Password placeholder="留空保持不变" autoComplete="new-password" />
-        ) : (
-          <Input placeholder={s.defaultsWork ? '（默认值即可）' : ''} />
-        )}
+        {renderControl(s, form)}
       </Form.Item>
     );
   }
@@ -193,6 +199,72 @@ function SettingsForm({ groups, excludeKeys = [] }: { groups: string[]; excludeK
       </Button>
     </Space>
   );
+}
+
+// ---------- 配置控件渲染（下拉/开关/取色/数字/密码+查看） ----------
+
+const KEY_WIDGET: Record<string, string> = {
+  THEME_ID: 'theme',
+  ACCENT_COLOR: 'color',
+  AAP_SIGN_SECRET: 'password',
+  TURNSTILE_SECRET_KEY: 'password',
+  SMTP_PASS: 'password',
+  RESEND_API_KEY: 'password',
+};
+
+function renderControl(s: SettingRow, form?: { setFieldsValue: (v: Record<string, unknown>) => void }, secretReveal = false): ReactNode {
+  if (s.key === 'THEME_ID' && s.choiceLabels) {
+    return <Select options={Object.entries(s.choiceLabels).map(([value, label]) => ({ value, label }))} style={{ width: 220 }} />;
+  }
+  if (s.key === 'ACCENT_COLOR') {
+    return (
+      <Space.Compact style={{ width: '100%' }}>
+        <ColorPicker
+          value={s.value || undefined}
+          onChange={(c) => form?.setFieldsValue({ ACCENT_COLOR: c.toHexString() })}
+          showText
+          disabledAlpha
+        />
+        <Input placeholder="留空用主题默认" style={{ width: 180 }} disabled />
+      </Space.Compact>
+    );
+  }
+  if (s.type === 'bool') return <Switch checkedChildren="开" unCheckedChildren="关" />;
+  if (s.choiceLabels) {
+    return <Select options={Object.entries(s.choiceLabels).map(([value, label]) => ({ value, label }))} />;
+  }
+  if (s.secret || KEY_WIDGET[s.key] === 'password') {
+    const reveal = secretReveal ? (
+      <Button
+        onClick={() =>
+          Modal.confirm({
+            title: `查看密钥：${s.key}`,
+            content: '查看操作会记入审计日志。确认继续？',
+            okText: '查看',
+            onOk: async () => {
+              try {
+                const r = await api<{ value: string }>(`/api/admin/secrets/${s.key}`);
+                form?.setFieldsValue({ [s.key]: r.value });
+                message.success('已填入表单（可复制）');
+              } catch (err) {
+                message.error(err instanceof Error ? err.message : '获取失败');
+              }
+            },
+          })
+        }
+      >
+        查看
+      </Button>
+    ) : null;
+    return (
+      <Space.Compact style={{ width: '100%' }}>
+        <Input.Password placeholder="留空保持不变" autoComplete="new-password" />
+        {reveal}
+      </Space.Compact>
+    );
+  }
+  if (s.type === 'int') return <InputNumber style={{ width: 160 }} />;
+  return <Input placeholder={s.defaultsWork ? '（默认值即可）' : ''} />;
 }
 
 // ---------- 主页面 ----------
@@ -934,9 +1006,54 @@ function SecurityTab(): ReactNode {
 // ---------- 通知通道（邮件 [SMTP/Resend] / 未来短信 + 发信测试） ----------
 
 function MailTab(): ReactNode {
+  const qc = useQueryClient();
+  const settingsQ = useQuery({
+    queryKey: ['admin-settings'],
+    queryFn: () => api<{ settings: SettingRow[] }>('/api/admin/settings'),
+  });
+  const [form] = Form.useForm();
+  const [saving, setSaving] = useState(false);
   const [testTo, setTestTo] = useState('');
   const [testing, setTesting] = useState(false);
   const [result, setResult] = useState<string | null>(null);
+
+  const provider = (Form.useWatch('MAIL_PROVIDER', form) ??
+    settingsQ.data?.settings.find((s) => s.key === 'MAIL_PROVIDER')?.value ??
+    'smtp') as string;
+
+  const defs = settingsQ.data?.settings ?? [];
+  const visibleKeys =
+    provider === 'resend'
+      ? ['MAIL_PROVIDER', 'RESEND_API_KEY', 'RESEND_FROM']
+      : ['MAIL_PROVIDER', 'SMTP_HOST', 'SMTP_PORT', 'SMTP_USER', 'SMTP_PASS', 'SMTP_FROM'];
+  const visible = defs.filter((s) => visibleKeys.includes(s.key));
+
+  useEffect(() => {
+    if (settingsQ.data) {
+      const values: Record<string, string> = {};
+      for (const s of defs) values[s.key] = s.value;
+      form.setFieldsValue(values);
+    }
+  }, [settingsQ.data, form, defs]);
+
+  async function save(): Promise<void> {
+    setSaving(true);
+    try {
+      const payload: Record<string, string> = {};
+      for (const key of visibleKeys) {
+        const v = form.getFieldValue(key);
+        if (v !== undefined && v !== null) payload[key] = String(v);
+      }
+      await api('/api/admin/settings', { method: 'PUT', json: payload });
+      message.success('已保存并即时生效');
+      void qc.invalidateQueries({ queryKey: ['admin-settings'] });
+      void qc.invalidateQueries({ queryKey: ['bootstrap'] });
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : '保存失败');
+    } finally {
+      setSaving(false);
+    }
+  }
 
   async function sendTest(): Promise<void> {
     setTesting(true);
@@ -953,9 +1070,51 @@ function MailTab(): ReactNode {
 
   return (
     <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-      <Card size="small" title="邮件发信（验证码用；短信通道后续版本接入）" extra={<Tag bordered={false} color="blue" style={{ fontSize: 11 }}>Resend 仅需 API Key</Tag>}>
-        <SettingsForm groups={['通知通道（验证码发信）']} />
+      <Card size="small" title="发信通道（验证码用）" extra={<Tag bordered={false} color="blue" style={{ fontSize: 11 }}>Resend 仅需 API Key</Tag>}>
+        <Form form={form} layout="vertical">
+          <Form.Item
+            name="MAIL_PROVIDER"
+            label={
+              <Space size="small">
+                <span>发信方式（两者互斥）</span>
+                <Typography.Text code style={{ fontSize: 11 }}>MAIL_PROVIDER</Typography.Text>
+              </Space>
+            }
+            extra="Resend API：仅需 API Key 即可发信，推荐"
+          >
+            <Select
+              options={[
+                { value: 'smtp', label: 'SMTP 服务器' },
+                { value: 'resend', label: 'Resend API' },
+              ]}
+              style={{ width: 220 }}
+            />
+          </Form.Item>
+
+          {visible
+            .filter((s) => s.key !== 'MAIL_PROVIDER')
+            .map((s) => (
+              <Form.Item
+                key={s.key}
+                name={s.key}
+                label={
+                  <Space size="small" wrap>
+                    <span>{s.desc.split('（')[0]}</span>
+                    <Typography.Text code style={{ fontSize: 11 }}>{s.key}</Typography.Text>
+                  </Space>
+                }
+                extra={s.desc}
+              >
+                {renderControl(s, form, true)}
+              </Form.Item>
+            ))}
+
+          <Button type="primary" loading={saving} onClick={() => void save()}>
+            保存（即时生效）
+          </Button>
+        </Form>
       </Card>
+
       <Card size="small" title="发信测试">
         <Space wrap>
           <Input
@@ -1130,9 +1289,6 @@ function LlmTab(): ReactNode {
 
   const [upForm] = Form.useForm();
   const [routeForm] = Form.useForm();
-  const [tokenForm] = Form.useForm();
-  const [adjustForm] = Form.useForm();
-  const [createdToken, setCreatedToken] = useState<string | null>(null);
 
   function invalidate(): void {
     for (const k of ['llm-upstreams', 'llm-routes', 'llm-tokens', 'llm-usage']) void qc.invalidateQueries({ queryKey: [k] });
@@ -1273,29 +1429,8 @@ function LlmTab(): ReactNode {
 
       <Card
         size="small"
-        title="网关凭据（应用调用 LLM 的 Bearer Token）"
-        extra={
-          <Button
-            size="small"
-            type="primary"
-            onClick={async () => {
-              const v = await tokenForm.validateFields();
-              try {
-                const r = await api<{ token: string }>('/api/admin/llm/tokens', {
-                  method: 'POST',
-                  json: { appId: v.appId, name: v.name, perMinuteLimit: v.perMinuteLimit ? Number(v.perMinuteLimit) : null },
-                });
-                tokenForm.resetFields();
-                invalidate();
-                setCreatedToken(r.token);
-              } catch (err) {
-                message.error(err instanceof Error ? err.message : '创建失败');
-              }
-            }}
-          >
-            签发凭据
-          </Button>
-        }
+        title="运行时凭据（manifest 声明 llm 的包上传时自动签发，加密保管，运行时注入）"
+        extra={<Tag bordered={false} color="blue" style={{ fontSize: 11 }}>自动签发</Tag>}
       >
         <Table<LlmToken>
           rowKey="id"
@@ -1322,50 +1457,6 @@ function LlmTab(): ReactNode {
             },
           ]}
         />
-        <Form form={tokenForm} layout="inline" style={{ marginTop: 10, rowGap: 8 }}>
-          <Form.Item name="appId" rules={[{ required: true, message: '必填' }]}>
-            <Input placeholder="应用标识（如 demo）" style={{ width: 180 }} />
-          </Form.Item>
-          <Form.Item name="name">
-            <Input placeholder="备注" style={{ width: 150 }} />
-          </Form.Item>
-          <Form.Item name="perMinuteLimit">
-            <Input placeholder="限流/分（可选）" style={{ width: 140 }} />
-          </Form.Item>
-        </Form>
-      </Card>
-
-      <Card size="small" title="用户额度发放 / 调减">
-        <Form layout="inline" form={adjustForm} onFinish={async (v) => {
-          try {
-            const r = await api<{ balance: number }>('/api/admin/llm/adjust', {
-              method: 'POST',
-              json: { userId: Number(v.userId), delta: Number(v.delta), note: v.note },
-            });
-            message.success(`已调整，当前余额 ${r.balance}`);
-            adjustForm.resetFields();
-            invalidate();
-          } catch (err) {
-            message.error(err instanceof Error ? err.message : '调整失败');
-          }
-        }}>
-          <Form.Item name="userId" rules={[{ required: true, message: '必选' }]}>
-            <Select
-              placeholder="选择用户"
-              style={{ width: 180 }}
-              showSearch
-              optionFilterProp="label"
-              options={(usersQ.data?.users ?? []).map((u) => ({ value: u.id, label: `${u.name}（${u.username ?? u.id}）` }))}
-            />
-          </Form.Item>
-          <Form.Item name="delta" rules={[{ required: true, message: '必填' }]}>
-            <Input placeholder="变动量（±token）" style={{ width: 160 }} />
-          </Form.Item>
-          <Form.Item name="note">
-            <Input placeholder="备注" style={{ width: 180 }} />
-          </Form.Item>
-          <Button htmlType="submit" type="primary">确认调整</Button>
-        </Form>
       </Card>
 
       <Card size="small" title="调用账本（最近 50 条）">
@@ -1387,19 +1478,6 @@ function LlmTab(): ReactNode {
         />
       </Card>
 
-      <Modal
-        title="网关凭据（仅显示一次）"
-        open={Boolean(createdToken)}
-        onCancel={() => setCreatedToken(null)}
-        footer={<Button type="primary" onClick={() => setCreatedToken(null)}>我已保存</Button>}
-      >
-        <Alert type="warning" showIcon style={{ marginBottom: 10 }} message="请立即保存，关闭后无法再次查看" />
-        <Input readOnly value={createdToken ?? ''} style={{ fontFamily: 'monospace' }} />
-        <Typography.Paragraph type="secondary" style={{ marginTop: 10, fontSize: 12 }}>
-          应用接入：OpenAI SDK 将 base_url 设为 <code>https://你的域名/v1</code>，api_key 使用本凭据；
-          用户归因请在请求头转发门户注入的 X-AAP-Identity(+Sig)。
-        </Typography.Paragraph>
-      </Modal>
     </Space>
   );
 }
@@ -1547,6 +1625,8 @@ function fen2yuan(fen: number): string {
 
 function OpsTab(): ReactNode {
   const qc = useQueryClient();
+  const usersQ = useQuery({ queryKey: ['admin-users'], queryFn: () => api<{ users: PublicUser[] }>('/api/admin/users') });
+  const [adjustForm] = Form.useForm();
   const plansQ = useQuery({ queryKey: ['billing-plans'], queryFn: () => api<{ plans: PlanRowUI[] }>('/api/admin/billing/plans') });
   const ordersQ = useQuery({ queryKey: ['billing-orders'], queryFn: () => api<{ orders: OrderRowUI[] }>('/api/admin/billing/orders?status=pending') });
   const opsQ = useQuery({ queryKey: ['billing-ops'], queryFn: () => api<OpsStatsUI>('/api/admin/billing/ops') });
@@ -1682,6 +1762,46 @@ function OpsTab(): ReactNode {
       </Card>
 
       <RedeemCard />
+
+      <Card size="small" title="用户额度发放 / 调减">
+        <Form layout="inline" form={adjustForm} onFinish={async (v) => {
+          try {
+            const r = await api<{ balance: number }>('/api/admin/llm/adjust', {
+              method: 'POST',
+              json: { userId: Number(v.userId), delta: Number(v.delta), note: v.note },
+            });
+            message.success(`已调整，当前余额 ${r.balance}`);
+            adjustForm.resetFields();
+            void qc.invalidateQueries({ queryKey: ['billing-ops'] });
+            void qc.invalidateQueries({ queryKey: ['llm-usage'] });
+          } catch (err) {
+            message.error(err instanceof Error ? err.message : '调整失败');
+          }
+        }}>
+          <Form.Item name="userId" rules={[{ required: true, message: '必选' }]}>
+            <Select
+              placeholder="选择用户"
+              style={{ width: 180 }}
+              showSearch
+              optionFilterProp="label"
+              options={(usersQ.data?.users ?? []).map((u) => ({ value: u.id, label: `${u.name}（${u.username ?? u.id}）` }))}
+            />
+          </Form.Item>
+          <Form.Item name="delta" rules={[{ required: true, message: '必填' }]}>
+            <Input placeholder="变动量（±token）" style={{ width: 160 }} />
+          </Form.Item>
+          <Form.Item name="note">
+            <Input placeholder="备注" style={{ width: 180 }} />
+          </Form.Item>
+          <Button htmlType="submit" type="primary">确认调整</Button>
+        </Form>
+      </Card>
+
+
+      <Card size="small" title="计费设置">
+        <SettingsForm groups={['计费']} />
+      </Card>
+
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 12 }}>
         <Card size="small" title="余额排行">

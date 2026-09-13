@@ -12,6 +12,10 @@ import { settings } from '../db/schema.js';
 export interface SettingDef {
   type: 'string' | 'int' | 'bool';
   desc: string;
+  /** 下拉选项（value→label）；渲染为 Select */
+  choiceLabels?: Record<string, string>;
+  /** 互斥组：同组配置只显示当前选中的那套（如 smtp vs resend） */
+  exclusiveOf?: string;
   /** type=string 时可选的枚举值（管理端渲染为下拉） */
   options?: string[];
   /** 面板分组（E2：配置按功能块分区，不糊成一团） */
@@ -42,7 +46,8 @@ export const SETTING_DEFS: Record<string, SettingDef> = {
   THEME_ID: {
     group: '站点与品牌',
     type: 'string',
-    desc: `内置主题 id（${'ocean/aurora/forest/sunset/sakura/graphite'}）`,
+    choiceLabels: { ocean: '海雾蓝', aurora: '极光青', forest: '松林绿', sunset: '暖阳橙', sakura: '樱粉', graphite: '石墨（暗色）' },
+    desc: '站点默认主题（用户可在个人中心个性化覆盖）',
     initial: () => 'ocean',
     defaultsWork: true,
   },
@@ -59,6 +64,7 @@ export const SETTING_DEFS: Record<string, SettingDef> = {
   REGISTRATION_MODE: {
     group: '注册与账号',
     type: 'string',
+    choiceLabels: { closed: '关闭', open: '开放', invite: '开放+邀请码' },
     desc: '注册开关：closed 关闭 / open 开放 / invite 开放+邀请码（默认关闭）',
     initial: () => 'closed',
     defaultsWork: true,

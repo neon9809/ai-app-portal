@@ -133,6 +133,8 @@ adminRouter.get(
         type: s.def.type,
         group: s.def.group,
         options: s.def.options,
+        choiceLabels: s.def.choiceLabels,
+        exclusiveOf: s.def.exclusiveOf,
         desc: s.def.desc,
         secret: Boolean(s.def.secret),
         advanced: Boolean(s.def.advanced),
