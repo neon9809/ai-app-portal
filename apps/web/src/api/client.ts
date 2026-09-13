@@ -8,6 +8,8 @@ export class ApiError extends Error {
     message: string,
     readonly details?: Record<string, unknown>,
     readonly action?: string,
+    /** 完整 error 对象（challenge 等附加字段在此） */
+    readonly errorBody?: Record<string, unknown>,
   ) {
     super(message);
     this.name = 'ApiError';
@@ -52,6 +54,7 @@ export async function api<T = unknown>(path: string, init: ApiInit = {}): Promis
       err?.message ?? `请求失败(${res.status})`,
       err?.details,
       err?.action,
+      err as unknown as Record<string, unknown>,
     );
   }
   return data as T;

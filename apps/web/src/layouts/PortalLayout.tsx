@@ -1,22 +1,26 @@
 import { ColorPicker, Select, Space, Button, theme as antdTheme } from 'antd';
-import { useQuery } from '@tanstack/react-query';
-import { Link, Outlet } from 'react-router-dom';
-import { UserOutlined } from '@ant-design/icons';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Link, Outlet, useNavigate } from 'react-router-dom';
+import { UserOutlined, LogoutOutlined } from '@ant-design/icons';
 import type { PortalBootstrap } from '@aap/shared';
 import { api } from '../api/client';
 import { BUILTIN_THEMES, useTheme } from '../theme/themes';
 import { BeianFooter } from '../components/BeianFooter';
+import { useSession, useLogout } from '../state/session';
 
 /**
  * 门户 shell：品牌头（logo/站名/标语）+ 主题切换（W1 演示位，W7 收进用户菜单）
- * + 备案页脚。应用打开走 iframe 嵌入（W7），本 shell 即统一 chrome
- * （返回个人中心/退出登录入口也在 W7 接入真实会话）。
+ * + 会话区（登录按钮 / 用户菜单含 个人中心+退出登录——统一 chrome）+ 备案页脚。
  */
 export function PortalLayout() {
+  const qc = useQueryClient();
+  const navigate = useNavigate();
   const { data } = useQuery({
     queryKey: ['bootstrap'],
     queryFn: () => api<PortalBootstrap>('/api/portal/bootstrap'),
   });
+  const { me } = useSession();
+  const logout = useLogout();
   const { themeId, accent, setThemeId, setAccent } = useTheme();
   const { token } = antdTheme.useToken();
 
@@ -68,11 +72,27 @@ export function PortalLayout() {
             allowClear
             showText={false}
           />
-          <Button size="small" type="primary" icon={<UserOutlined />}>
-            <Link to="/login" style={{ color: 'inherit' }}>
-              登录
-            </Link>
-          </Button>
+          {me ? (
+            <>
+              <Button
+                size="small"
+                icon={<UserOutlined />}
+                onClick={() => {
+                  void qc.invalidateQueries();
+                  navigate('/account');
+                }}
+              >
+                {me.user.name}
+              </Button>
+              <Button size="small" icon={<LogoutOutlined />} onClick={() => void logout()} aria-label="退出登录" />
+            </>
+          ) : (
+            <Button size="small" type="primary" icon={<UserOutlined />}>
+              <Link to="/login" style={{ color: 'inherit' }}>
+                登录
+              </Link>
+            </Button>
+          )}
         </Space>
       </header>
       <main className="aap-main">
