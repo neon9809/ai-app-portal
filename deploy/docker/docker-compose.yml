@@ -15,8 +15,8 @@ services:
     container_name: ai-app-portal
     restart: unless-stopped
     ports:
-      - "8080:8080"   # 业务入口（门户 + /app/<id>/ 应用网关 + ACME 挑战）
-      - "8443:8443"   # HTTPS（配置证书后启用）
+      - "80:8080"     # 业务入口（门户 + /app/<id>/ 应用网关 + ACME HTTP-01 挑战）
+      - "443:8443"    # HTTPS（配置证书后启用）
     volumes:
       - ../../data:/data
       # 纯门户模式（反代外置给 Caddy/nginx）时不需要暴露 8443

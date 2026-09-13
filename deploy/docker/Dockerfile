@@ -4,6 +4,9 @@
 
 # ---------- 构建阶段 ----------
 FROM node:22-alpine AS build
+# CN 网络优化：alpine 源与 npm registry 走国内镜像
+RUN sed -i 's#https://dl-cdn.alpinelinux.org#https://mirrors.cloud.tencent.com#g' /etc/apk/repositories \
+ && npm config set registry https://registry.npmmirror.com
 # better-sqlite3 无 musl 预编译时的源码编译依赖
 RUN apk add --no-cache python3 make g++ libc6-compat
 RUN corepack enable
@@ -21,7 +24,8 @@ RUN pnpm --filter @aap/server --prod deploy --legacy /out
 
 # ---------- 运行阶段 ----------
 FROM node:22-alpine
-RUN apk add --no-cache tini python3 py3-flask
+RUN sed -i 's#https://dl-cdn.alpinelinux.org#https://mirrors.cloud.tencent.com#g' /etc/apk/repositories \
+ && apk add --no-cache tini python3 py3-flask
 WORKDIR /out
 # pnpm deploy 产物：package.json + node_modules（含 @aap/shared 构建产物）
 COPY --from=build /out ./
