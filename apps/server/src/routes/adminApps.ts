@@ -327,6 +327,12 @@ adminAppsRouter.post(
         runtime: manifest.type === 'python' ? manifest.runtime : null,
         capabilities: manifest.capabilities,
         network: manifest.network,
+        env: Object.entries(manifest.env).map(([name, s]) => ({
+          name,
+          required: s.required,
+          secret: s.secret,
+          description: s.description,
+        })),
         signature: sig.status,
         /** 同名应用已存在：接入将作为版本更新（需归属者或管理员） */
         exists: Boolean(existing),
@@ -362,8 +368,10 @@ adminAppsRouter.post(
     const tmpDir = `upload_tmp_${randomBytes(8).toString('hex')}`;
     let manifest: ReturnType<typeof validateManifest>;
     let signatureCheck: SignatureCheck;
+    let rawManifest: Record<string, unknown> = {};
     try {
       const r = storePackageFiles(tmpDir, zipBuf);
+      rawManifest = r.manifest;
       manifest = validateManifest(r.manifest);
       signatureCheck = checkPackageSignature(r.entries, r.signature as SignatureObj | null);
       if (signatureCheck.status === 'invalid') {
@@ -400,8 +408,11 @@ adminAppsRouter.post(
         passUser: body.passUser ?? false,
         upstream: '',
         urlSecretEnc: body.urlSecret ? encryptSecret(body.urlSecret) : null,
+        manifestJson: JSON.stringify({ ...rawManifest, ...manifest }),
+        runtimeMode: isHtml ? null : manifest.runtime,
         signatureStatus: signatureCheck.status,
-        enabled: isHtml, // python 包等待运行时（M4），先不展示
+        // python 沙箱运行时已上线：管理员上传的包与用户提交同语义，上传即可用（默认私有）
+        enabled: true,
         createdAt: now,
         updatedAt: now,
       })
@@ -410,7 +421,7 @@ adminAppsRouter.post(
       allowGroupIds: body.allowedGroupIds ?? [],
       allowUserIds: body.allowedUserIds ?? [],
     });
-    // manifest 声明 llm 能力 → 自动签发网关凭据（幂等），运行时（M4）按 appId 注入，无需手动下发
+    // manifest 声明 llm 能力 → 自动签发网关凭据（幂等），运行时按 appId 注入，无需手动下发
     // 所有包统一自动签发运行时凭据（egress/db/storage 必需）；llm.chat 额外校验能力声明
     ensureAutoProvisionedToken(manifest.name);
     const llmProvisioned = manifest.capabilities.includes('llm');

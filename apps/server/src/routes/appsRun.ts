@@ -21,9 +21,13 @@ import { appSiteDir } from '../gateway/staticApp.js';
 import { runInvoked } from '../lib/sandbox.js';
 import { ensureAutoProvisionedToken } from '../lib/llm.js';
 import { config } from '../config/index.js';
-import { storePackageFiles, validateManifest } from '../gateway/staticApp.js';
+import { storePackageFiles, validateManifest, parseEnvSpec, type ManifestEnvVar } from '../gateway/staticApp.js';
 import { checkPackageSignature, type SignatureCheck, type SignatureObj } from '../lib/signing.js';
 import { audit } from '../lib/audit.js';
+import { encryptSecret, decryptSecret } from '../lib/cryptoSecrets.js';
+import { missingRequiredEnv } from '../lib/appEnv.js';
+import { stopPersistentFor } from '../lib/sandbox.js';
+import { appEnvVars } from '../db/schema.js';
 
 export const appsRunRouter = Router();
 
@@ -85,6 +89,12 @@ appsRunRouter.post(
     const input = (req.body ?? {}) as { input?: unknown };
     const userId = req.user!.id;
 
+    // 必填环境变量未配置 → 明确报错（而不是让包在运行时莫名拿不到配置）
+    const missing = missingRequiredEnv(app.id);
+    if (missing.length > 0) {
+      throw new HttpError(400, 'ENV_MISSING', `缺少必填环境变量：${missing.join('、')}（请在应用的环境变量配置中填写后重试）`);
+    }
+
     const started = Date.now();
     // 平台地址取服务端真实监听端口（req.socket.localPort 是本机绑定事实，
     // 客户端不可控）。绝不能用请求 Host——那会注入沙箱的净网守卫放行面，
@@ -118,6 +128,142 @@ appsRunRouter.post(
       logs: result.logs ?? '',
       durationMs: result.durationMs,
     });
+  }),
+);
+
+// ---------- 应用环境变量 / 机密（G6：manifest.env 声明，AES-256-GCM 落盘，沙箱启动注入） ----------
+
+function envSpecOfStored(appId: string): Record<string, ManifestEnvVar> {
+  const app = loadApp(appId);
+  if (!app?.manifestJson) return {};
+  try {
+    const m = JSON.parse(app.manifestJson) as Record<string, unknown>;
+    return parseEnvSpec(m.env);
+  } catch {
+    return {};
+  }
+}
+
+function canManageEnv(app: { ownerUserId: number | null }, user: { id: number; role: string }): boolean {
+  return user.role === 'admin' || (app.ownerUserId != null && app.ownerUserId === user.id);
+}
+
+appsRunRouter.get(
+  '/apps/:id/env',
+  requireAuth,
+  h(async (req, res) => {
+    const app = loadApp(String(req.params.id));
+    if (!app) throw new HttpError(404, 'APP_NOT_FOUND', '应用不存在');
+    if (!canManageEnv(app, req.user!)) throw new HttpError(403, 'FORBIDDEN', '只有归属者或管理员可以查看环境变量');
+    if (app.kind !== 'package') throw new HttpError(400, 'NOT_PACKAGE', '环境变量仅对 .neon-aap 包生效');
+
+    const spec = envSpecOfStored(app.id);
+    const rows = getDb()
+      .select({ name: appEnvVars.name, valueEnc: appEnvVars.valueEnc, isSecret: appEnvVars.isSecret })
+      .from(appEnvVars)
+      .where(eq(appEnvVars.appId, app.id))
+      .all();
+    const byName = new Map(rows.map((r) => [r.name, r]));
+
+    const declared = Object.entries(spec).map(([name, s]) => {
+      const row = byName.get(name);
+      const configured = row != null;
+      const entry: Record<string, unknown> = {
+        name,
+        required: s.required,
+        secret: s.secret,
+        description: s.description,
+        pattern: s.pattern,
+        default: s.default,
+        configured,
+      };
+      if (configured) {
+        if (s.secret) {
+          // 机密永不回明文：只给配置状态 + 尾 4 位提示（帮助确认配的是哪个 key）
+          try {
+            const v = decryptSecret(row!.valueEnc);
+            entry.hint = `••••${v.slice(-4)}`;
+          } catch {
+            entry.hint = '••••';
+          }
+        } else {
+          try {
+            entry.value = decryptSecret(row!.valueEnc);
+          } catch {
+            entry.value = '';
+          }
+        }
+      }
+      return entry;
+    });
+    // 存储里还有、当前 manifest 已不声明的（版本更新删了声明）：列出便于清理
+    const undeclared = rows.filter((r) => !(r.name in spec)).map((r) => r.name);
+    res.json({ declared, undeclared });
+  }),
+);
+
+appsRunRouter.put(
+  '/apps/:id/env',
+  requireAuth,
+  h(async (req, res) => {
+    const app = loadApp(String(req.params.id));
+    if (!app) throw new HttpError(404, 'APP_NOT_FOUND', '应用不存在');
+    if (!canManageEnv(app, req.user!)) throw new HttpError(403, 'FORBIDDEN', '只有归属者或管理员可以修改环境变量');
+    if (app.kind !== 'package') throw new HttpError(400, 'NOT_PACKAGE', '环境变量仅对 .neon-aap 包生效');
+
+    const spec = envSpecOfStored(app.id);
+    const body = (req.body ?? {}) as { values?: Record<string, unknown> };
+    const values = body.values ?? {};
+    if (typeof values !== 'object' || Array.isArray(values)) throw new HttpError(400, 'INVALID_BODY', 'values 必须是对象');
+    const names = Object.keys(values);
+    if (names.length > 64) throw new HttpError(400, 'INVALID_BODY', '单次最多更新 64 个变量');
+
+    const now = Date.now();
+    const saved: string[] = [];
+    const cleared: string[] = [];
+    for (const name of names) {
+      const s = spec[name];
+      if (!s) throw new HttpError(400, 'ENV_VAR_NOT_DECLARED', `变量未在 manifest.env 中声明: ${name}`);
+      const value = values[name];
+      if (typeof value !== 'string') throw new HttpError(400, 'INVALID_BODY', `变量值必须是字符串: ${name}`);
+      if (value.length > 8192) throw new HttpError(400, 'INVALID_BODY', `变量值过长（上限 8192 字符）: ${name}`);
+      if (value === '') {
+        // 空串 = 清除该变量配置
+        getDb().delete(appEnvVars).where(and(eq(appEnvVars.appId, app.id), eq(appEnvVars.name, name))).run();
+        cleared.push(name);
+        continue;
+      }
+      if (s.pattern) {
+        try {
+          if (!new RegExp(s.pattern).test(value)) {
+            throw new HttpError(400, 'ENV_PATTERN_MISMATCH', `变量 ${name} 不满足格式要求${s.description ? `（${s.description}）` : ''}`);
+          }
+        } catch (err) {
+          if (err instanceof HttpError) throw err;
+          throw new HttpError(400, 'ENV_PATTERN_MISMATCH', `变量 ${name} 的格式校验规则无效`);
+        }
+      }
+      getDb()
+        .insert(appEnvVars)
+        .values({ appId: app.id, name, valueEnc: encryptSecret(value), isSecret: s.secret, updatedAt: now })
+        .onConflictDoUpdate({
+          target: [appEnvVars.appId, appEnvVars.name],
+          set: { valueEnc: encryptSecret(value), isSecret: s.secret, updatedAt: now },
+        })
+        .run();
+      saved.push(name);
+    }
+
+    // persistent 进程已带旧环境在跑：杀掉，下次访问以新环境重新拉起
+    if (saved.length + cleared.length > 0 && app.runtimeMode === 'persistent') stopPersistentFor(app.id);
+    if (saved.length + cleared.length > 0) {
+      audit(`${req.user!.kind}:${req.user!.id}`, req.clientIp ?? null, 'app.env.set', {
+        appId: app.id,
+        saved,
+        cleared,
+      });
+    }
+    res.json({ ok: true, saved, cleared });
   }),
 );
 

@@ -177,11 +177,20 @@ class Storage:
 
 
 class Http:
-    """出站 HTTP：唯一通道，平台侧逐请求核对 manifest 域名白名单。"""
+    """出站 HTTP：唯一通道，平台侧逐请求核对 manifest 域名白名单。
 
-    def fetch(self, url, timeout=15):
-        status, resp = _platform("/api/aap/egress", {"url": url}, timeout=timeout + 5)
-        return {"status": status, "body": resp.get("body")}
+    返回 {"status": 上游 HTTP 状态码, "body": 上游响应文本（≤500KB）}；
+    白名单拒绝 / URL 非法等平台侧拒绝以异常抛出（RuntimeError）。"""
+
+    def fetch(self, url, timeout=15, headers=None):
+        """出站 GET。headers：可选自定义请求头 dict（如第三方 API 鉴权头；
+        平台侧剥除逐跳头并限数量/长度）。密钥请从 os.environ 取（门户注入），不要硬编码。"""
+        payload = {"url": url}
+        if headers:
+            payload["headers"] = {str(k): str(v) for k, v in headers.items()}
+        status, resp = _platform("/api/aap/egress", payload, timeout=timeout + 5)
+        # 平台 JSON = {"status": 上游状态码, "body": 文本}；status 键缺失时回退平台状态
+        return {"status": resp.get("status", status), "body": resp.get("body")}
 
 
 class AapLog:
@@ -241,9 +250,16 @@ def run_invoked(mod_path, aap):
 
 
 def run_serve(mod_path, aap):
-    """persistent：以 __main__ 执行 mod.py（flask 自行监听注入的 PORT）。"""
+    """persistent：以 __main__ 执行 mod.py（flask 自行监听注入的 PORT）。
+
+    mod.py 顶层会阻塞在 app.run()，run_path 不会返回——若只在执行后注入，
+    路由处理器里永远看不到 aap。因此先把 aap 挂进 builtins（模块代码在
+    执行期与请求期经 builtins 回退可见），run_path 返回后再补模块命名
+    空间注入（幂等，兼容不阻塞的写法）。"""
+    import builtins
     import runpy
 
+    builtins.aap = aap
     ns = runpy.run_path(mod_path, run_name="__main__")
     inject(ns, aap)
 

@@ -21,6 +21,7 @@ import type { SessionUser } from '../types.js';
 import { getAppLlmProvision } from './llm.js';
 import { getSettingInt } from './settings.js';
 import { HttpError } from './httpError.js';
+import { envValues as appEnvValues } from './appEnv.js';
 
 const PYTHON_BIN = process.env.PYTHON_BIN || 'python3';
 // src/lib → 根目录需上溯 4 级；Docker 内可用 AAP_RUNNER 覆盖为 /out/aap-sdk/... 
@@ -82,6 +83,9 @@ function baseEnv(appId: string, extra: Record<string, string> = {}): Record<stri
     AAP_PACKAGE_DIR: appSiteDir(appId),
     AAP_DB_PATH: path.join(appSiteDir(appId), 'app.sqlite'),
     AAP_STORAGE_DIR: path.join(appSiteDir(appId), 'storage'),
+    // 包声明的环境变量/机密（manifest.env，app_env_vars 解密；保留名已在上传时拒声明，
+    // 覆盖不了上面的平台键。放 extra 之前：平台键优先级恒高于包声明）
+    ...appEnvValues(appId),
     ...extra,
   };
 }
@@ -376,6 +380,18 @@ export function persistentPort(appId: string): number | null {
 export function stopAllPersistent(): void {
   for (const [, p] of persistent) p.proc.kill('SIGTERM');
   persistent.clear();
+}
+
+/** 停掉指定应用的 persistent 进程（环境变量/机密变更后，下次访问以新环境重新拉起） */
+export function stopPersistentFor(appId: string): void {
+  const p = persistent.get(appId);
+  if (!p) return;
+  persistent.delete(appId);
+  try {
+    p.proc.kill('SIGTERM');
+  } catch {
+    /* 已退出 */
+  }
 }
 
 // 空闲回收

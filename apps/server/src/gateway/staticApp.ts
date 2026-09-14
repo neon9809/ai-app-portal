@@ -105,6 +105,97 @@ export function storePackageFiles(
   return { files, manifest, entries, signature };
 }
 
+// ---------- manifest.env：应用环境变量 / 机密声明（G6） ----------
+
+export interface ManifestEnvVar {
+  /** true = 沙箱启动前必须已配置（invoked 执行 / persistent 拉起前强校验） */
+  required: boolean;
+  /** true = 机密：AES-256-GCM 加密落盘，接口永不回明文（只回配置状态与尾 4 位） */
+  secret: boolean;
+  description: string;
+  /** 简单校验正则（保存配置时执行 test；不锚定，作者自行写 ^ $） */
+  pattern: string | null;
+  /** 未配置时的注入默认值（secret 不允许 default） */
+  default: string | null;
+}
+
+/** 沙箱注入面保留名：平台托管（AAP_* / PORT / AAP_DB_PATH…）或宿主透传（代理 / Python 运行时），
+ *  包声明即拒绝——否则可劫持 egress 代理（HTTP_PROXY）、身份归因（AAP_TOKEN）等平台机制 */
+const RESERVED_ENV_NAMES = new Set(
+  [
+    'PORT',
+    'PATH',
+    'HOME',
+    'TMPDIR',
+    'LANG',
+    'LC_ALL',
+    'PYTHONUNBUFFERED',
+    'PYTHONPATH',
+    'PYTHONHOME',
+    'SSL_CERT_FILE',
+    'SSL_CERT_DIR',
+    'HTTP_PROXY',
+    'HTTPS_PROXY',
+    'NO_PROXY',
+    'http_proxy',
+    'https_proxy',
+    'no_proxy',
+    'SANDBOX_UID',
+    'SANDBOX_GID',
+    'NODE_OPTIONS',
+  ].map((k) => k.toUpperCase()),
+);
+
+export const MAX_ENV_VARS = 16;
+
+/** 解析并校验 manifest.env 声明；支持两种写法：
+ *  "NAME": "描述"（速记，required=true） 或 "NAME": { required, secret, description, pattern, default } */
+export function parseEnvSpec(value: unknown): Record<string, ManifestEnvVar> {
+  if (value == null) return {};
+  if (typeof value !== 'object' || Array.isArray(value)) throw new Error('manifest.env 必须是对象');
+  const raw = value as Record<string, unknown>;
+  const names = Object.keys(raw);
+  if (names.length > MAX_ENV_VARS) throw new Error(`manifest.env 最多声明 ${MAX_ENV_VARS} 个变量`);
+  const out: Record<string, ManifestEnvVar> = {};
+  for (const name of names) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(name)) throw new Error(`manifest.env 变量名非法: ${name}`);
+    if (name.toUpperCase().startsWith('AAP_') || RESERVED_ENV_NAMES.has(name.toUpperCase())) {
+      throw new Error(`manifest.env 变量名与平台保留名冲突: ${name}`);
+    }
+    const v = raw[name];
+    let spec: ManifestEnvVar;
+    if (typeof v === 'string') {
+      spec = { required: true, secret: false, description: v, pattern: null, default: null };
+    } else if (typeof v === 'object' && v !== null && !Array.isArray(v)) {
+      const o = v as Record<string, unknown>;
+      const secret = o.secret === true;
+      const def = o.default != null ? String(o.default) : null;
+      if (def != null && (def.length > 4096 || secret)) throw new Error(`manifest.env.${name} 的 default 非法（过长或机密变量不允许默认值）`);
+      const pattern = o.pattern != null ? String(o.pattern) : null;
+      if (pattern != null) {
+        if (pattern.length > 200) throw new Error(`manifest.env.${name} 的 pattern 过长`);
+        try {
+          // eslint-disable-next-line no-new
+          new RegExp(pattern);
+        } catch {
+          throw new Error(`manifest.env.${name} 的 pattern 不是合法正则`);
+        }
+      }
+      spec = {
+        required: o.required !== false,
+        secret,
+        description: String(o.description ?? '').slice(0, 200),
+        pattern,
+        default: def,
+      };
+    } else {
+      throw new Error(`manifest.env.${name} 的声明必须是描述字符串或对象`);
+    }
+    out[name] = spec;
+  }
+  return out;
+}
+
 /** 校验 .neon-aap manifest（app-develop.skill v0.2 契约），返回规范化字段 */
 export function validateManifest(m: Record<string, unknown>): {
   name: string;
@@ -116,6 +207,7 @@ export function validateManifest(m: Record<string, unknown>): {
   capabilities: string[];
   network: string[];
   route: string | null;
+  env: Record<string, ManifestEnvVar>;
 } {
   const name = String(m.name ?? '');
   const type = String(m.type ?? '');
@@ -147,6 +239,7 @@ export function validateManifest(m: Record<string, unknown>): {
     capabilities: caps,
     network,
     route,
+    env: parseEnvSpec(m.env),
   };
 }
 

@@ -38,6 +38,7 @@ import { CopyOutlined } from '@ant-design/icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import { useSession } from '../state/session';
+import { AppEnvModal } from '../components/AppEnvModal';
 import type { PublicUser } from '@aap/shared';
 
 // ---------- 类型 ----------
@@ -500,6 +501,7 @@ interface PkgPreview {
   signature: string;
   exists: boolean;
   existingKind: string | null;
+  env?: Array<{ name: string; required: boolean; secret: boolean; description: string }>;
 }
 
 function AppsTab(): ReactNode {
@@ -512,6 +514,7 @@ function AppsTab(): ReactNode {
   const [pkgFile, setPkgFile] = useState<{ name: string; dataBase64: string } | null>(null);
   const [pkgPreview, setPkgPreview] = useState<PkgPreview | null>(null);
   const [previewing, setPreviewing] = useState(false);
+  const [envApp, setEnvApp] = useState<AdminApp | null>(null);
 
   const groupsQ = useQuery({ queryKey: ['admin-groups'], queryFn: () => api<{ groups: GroupRow[] }>('/api/admin/groups') });
   const usersQ = useQuery({ queryKey: ['admin-users'], queryFn: () => api<{ users: PublicUser[] }>('/api/admin/users') });
@@ -637,7 +640,7 @@ function AppsTab(): ReactNode {
     }
   }
 
-  const KIND_LABEL: Record<string, string> = { upstream: '反代', html: 'HTML', package: '包(待M4)' };
+  const KIND_LABEL: Record<string, string> = { upstream: '反代', html: 'HTML', package: '包' };
 
   return (
     <Space direction="vertical" size="middle" style={{ width: '100%' }}>
@@ -673,8 +676,13 @@ function AppsTab(): ReactNode {
               title: '操作',
               width: 230,
               render: (_, r) => (
-                <Space size="small">
+                <Space size="small" wrap>
                   {r.kind === 'upstream' ? <Button size="small" onClick={() => void testApp(r)}>测试</Button> : null}
+                  {r.kind === 'package' ? (
+                    <Button size="small" onClick={() => setEnvApp(r)}>
+                      环境变量
+                    </Button>
+                  ) : null}
                   <Button
                     size="small"
                     onClick={() => {
@@ -712,6 +720,8 @@ function AppsTab(): ReactNode {
           <div key={k} style={{ color: 'var(--aap-text-secondary)', fontSize: 12, marginTop: 4 }}>{v}</div>
         ))}
       </Card>
+
+      <AppEnvModal appId={envApp?.id ?? ''} appName={envApp?.name ?? ''} open={envApp != null} onClose={() => setEnvApp(null)} />
 
       <ReviewCard />
 
@@ -788,6 +798,11 @@ function AppsTab(): ReactNode {
                   description={
                     <div style={{ fontSize: 12 }}>
                       <div>能力：{pkgPreview.capabilities.length ? pkgPreview.capabilities.join('、') : '无'}；出网白名单：{pkgPreview.network.length ? pkgPreview.network.join('、') : '无'}</div>
+                      {pkgPreview.env?.length ? (
+                        <div>
+                          环境变量：{pkgPreview.env.map((v) => `${v.name}${v.secret ? '（密钥）' : ''}${v.required ? '' : '（可选）'}`).join('、')}——接入后在应用列表「环境变量」中配置
+                        </div>
+                      ) : null}
                       <div>
                         签名：
                         {({ verified: '可信签名（免审接入）', untrusted: '未信任签名（走审核）', unsigned: '未签名（走审核）', invalid: '签名无效（接入将被拒）' } as Record<string, string>)[pkgPreview.signature] ?? pkgPreview.signature}

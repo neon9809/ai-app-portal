@@ -269,6 +269,25 @@ export const appAcl = sqliteTable('app_acl', {
   allowUserIds: text('allow_user_ids').notNull().default('[]'), // JSON number[]
 });
 
+// ---------- 应用环境变量 / 机密（G6：manifest.env 声明，AES-256-GCM 加密落盘，沙箱启动注入） ----------
+
+/** 值统一加密存储（含非密钥）：GET 对 secret 只回配置状态与尾 4 位提示，永不回明文 */
+export const appEnvVars = sqliteTable(
+  'app_env_vars',
+  {
+    appId: text('app_id')
+      .notNull()
+      .references(() => apps.id, { onDelete: 'cascade' }),
+    /** 变量名（manifest.env 已校验：非保留名） */
+    name: text('name').notNull(),
+    /** encryptSecret() 密文（v1:iv:tag:cipher） */
+    valueEnc: text('value_enc').notNull(),
+    isSecret: integer('is_secret', { mode: 'boolean' }).notNull().default(false),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.appId, t.name] })],
+);
+
 // ---------- 包签名信任链（G4，Ed25519；设计参照 fnos-dashboard 的 ndash 方案） ----------
 
 /** 受信任的签名公钥：key_id 命中 → verified（官方/可信签名者可免审）；builtin 内置不可删 */

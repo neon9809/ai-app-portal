@@ -22,6 +22,7 @@ import { allowRequest } from './limiter.js';
 import { getSettingInt } from '../lib/settings.js';
 import { injectChrome, serveHtmlApp, serveSandboxShell, needsIframeSandbox, stripRawPrefix } from './staticApp.js';
 import { ensurePersistent, touchByPort } from '../lib/sandbox.js';
+import { missingRequiredEnv } from '../lib/appEnv.js';
 import http from 'node:http';
 
 export const gatewayRouter = Router();
@@ -239,6 +240,11 @@ gatewayRouter.all('/app/:id/*', async (req: Request, res: Response) => {
 
     if (app.kind === 'package' && app.runtimeMode === 'persistent') {
       // G2 persistent：拉起长驻沙箱并反代（纳入 B 域门禁/限流/审计）
+      // 必填环境变量未配置 → 不拉起，给可操作的错误页（而不是让应用起来后行为异常）
+      const missing = missingRequiredEnv(app.id);
+      if (missing.length > 0) {
+        return htmlError(res, 503, '应用缺少配置', `必填环境变量未配置：${missing.join('、')}。请由归属者或管理员在应用「环境变量」中填写后重试。`);
+      }
       const port = await ensurePersistent(app.id, manifestEntry(app), () => {
         console.log(`[sandbox] persistent 崩溃重启: ${app.id}`);
       });

@@ -273,7 +273,7 @@ aapRouter.post(
   '/egress',
   h(async (req: Request, res: Response) => {
     const token = req.aapToken!;
-    const body = (req.body ?? {}) as { url?: string };
+    const body = (req.body ?? {}) as { url?: string; headers?: Record<string, unknown> };
     const url = String(body.url ?? '');
     let parsed: URL;
     try {
@@ -283,6 +283,19 @@ aapRouter.post(
     }
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
       throw new HttpError(400, 'INVALID_URL', '仅支持 http/https 出站');
+    }
+    // 包自定义请求头（如第三方 API 的鉴权头，密钥来自门户注入的环境变量，不落代码）：
+    // 名称/数量/长度受限；逐跳与托管类头一律剥除（防流控/长度/代理语义被包改写）
+    const HOP_BY_HOP = /^(host|connection|keep-alive|proxy-connection|transfer-encoding|te|trailer|upgrade|expect|content-length|content-type|proxy-authorization|proxy-authenticate|cookie2)$/i;
+    let fwdHeaders: Record<string, string> | undefined;
+    if (body.headers && typeof body.headers === 'object' && !Array.isArray(body.headers)) {
+      fwdHeaders = {};
+      for (const [k, v] of Object.entries(body.headers)) {
+        if (Object.keys(fwdHeaders).length >= 16) break;
+        if (!/^[A-Za-z0-9-]{1,64}$/.test(k) || HOP_BY_HOP.test(k)) continue;
+        fwdHeaders[k] = String(v).slice(0, 4096);
+      }
+      if (Object.keys(fwdHeaders).length === 0) fwdHeaders = undefined;
     }
     const app = getDb().select().from(apps).where(eq(apps.id, token.appId)).get();
     let network: string[] = [];
@@ -332,7 +345,7 @@ aapRouter.post(
             throw new HttpError(403, 'EGRESS_DENIED', `域名 ${current.hostname} 解析到内网/保留地址，已拦截`);
           }
         }
-        const up = await fetch(current.toString(), { method: 'GET', signal: ctrl.signal, redirect: 'manual' });
+        const up = await fetch(current.toString(), { method: 'GET', signal: ctrl.signal, redirect: 'manual', headers: fwdHeaders });
         const loc = up.status >= 300 && up.status < 400 ? up.headers.get('location') : null;
         if (loc) {
           up.body?.cancel();

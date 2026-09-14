@@ -25,6 +25,7 @@ import { api, ApiError } from '../api/client';
 import { obtainPowToken } from '../lib/pow';
 import { useSession } from '../state/session';
 import { BUILTIN_THEMES, useTheme } from '../theme/themes';
+import { AppEnvModal } from '../components/AppEnvModal';
 
 // ---------- 步升认证弹窗 ----------
 
@@ -845,6 +846,7 @@ function MyAppsTab(): ReactNode {
   const mine = useQuery({ queryKey: ['my-apps'], queryFn: () => api<{ apps: MyAppRow[] }>('/api/apps/mine') });
   const [uploading, setUploading] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
+  const [envApp, setEnvApp] = useState<MyAppRow | null>(null);
 
   async function onFile(e: React.ChangeEvent<HTMLInputElement>): Promise<void> {
     const f = e.target.files?.[0];
@@ -873,7 +875,7 @@ function MyAppsTab(): ReactNode {
 
   return (
     <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-      <Card size="small" title="上传 .neon-aap 包" extra={<Tag bordered={false} color="blue" style={{ fontSize: 11 }}>python 运行时随 M4 上线</Tag>}>
+      <Card size="small" title="上传 .neon-aap 包" extra={<Tag bordered={false} color="blue" style={{ fontSize: 11 }}>python 沙箱运行时已上线</Tag>}>
         <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
           上传后默认仅自己可见可用；要公开给所有用户，请提交审核（管理员将查看代码与能力声明）。
         </Typography.Paragraph>
@@ -899,29 +901,37 @@ function MyAppsTab(): ReactNode {
             },
             {
               title: '操作',
-              width: 130,
-              render: (_, r) =>
-                r.reviewStatus !== 'pending' ? (
-                  <Button
-                    size="small"
-                    type="primary"
-                    onClick={async () => {
-                      try {
-                        await api(`/api/apps/${r.id}/submit-review`, { method: 'POST' });
-                        message.success('已提交审核');
-                        void qc.invalidateQueries({ queryKey: ['my-apps'] });
-                      } catch (err) {
-                        message.error(err instanceof Error ? err.message : '提交失败');
-                      }
-                    }}
-                  >
-                    提交审核
+              width: 200,
+              render: (_, r) => (
+                <Space size="small" wrap>
+                  <Button size="small" onClick={() => setEnvApp(r)}>
+                    环境变量
                   </Button>
-                ) : null,
+                  {r.reviewStatus !== 'pending' ? (
+                    <Button
+                      size="small"
+                      type="primary"
+                      onClick={async () => {
+                        try {
+                          await api(`/api/apps/${r.id}/submit-review`, { method: 'POST' });
+                          message.success('已提交审核');
+                          void qc.invalidateQueries({ queryKey: ['my-apps'] });
+                        } catch (err) {
+                          message.error(err instanceof Error ? err.message : '提交失败');
+                        }
+                      }}
+                    >
+                      提交审核
+                    </Button>
+                  ) : null}
+                </Space>
+              ),
             },
           ]}
         />
       </Card>
+
+      <AppEnvModal appId={envApp?.id ?? ''} appName={envApp?.id ?? ''} open={envApp != null} onClose={() => setEnvApp(null)} />
     </Space>
   );
 }

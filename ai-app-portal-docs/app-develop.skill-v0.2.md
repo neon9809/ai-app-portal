@@ -1,9 +1,11 @@
 # app-develop.skill.md
 
 > AI应用门户（ai-app-portal）应用开发规范 · 供开发 Agent 使用
-> 版本 v0.2.1（2026-09）· 配套平台 PRD v0.3+
+> 版本 v0.2.2（2026-09）· 配套平台 PRD v0.3+
 >
-> **v0.2.1 状态标注**：HTML 包门户托管已上线（上传即托管生效）；**Python 沙箱运行时与 aap-dev CLI 将随 M4（生态）上线**——可先按本规范准备包，上传后提示「等待运行时」。统一页面元素（§3.6）与 LLM 自动签发已实装：manifest 声明 `llm` 能力的包，上传即自动配置网关凭据，无需任何手动操作。
+> **v0.2.2 变更**：manifest 新增 `env` 字段（§1.1 环境变量 / 机密声明）——需要 API key 等配置的包不再硬编码，改为 manifest 声明变量名（必填/可选、是否密钥、格式校验、默认值），上传后由归属者/管理员在门户填值（密钥 AES-256-GCM 加密存储、界面只写不读），沙箱启动时自动注入为进程环境变量（`os.environ` 直接读）。§3.4 `aap.http.fetch` 支持 `headers` 自定义请求头并透传上游状态码（鉴权 API 场景）。§五 硬性约束与 §七 自检清单同步。
+>
+> **v0.2.1 状态标注**：HTML 包门户托管已上线（上传即托管生效）；Python 沙箱运行时（invoked / persistent）已实装。统一页面元素（§3.6）与 LLM 自动签发已实装：manifest 声明 `llm` 能力的包，上传即自动配置网关凭据，无需任何手动操作。
 >
 > **v0.2 变更**：新增 §3.5 日志规范（开发/运行日志统一收口 portal）、§3.6 统一页面元素（返回个人中心/退出登录按钮）、§八 本地调试沙箱（aap-dev）；§五 硬性约束与 §七 自检清单同步。
 
@@ -38,6 +40,10 @@
   "network": [                       // 出站域名白名单（无需联网则留空数组）
     "api.example-data.com"
   ],
+  "env": {                           // 环境变量/机密声明（v0.2.2，见 §1.1；无需配置则省略）
+    "ABUSEIPDB_API_KEY": { "required": true, "secret": true, "pattern": "^[a-f0-9]{80}$", "description": "AbuseIPDB 密钥" },
+    "MAX_CONCURRENCY": { "required": false, "default": "4", "description": "并发上限" }
+  },
   "route": "stock-summary"           // 仅 persistent：门户内的路由前缀 /app/stock-summary/
 }
 ```
@@ -46,6 +52,31 @@
 1. `capabilities` 和 `network` 是**审批依据**——写了什么，管理员就按什么审；上线后想改白名单 = 重新提审。
 2. 不声明的能力**调用会直接报错**。宁少勿多，按需申请。
 3. `runtime: "persistent"` 会常驻占用资源，审查更严：没有持续服务需求的（哪怕要调 LLM）一律用 `invoked`。
+
+### 1.1 env——环境变量 / 机密声明（v0.2.2）
+
+需要外部配置（第三方 API key、模型名、阈值……）时，**在 manifest `env` 里声明，不要写死在代码里，更不要自己要求用户把 key 交给你**：
+
+```jsonc
+"env": {
+  "变量名": "描述",                                    // 速记：= required 必填
+  "变量名": { "required": true, "secret": true, "pattern": "^…$", "default": "…", "description": "…" }
+}
+```
+
+| 字段 | 说明 |
+|---|---|
+| `required` | 默认 `true`。必填变量未配置时，平台**拒绝执行/拉起**并明确提示缺哪个 |
+| `secret` | 默认 `false`。`true` = 机密：AES-256-GCM 加密落盘，门户界面只写不读（仅显示尾 4 位提示） |
+| `pattern` | 可选，简单格式校验正则（保存配置时执行；自行带 `^` `$` 锚点） |
+| `default` | 可选，未配置时注入的默认值（**机密变量不允许 default**；值须为字符串） |
+| `description` | 展示在配置界面，告诉填写者这是什么 |
+
+**行为与纪律**：
+- 值由**归属者/管理员**上传后在门户「环境变量」里填（用户中心·我的应用 / 管理后台·应用管理都有入口）；沙箱每次启动时注入为进程环境变量，代码里直接 `os.environ["变量名"]` 读。
+- persistent 应用修改配置后会自动重启进程（下次访问生效）；invoked 天然每次生效。
+- **保留名不可声明**：`AAP_*`、`PORT`、`PATH`、`HOME`、`HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`、`PYTHON*`、`SSL_CERT_*`、`SANDBOX_*`、`NODE_OPTIONS` 等（平台注入面，声明即上传失败）。
+- 单包最多 16 个变量；值长度 ≤ 8192 字符；日志纪律同样适用——**不要把环境变量值打进 `aap.log`**。
 
 ---
 
@@ -149,12 +180,19 @@ files = aap.storage.list(prefix="uploads/")
 
 ```python
 resp = aap.http.fetch("https://api.example-data.com/v1/quote?code=600519")
-# resp: {"status": 200, "body": ...}
+# resp: {"status": 上游状态码, "body": 上游响应文本（≤500KB）}
+
+# 需要鉴权的 API：headers 传自定义请求头（密钥从 os.environ 取，不要硬编码）
+resp = aap.http.fetch(
+    "https://api.example-data.com/v2/check",
+    headers={"Key": os.environ["EXAMPLE_API_KEY"], "Accept": "application/json"},
+)
 ```
 
 - 域名必须**逐条写在 manifest `network`**，未声明域名直接被代理拒绝
 - 执行点在平台代理侧，代码里无法绕过（也没有 socket / os.system 可用）
-- 无需自己处理 TLS/代理细节，fetch 直给结果
+- 仅支持 GET；`headers` 中的逐跳头（Host/Connection/Content-Length 等）会被平台剥除
+- 无需自己处理 TLS/代理细节，fetch 直给结果（平台侧拒绝以异常抛出，上游错误码经 `resp["status"]` 判断）
 
 ### 3.5 `aap.log` — 日志（平台统一收口，v0.2 新增）
 
@@ -267,6 +305,7 @@ if __name__ == "__main__":
 8. **用户数据边界**：`db`/`storage` 按包隔离；如需按「门户用户」隔离数据，键名自行带用户标识（persistent 下平台注入请求头含用户身份，invoked 下 input 里有调用者字段）。
 9. **日志纪律**（v0.2）：只用 `aap.log`/标准 logging，**禁 `print()`**；级别语义按 §3.5；脱敏与限量是硬要求，审核会抽查运行记录。
 10. **统一元素纪律**（v0.2）：persistent 应用不得遮挡门户注入的「返回个人中心/退出登录」按钮，不得自建登录/登出入口（§3.6）。
+11. **配置纪律**（v0.2.2）：外部配置（第三方 API key、阈值等）一律走 manifest `env` 声明 + 门户「环境变量」填值注入（§1.1）；不得硬编码密钥（见第 7 条），不得绕过平台向使用者索要密钥，不得声明平台保留变量名。
 
 ## 六、交付与上架流程
 
@@ -290,6 +329,7 @@ if __name__ == "__main__":
 - [ ] 只用了标准库 + 预置框架；没有任何 pip 依赖
 - [ ] 没有自建网络出口；fetch 的域名全部在 manifest `network` 里
 - [ ] 没有硬编码任何密钥/令牌
+- [ ] **需要外部配置的项已声明在 manifest `env`（§1.1）：必填/可选、是否密钥、格式校验划分正确；代码经 `os.environ` 读取；没有把值打进日志**
 - [ ] **日志全部走 `aap.log`/logging，没有 `print()`；级别使用符合 §3.5 语义；敏感信息已脱敏；高频循环没有逐条 DEBUG**
 - [ ] **persistent：右上角已留白，未遮挡门户统一按钮；没有自建登录/登出入口**
 - [ ] 长任务拆分或加进度说明（invoked 有超时）

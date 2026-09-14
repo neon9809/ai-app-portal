@@ -1,11 +1,12 @@
 ---
 name: app-develop
 description: "开发 ai-app-portal（AI应用门户）时用：架构决策与路径反代经验。"
-version: 2.2.0
+version: 2.3.0
 ---
 
 # ai-app-portal（AI应用门户）开发指南
 
+> v2.3.0 变更：新增 §9.5「应用环境变量 / 机密（G6）」——manifest.env 声明 + 加密存储 + 沙箱启动注入；与 app-develop 规范 v0.2.2 §1.1 配套。
 > v2.2.0 变更：新增 §十「实现状态快照（M1–M3 交付）」；§三 身份头更名 X-AAP-* 并写明密钥来源。
 > v2.1.0 变更：新增 §九「沙箱日志收口与调试沙箱」，与 app-develop 规范 v0.2（§3.5 日志 / §3.6 统一元素 / §八 aap-dev）配套。
 
@@ -79,7 +80,7 @@ PoW 登录 proof-of-work、登录失败计数、IP 封禁（累犯时长倍增�
 
 用户上传 **`.neon-aap`**（ai-app-portal 缩写命名）（ZIP：manifest.json + 静态 HTML 或 Python `mod.py`），遵循本技能出入参规范。**可见性三态：私有（自用）/ 审核中 / 公开（管理员审核后全员可用）**；管理员面板内看码/试运行/通过或驳回。
 
-- manifest 能力声明：`capabilities`（llm/db/storage）+ `network`（**出站域名白名单**）+ `runtime`（**invoked 按调用 | persistent 持久服务**）。审核页照单审批；改白名单 = 重新审核
+- manifest 能力声明：`capabilities`（llm/db/storage）+ `network`（**出站域名白名单**）+ `runtime`（**invoked 按调用 | persistent 持久服务**）+ `env`（环境变量/机密声明，§9.5）。审核页照单审批；改白名单 = 重新审核
 - HTML 包：iframe sandbox + CSP，禁同源 cookie；门户 shell 嵌入
 - Python 包：**沙箱子进程**（CPU/内存受限；进程自身无网络）。invoked = 每请求新进程跑完即毁；persistent = 长驻进程声明路由前缀提供网页/HTTP API，**被 B 域反代纳管**（限流/审计/健康检查/崩溃重启/空闲回收照常），常驻内存上限更严
 - **网络出口 = 平台出站代理**：逐请求核对 manifest 域名白名单放行——**白名单执行点在代理不在沙箱**（防 DNS rebinding/直连 IP 绕过）
@@ -125,6 +126,20 @@ office-tool 后台丑且交互差是已知痛点；新面板七条要求：① �
 
 - `aap` 对象接口面（`llm` / `db` / `storage` / `http` / `log`）以 app-develop 规范 §三 为准，**开发期即冻结**；新增能力必须走规范升版 + manifest 能力字段同步 + 审核页展示同步，不允许运行时动态扩面。
 - 实装顺序：W0（本节）定契约 → M4 实装 `packages/aap-sdk`；接口冻结后 M2/M3 的 LLM 网关计量、配额预检对 SDK 透明（SDK 只见 `aap.llm.chat` 语义）。
+
+### 9.5 应用环境变量 / 机密（G6，v2.3 新增；与 app-develop 规范 v0.2.2 §1.1 配套）
+
+包需要外部配置（第三方 API key 等）时的平台侧机制，**密钥零落地进包**：
+
+- **声明**：manifest `env`（`parseEnvSpec`，`gateway/staticApp.ts`）：变量名 → `{required(默认 true), secret, pattern, default, description}`；支持「"名": "描述"」速记。保留名黑名单（`AAP_*` 前缀、`PORT`、`PATH`、`HTTP_PROXY` 族、`PYTHON*`、`SSL_CERT_*`、`SANDBOX_*`、`NODE_OPTIONS`）——防劫持平台注入面（AAP_TOKEN 身份归因 / egress 代理 / Python 运行时）；上限 16 个；非法声明 = 上传失败。
+- **存储**：`app_env_vars` 表（appId+name 主键，FK cascade），值一律 `encryptSecret()`（AES-256-GCM + data/master.key，复用 urlSecret 管线）落盘。**secret 永不回明文**：GET 只回 `configured` + 尾 4 位 hint；非 secret 回明文便于编辑。
+- **配置 API**（`routes/appsRun.ts`，归属者或管理员；`GET/PUT /api/apps/:id/env`）：PUT 逐变量语义——`""` = 清除，pattern 保存时校验；审计 `app.env.set` 只记变量名不记值。
+- **注入**：`lib/sandbox.ts` 的 `baseEnv()` 统一注入（invoked/persistent 同路径），包声明值放在平台键之后（保留名已禁声明，无覆盖面）；未配置的非机密变量注入声明 `default`。`lib/appEnv.ts` 出 `envValues` / `missingRequiredEnv`。
+- **必填强校验**：invoked 执行前（`/api/apps/:id/run` → 400 ENV_MISSING 列缺谁）；persistent 拉起前（`gateway/proxy.ts` → 503 错误页指引配置）。
+- **配置变更生效**：invoked 天然下次生效；persistent 在 PUT 成功后 `stopPersistentFor()` 杀进程，下次访问以新环境重拉。
+- **入口**：管理后台·应用管理（每包应用「环境变量」按钮）与用户中心·我的应用（同款弹窗 `components/AppEnvModal.tsx` 共用）；上传预解析 `package/preview` 回 `env` 摘要提示待配密钥。
+- **配套 egress 扩展（与 §3.4 接口面变更同步）**：`/api/aap/egress` 接受 `headers`（≤16 个、名 `^[A-Za-z0-9-]{1,64}$`、值 ≤4KB；Host/Connection/Content-Length/Proxy-* 等逐跳与托管头剥除——鉴权头可转发，流控/代理语义不可改写）；runner `aap.http.fetch(url, timeout, headers)` 回 `{"status": 上游状态码, "body": 文本}`。
+- **runner serve 注入修复**：persistent 的 mod.py 顶层阻塞在 `app.run()`，原「执行后 inject」永不执行 → 路由内 NameError；已改为执行前挂 `builtins.aap`（回归测试：appEnv.test.ts persistent 用例，模块顶层即引用 aap）。
 
 
 ## 十、实现状态快照（v2.2，2026-09）
