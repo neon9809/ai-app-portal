@@ -836,16 +836,36 @@ function UsersRegTab(): ReactNode {
               title: '状态',
               width: 90,
               render: (_, r) =>
-                r.status === 'active' ? <Tag color="green">正常</Tag> : r.status === 'disabled' ? <Tag color="red">已禁用</Tag> : <Tag>注销中</Tag>,
+                r.status === 'active' ? (
+                  <Tag color="green">正常</Tag>
+                ) : r.status === 'disabled' ? (
+                  <Tag color="red">已禁用</Tag>
+                ) : r.status === 'pending_approval' ? (
+                  <Tag color="orange">待批准</Tag>
+                ) : (
+                  <Tag>注销中</Tag>
+                ),
             },
             {
               title: '操作',
               width: 220,
               render: (_, r) => (
                 <Space size="small">
-                  {r.status !== 'disabled' ? (
+                  {r.status === 'pending_approval' ? (
                     <Popconfirm
-                      title={`禁用「${r.username}」？`}
+                      title={`批准「${r.name}」？`}
+                      description="批准后该 OIDC 账号即可登录。"
+                      onConfirm={async () => {
+                        await api(`/api/admin/users/${r.id}`, { method: 'PUT', json: { status: 'active' } });
+                        message.success('已批准');
+                        void reload();
+                      }}
+                    >
+                      <Button size="small" type="primary">批准</Button>
+                    </Popconfirm>
+                  ) : r.status !== 'disabled' ? (
+                    <Popconfirm
+                      title={`禁用「${r.username ?? r.name}」？`}
                       description="该用户所有会话将被踢下线。"
                       onConfirm={async () => {
                         await api(`/api/admin/users/${r.id}`, { method: 'PUT', json: { status: 'disabled' } });
@@ -871,7 +891,7 @@ function UsersRegTab(): ReactNode {
                     size="small"
                     onClick={async () => {
                       const r2 = await api<{ password: string | null }>(`/api/admin/users/${r.id}/reset-password`, { method: 'POST', json: {} });
-                      setCreated({ username: r.username ?? '', password: r2.password ?? '' });
+                      setCreated({ username: r.username ?? r.name, password: r2.password ?? '' });
                     }}
                   >
                     重置密码

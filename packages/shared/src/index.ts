@@ -22,7 +22,7 @@ export interface ApiErrorBody {
 
 export type UserKind = 'local' | 'oidc';
 export type UserRole = 'admin' | 'user';
-export type UserStatus = 'active' | 'disabled' | 'deletion_pending';
+export type UserStatus = 'active' | 'disabled' | 'deletion_pending' | 'pending_approval';
 export type AuthState = 'password_ok' | 'mfa_pending' | 'full';
 
 /** 门户自身用户（不含任何凭据字段，凭据不下发） */
