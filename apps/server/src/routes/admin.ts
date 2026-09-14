@@ -4,14 +4,16 @@
  */
 import { Router } from 'express';
 import { and, eq, gt, isNull, sql } from 'drizzle-orm';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
+import { AAP_VERSION } from '@aap/shared';
 import { getDb, getSqlite } from '../db/index.js';
-import { apps, inviteCodes, localCredentials, sessions, users } from '../db/schema.js';
+import { apps, inviteCodes, sessions, trustedSigningKeys, users } from '../db/schema.js';
 import { HttpError, h } from '../lib/httpError.js';
 import { requireAdmin } from '../lib/auth.js';
 import { publicUserOf } from './shared.js';
 import { getEmailChannel, outboundMailConfigured } from '../lib/verification.js';
-import { generatePassword, hashPassword } from '../lib/passwords.js';
+import { generatePassword } from '../lib/passwords.js';
+import { writeLocalCredentials } from '../lib/bootstrap.js';
 import { listSettingsForAdmin, updateSettingFromAdmin, SETTING_DEFS, getSetting } from '../lib/settings.js';
 import { audit } from '../lib/audit.js';
 import { createGroup, deleteGroup, groupMemberIds, listGroups, setGroupMembers, updateGroup } from '../lib/groups.js';
@@ -56,10 +58,7 @@ adminRouter.post(
       })
       .run();
     const uid = Number(info.lastInsertRowid);
-    getDb()
-      .insert(localCredentials)
-      .values({ userId: uid, passwordHash: await hashPassword(password), updatedAt: Date.now() })
-      .run();
+    await writeLocalCredentials(uid, password);
     audit(`${req.user!.kind}:${req.user!.id}`, req.clientIp ?? null, 'admin.user.created', { uid, username });
     res.json({ ok: true, id: uid, initialPassword: password });
   }),
@@ -100,10 +99,8 @@ adminRouter.post(
     const body = (req.body ?? {}) as { password?: string };
     const password = String(body.password ?? '') || generatePassword(12);
     if (password.length < 8 || password.length > 128) throw new HttpError(400, 'INVALID_PASSWORD', '密码长度需 8-128 位');
-    getDb()
-      .update(localCredentials)
-      .set({ passwordHash: await hashPassword(password), updatedAt: Date.now() })
-      .where(eq(localCredentials.userId, uid));
+    // upsert：OIDC 用户没有本地凭据行，直接 UPDATE 会静默无效（下发的密码登录不上）
+    await writeLocalCredentials(uid, password);
     getDb().update(users).set({ mustChangePassword: true }).where(eq(users.id, uid)).run();
     getDb().delete(sessions).where(eq(sessions.userId, uid)).run(); // 重置即全端踢下线
     audit(`${req.user!.kind}:${req.user!.id}`, req.clientIp ?? null, 'admin.user.password_reset', { uid });
@@ -289,6 +286,56 @@ adminRouter.post(
   }),
 );
 
+// ---------- 包签名信任公钥（G4，Ed25519 信任链） ----------
+
+adminRouter.get('/admin/signing-keys', h(async (_req, res) => {
+  const keys = getDb().select().from(trustedSigningKeys).orderBy(sql`id`).all();
+  res.json({ keys });
+}));
+
+adminRouter.post('/admin/signing-keys', h(async (req, res) => {
+  const body = (req.body ?? {}) as { name?: string; publicKey?: string };
+  let raw: Buffer;
+  try {
+    raw = Buffer.from(String(body.publicKey ?? ''), 'base64');
+  } catch {
+    throw new HttpError(400, 'INVALID_KEY', '公钥不是合法 base64');
+  }
+  if (raw.length !== 32) throw new HttpError(400, 'INVALID_KEY', 'Ed25519 公钥必须是 32 字节（base64）');
+  const keyId = 'SHA256:' + createHash('sha256').update(raw).digest('hex').slice(0, 16);
+  const dup = getDb()
+    .select({ id: trustedSigningKeys.id })
+    .from(trustedSigningKeys)
+    .where(eq(trustedSigningKeys.keyId, keyId))
+    .get();
+  if (dup) throw new HttpError(409, 'KEY_EXISTS', '该公钥已在信任列表');
+  const info = getDb()
+    .insert(trustedSigningKeys)
+    .values({
+      keyId,
+      name: String(body.name ?? '').trim().slice(0, 64),
+      publicKey: raw.toString('base64'),
+      builtin: false,
+      createdAt: Date.now(),
+    })
+    .run();
+  audit(`${req.user!.kind}:${req.user!.id}`, req.clientIp ?? null, 'signing_key.trusted', { keyId, name: body.name });
+  res.json({ ok: true, id: Number(info.lastInsertRowid), keyId });
+}));
+
+adminRouter.delete('/admin/signing-keys/:id', h(async (req, res) => {
+  const row = getDb()
+    .select()
+    .from(trustedSigningKeys)
+    .where(eq(trustedSigningKeys.id, Number(req.params.id)))
+    .get();
+  if (!row) throw new HttpError(404, 'KEY_NOT_FOUND', '公钥不存在');
+  if (row.builtin) throw new HttpError(400, 'BUILTIN_KEY', '内置信任公钥不可删除（可通过移除 AAP_OFFICIAL_SIGN_PUBKEY 环境变量并重建数据）');
+  getDb().delete(trustedSigningKeys).where(eq(trustedSigningKeys.id, row.id)).run();
+  audit(`${req.user!.kind}:${req.user!.id}`, req.clientIp ?? null, 'signing_key.removed', { keyId: row.keyId });
+  res.json({ ok: true });
+}));
+
 // ---------- 首配向导总览（E2-② checklist 状态自动检测） ----------
 
 adminRouter.get(
@@ -314,6 +361,9 @@ adminRouter.get(
 
     res.json({
       version: getSqlite().prepare('SELECT 1').get() ? 'ok' : 'db-down',
+      // 服务版本与运行时长仅管理员可见（匿名 /api/health 已收敛为仅 ok）
+      releaseVersion: AAP_VERSION,
+      uptimeSec: Math.round(process.uptime()),
       checklist: {
         adminPasswordChanged: admins.length > 0,
         adminMfaEnabled: Boolean(me?.mfaEnabled),

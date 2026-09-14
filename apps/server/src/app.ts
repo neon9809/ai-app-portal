@@ -33,7 +33,7 @@ import { adminLlmRouter } from './routes/adminLlm.js';
 import { adminBillingRouter } from './routes/adminBilling.js';
 import { gatewayRouter } from './gateway/proxy.js';
 import { acmeChallengeResponse } from './gateway/tls.js';
-import { getSettingBool } from './lib/settings.js';
+import { getSettingBool, getSetting } from './lib/settings.js';
 import { HttpError, toBody } from './lib/httpError.js';
 
 
@@ -56,13 +56,17 @@ export function createApp(cfg: AapConfig = config): Express {
   // 会话装载（cookie → sessions 表 → req.user）
   app.use(sessionMiddleware);
 
-  // /api 下的 JSON body 与 CSRF Origin 校验；/app 代理路径不经过这里（W5 起独立挂载）
-  // .neon-aap 包上传需要更大的 JSON 体积（仅此路径）
-  app.use('/api/admin/apps/package', express.json({ limit: '15mb' }));
-  app.use('/api/apps/submit', express.json({ limit: '15mb' }));
+  // /api 下的 JSON body 与 CSRF Origin 校验；/app 代理路径不经过这里（W5 起独立挂载）。
+  // 大包体路径（.neon-aap 上传）不在全局解析：由路由内在鉴权之后用 15mb 解析器处理，
+  // 避免匿名 15MB JSON 解析 DoS 面（渗透测试排除项之一）
+  const LARGE_BODY_PATHS = new Set(['/api/admin/apps/package', '/api/apps/submit']);
+  app.use('/api', (req, res, next) => {
+    const p = (req.originalUrl ?? req.url).split('?')[0]!;
+    if (LARGE_BODY_PATHS.has(p)) return next();
+    express.json({ limit: '1mb' })(req, res, next);
+  });
 
   app.use('/api', csrfOriginCheck);
-  app.use('/api', express.json({ limit: '1mb' }));
 
   // ACME HTTP-01 挑战应答（80/HTTP 端口直达本服务或反代转发均可）
   app.get('/.well-known/acme-challenge/:token', (req, res) => {
@@ -80,9 +84,13 @@ export function createApp(cfg: AapConfig = config): Express {
     if (getSettingBool('HTTPS_REDIRECT', false) && !exempt) {
       const proto = req.protocol;
       if (proto === 'http') {
-        // 外部经 443 映射访问容器 8443，跳转一律指向标准 443（不带端口）
+        // Host 白名单（P2-11）：跳转目标只认配置域名，不反射请求 Host——
+        // 直达源 IP 场景可被利用做钓鱼/缓存投毒。ACME_DOMAIN 未配置时退回
+        // Host 回显（纯门户模式无已知域名，保持旧行为）。
         const host = (req.headers.host ?? '').replace(/:\d+$/, '');
-        res.redirect(302, `https://${host}${req.originalUrl}`);
+        const domain = (getSetting('ACME_DOMAIN') ?? '').trim().toLowerCase();
+        const targetHost = domain && host.toLowerCase() !== domain ? domain : host;
+        res.redirect(302, `https://${targetHost}${req.originalUrl}`);
         return;
       }
     }

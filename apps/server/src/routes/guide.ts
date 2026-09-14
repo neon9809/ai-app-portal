@@ -1,6 +1,7 @@
 /**
  * 开发指南与平台文档（R2）：
- *  - GET /api/dev/guide   公开：应用开发规范（app-develop skill.md），供一键复制
+ *  - GET /api/dev/guide   登录可见：应用开发规范（app-develop skill.md），供一键复制
+ *    （skill.md 含沙箱模型/能力声明/审核流程等侦察材料，不再对匿名开放——P2-12）
  *  - GET /api/dev/docs    仅管理员：平台使用说明（README / 内部实现约定）
  * 文件查找顺序：包内 assets（Docker 镜像）→ 仓库 ai-app-portal-docs（开发态）。
  */
@@ -8,7 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Router } from 'express';
-import { requireAdmin } from '../lib/auth.js';
+import { requireAdmin, requireAuth } from '../lib/auth.js';
 
 const PKG_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -51,7 +52,7 @@ function readDoc(file: string): string | null {
   }
 }
 
-guideRouter.get('/dev/guide', (_req, res) => {
+guideRouter.get('/dev/guide', requireAuth, (_req, res) => {
   const skillMd = readDoc(SKILL_FILE);
   if (!skillMd) {
     res.status(404).json({ error: { code: 'GUIDE_NOT_FOUND', message: '开发指南文件未随部署包提供' } });

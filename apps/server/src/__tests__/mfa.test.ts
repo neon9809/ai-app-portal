@@ -146,9 +146,37 @@ describe('W4 MFA（TOTP + 状态机 + 恢复码 + 步升）', () => {
     expect(((await replay.json()) as { error: { code: string } }).error.code).toBe('TOTP_REPLAYED');
   });
 
+  it('TOTP 错猜节流：同一会话错猜 ≥5 次会话作废；重新登录不受影响', async () => {
+    const { username, secret } = await setupUserWithTotp();
+    const login = await jsonPost('/api/auth/login', { username, password: 'password123' });
+    const cookie = cookieOf(login);
+
+    // 前 4 次普通失败；第 5 次触发会话作废
+    for (let i = 0; i < 4; i++) {
+      const bad = await jsonPost('/api/auth/mfa/login/totp', { token: '000000' }, cookie);
+      expect(bad.status).toBe(400);
+    }
+    const fifth = await jsonPost('/api/auth/mfa/login/totp', { token: '000000' }, cookie);
+    expect(fifth.status).toBe(400);
+    expect(((await fifth.json()) as { error: { code: string } }).error.code).toBe('MFA_TOO_MANY_ATTEMPTS');
+
+    // 会话已删除（防持密码会话在线穷举第二因子）
+    const me = await fetch(`${base}/api/auth/me`, { headers: { cookie } });
+    expect(me.status).toBe(401);
+
+    // 重新登录走完整流程不受影响
+    const okCookie = await fullLogin(username, secret);
+    const me2 = await fetch(`${base}/api/auth/me`, { headers: { cookie: okCookie } });
+    expect(me2.status).toBe(200);
+  });
+
   it('步升认证 + 恢复码一枚一用', async () => {
     const { username, secret, token } = await setupUserWithTotp();
     const cookie = await fullLogin(username, secret);
+
+    // 登录即授予步升窗口（新语义，强制绑 MFA 依赖它）；清零以模拟陈旧会话
+    const { sessions } = await import('../db/schema.js');
+    getDb().update(sessions).set({ stepUpUntil: null }).run();
 
     // 未步升 → regenerate 被拒
     const noStep = await jsonPost('/api/auth/mfa/recovery/regenerate', {}, cookie);

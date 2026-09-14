@@ -268,6 +268,76 @@ describe('W3 找回密码（防枚举）', () => {
     });
     expect(relogin.status).toBe(200);
   });
+
+  it('重置码错猜 ≥5 次即作废：正确码也不通过，重新发码后恢复', async () => {
+    const { writeLocalCredentials } = await import('../lib/bootstrap.js');
+    const info = getDb()
+      .insert((await import('../db/schema.js')).users)
+      .values({ kind: 'local', username: 'bruteguy', email: 'bruteguy@example.com', name: 'bg', createdAt: Date.now() })
+      .run();
+    await writeLocalCredentials(Number(info.lastInsertRowid), 'originalPassword1');
+
+    const start = await fetch(`${base}/api/auth/forgot/start`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: base },
+      body: JSON.stringify({ email: 'bruteguy@example.com', powToken: await solvePow() }),
+    });
+    expect(start.status).toBe(200);
+    const code = lastCodeFromLog();
+
+    const wrongGuess = async (): Promise<{ status: number; code: string }> => {
+      const r = await fetch(`${base}/api/auth/forgot/verify`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', origin: base },
+        body: JSON.stringify({ email: 'bruteguy@example.com', code: '000000', newPassword: 'whatever123' }),
+      });
+      const b = (await r.json()) as { error?: { code?: string } };
+      return { status: r.status, code: b.error?.code ?? '' };
+    };
+
+    // 前 4 次错猜 → 普通 CODE_MISMATCH（码仍有效）
+    for (let i = 0; i < 4; i++) {
+      expect(await wrongGuess()).toMatchObject({ status: 400, code: 'CODE_MISMATCH' });
+    }
+    // 第 5 次 → 作废该邮箱全部待用重置码（防在线爆破）
+    expect(await wrongGuess()).toMatchObject({ status: 400, code: 'CODE_TOO_MANY_ATTEMPTS' });
+    // 作废后正确码也不通过（防「错猜后试真码」路径）
+    const correct = await fetch(`${base}/api/auth/forgot/verify`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: base },
+      body: JSON.stringify({ email: 'bruteguy@example.com', code, newPassword: 'resetPassword789' }),
+    });
+    expect(correct.status).toBe(400);
+
+    // 重新发码（作废时已清空待用码，不受 60s 重发限制）→ 正常重置
+    const start2 = await fetch(`${base}/api/auth/forgot/start`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: base },
+      body: JSON.stringify({ email: 'bruteguy@example.com', powToken: await solvePow() }),
+    });
+    expect(start2.status).toBe(200);
+    const verify2 = await fetch(`${base}/api/auth/forgot/verify`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: base },
+      body: JSON.stringify({ email: 'bruteguy@example.com', code: lastCodeFromLog(), newPassword: 'freshPassword456' }),
+    });
+    expect(verify2.status).toBe(200);
+
+    // 错猜已计入登录失败队列：同 IP 后续登录先被 PoW 门槛拦下（联动 recordFailure 的预期行为）
+    const noPow = await fetch(`${base}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: base },
+      body: JSON.stringify({ username: 'bruteguy', password: 'freshPassword456' }),
+    });
+    expect(noPow.status).toBe(403);
+    expect(((await noPow.json()) as { error: { code: string } }).error.code).toBe('POW_REQUIRED');
+    const relogin = await fetch(`${base}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: base },
+      body: JSON.stringify({ username: 'bruteguy', password: 'freshPassword456', powToken: await solvePow() }),
+    });
+    expect(relogin.status).toBe(200);
+  });
 });
 
 describe('W3 邀请码注册', () => {

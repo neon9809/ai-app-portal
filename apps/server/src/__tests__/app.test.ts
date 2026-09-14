@@ -38,9 +38,10 @@ describe('W1 冒烟', () => {
   it('GET /api/health 探活', async () => {
     const res = await fetch(`${baseUrl}/api/health`);
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { ok: boolean; version: string };
+    const body = (await res.json()) as { ok: boolean; version?: string };
     expect(body.ok).toBe(true);
-    expect(body.version).toBeTruthy();
+    // 信息泄露收敛（P2-12）：version/uptimeSec 仅管理员可见，匿名 health 只回 ok
+    expect(body.version).toBeUndefined();
   });
 
   it('GET /api/portal/bootstrap 返回默认品牌与关闭注册、needsInit=true', async () => {

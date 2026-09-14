@@ -39,3 +39,4 @@ e2e/.run/
 # reference implementation (private, read-only)
 office-tool/
 apps/server/assets/
+*.tsbuildinfo

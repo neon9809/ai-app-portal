@@ -12,7 +12,7 @@ import { Router } from 'express';
 import { and, eq, gt, isNull, lt, ne, sql } from 'drizzle-orm';
 import type { PublicUser, SessionInfo } from '@aap/shared';
 import { getDb } from '../db/index.js';
-import { inviteCodes, localCredentials, registrations, sessions, users, userGroupMembers } from '../db/schema.js';
+import { inviteCodes, localCredentials, registrations, sessions, users, userGroupMembers, verificationCodes } from '../db/schema.js';
 import { HttpError, h } from '../lib/httpError.js';
 import { dummyVerify, hashPassword, randomToken, verifyPassword } from '../lib/passwords.js';
 import { consumePowToken, isBanned, needsPow, recordFailure, recordSuccess } from '../lib/security.js';
@@ -79,10 +79,11 @@ interface PowBody {
   turnstileToken?: string;
 }
 
-/** PoW 网关：always=true 恒要求（注册/找回写入口）；否则仅失败超阈值后要求（登录） */
-function enforcePow(req: Express.Request, body: PowBody, always: boolean): void {
+/** PoW 网关：always=true 恒要求（注册/找回写入口）；否则 IP 或账号任一维度
+ *  失败超阈值后要求（登录；账号维度防跨 IP 分布式撞库） */
+function enforcePow(req: Express.Request, body: PowBody, always: boolean, userKey?: string): void {
   const ip = req.clientIp ?? 'unknown';
-  if (!always && !needsPow(ip)) return;
+  if (!always && !needsPow(ip, userKey)) return;
   if (body.powToken && consumePowToken(body.powToken, ip)) return;
   throw new HttpError(403, 'POW_REQUIRED', '需要完成工作量证明（PoW）', {
     action: 'pow',
@@ -237,40 +238,45 @@ authRouter.post(
       throw new HttpError(400, result.error === 'CODE_MISMATCH' ? 'CODE_MISMATCH' : 'CODE_INVALID', '验证码错误或已过期');
     }
 
-    // 首账号自动 admin（PRD A2）
+    // 首账号自动 admin（PRD A2）；建号/发凭据/消费邀请码/删注册单同一事务——
+    // 邀请码消费带 usedBy IS NULL 条件，防并发双花（两人各持同码均通过 start 校验）
     const promote = adminCount() === 0;
     const now = Date.now();
-    const info = getDb()
-      .insert(users)
-      .values({
-        kind: 'local',
-        username: reg.username,
-        email: reg.email,
-        name: reg.username,
-        role: promote ? 'admin' : 'user',
-        status: 'active',
-        createdAt: now,
-      })
-      .run();
-    const userId = Number(info.lastInsertRowid);
-    // 口令哈希直接搬运（注册 start 时已 scrypt，避免二次计算）
-    getDb()
-      .insert(localCredentials)
-      .values({ userId, passwordHash: reg.passwordHash, updatedAt: now })
-      .run();
-
-    if (reg.inviteCode) {
-      getDb()
-        .update(inviteCodes)
-        .set({ usedBy: userId, usedAt: now })
-        .where(eq(inviteCodes.code, reg.inviteCode))
+    let userId = 0;
+    getDb().transaction(() => {
+      const info = getDb()
+        .insert(users)
+        .values({
+          kind: 'local',
+          username: reg.username,
+          email: reg.email,
+          name: reg.username,
+          role: promote ? 'admin' : 'user',
+          status: 'active',
+          createdAt: now,
+        })
         .run();
-    }
-    getDb().delete(registrations).where(eq(registrations.id, reg.id)).run();
+      userId = Number(info.lastInsertRowid);
+      // 口令哈希直接搬运（注册 start 时已 scrypt，避免二次计算）
+      getDb()
+        .insert(localCredentials)
+        .values({ userId, passwordHash: reg.passwordHash, updatedAt: now })
+        .run();
+
+      if (reg.inviteCode) {
+        const used = getDb()
+          .update(inviteCodes)
+          .set({ usedBy: userId, usedAt: now })
+          .where(and(eq(inviteCodes.code, reg.inviteCode), isNull(inviteCodes.usedBy)))
+          .run();
+        if (used.changes === 0) throw new HttpError(409, 'INVITE_CODE_USED', '邀请码已被使用，请更换邀请码重新注册');
+      }
+      getDb().delete(registrations).where(eq(registrations.id, reg.id)).run();
+    });
 
     audit(`local:${reg.username}`, ip, 'user.register.done', { userId, promoted: promote });
 
-    createSession(res, { id: userId }, { ip, userAgent: req.headers['user-agent'] });
+    createSession(res, { id: userId }, { ip, userAgent: req.headers['user-agent'], grantStepUp: true });
     const user = loadUserById(userId);
     res.json({
       user: publicUserOf(user),
@@ -298,12 +304,12 @@ authRouter.post(
       });
     }
 
-    // 条件 PoW（失败超阈值）
-    enforcePow(req, body, false);
-
     const username = String(body.username ?? '').trim().toLowerCase();
     const password = String(body.password ?? '');
     const subject = `local:${username}`;
+
+    // 条件 PoW：IP 维度或账号维度失败超阈值（账号维度防跨 IP 分布式撞库）
+    enforcePow(req, body, false, subject);
 
     const user = loadUserByUsername(username);
     const hash = user ? getLocalPasswordHash(user.id) : null;
@@ -312,10 +318,9 @@ authRouter.post(
       if (!user) await dummyVerify(password);
       const fail = recordFailure(ip, subject, 'bad-credentials');
       audit(subject, ip, 'login.fail', { reason: 'bad-credentials', failures: fail.failures });
+      // 不回 failures/banned（防攻击者探测同 IP 失败计数与封禁态控制爆破节奏）
       throw new HttpError(401, 'BAD_CREDENTIALS', '用户名或密码错误', {
         ...(needsPow(ip) ? { action: 'pow', challenge: issueChallenge(ip) } : {}),
-        failures: fail.failures,
-        banned: fail.banned,
       });
     }
     if (user.status === 'disabled') {
@@ -330,10 +335,11 @@ authRouter.post(
       disposeCredentialsFile();
     }
 
-    // MFA 状态机：已启用第二因子 → 半登录态（W4 激活验证端点）
+    // MFA 状态机：已启用第二因子 → 半登录态（W4 激活验证端点）；
+    // 登录即授予步升窗口（密码为刚验证因子，强制绑 MFA 可立即进行）
     const mfaEnabled = user.mfaEnabled;
     const authState = mfaEnabled ? 'password_ok' : 'full';
-    createSession(res, { id: user.id }, { ip, userAgent: req.headers['user-agent'], authState });
+    createSession(res, { id: user.id }, { ip, userAgent: req.headers['user-agent'], authState, grantStepUp: true });
     audit(subject, ip, mfaEnabled ? 'login.password_ok' : 'local.login', { userId: user.id });
 
     res.json({
@@ -486,8 +492,14 @@ authRouter.get('/auth/oidc/callback', h(async (req, res) => {
       res.redirect(302, '/login?error=account_disabled');
       return;
     }
+    if (row!.status === 'pending_approval') {
+      // 待批准账号重复登录：不下发会话（会话装载器会即刻作废 pending 会话），干净回到待批提示
+      audit(`oidc:${profile.subject}`, ip, 'user.oidc.pending_approval_retry', { userId: row!.id });
+      res.redirect(302, '/login?error=oidc_pending');
+      return;
+    }
     recordSuccess(ip, `oidc:${profile.subject}`);
-    createSession(res, { id: row!.id }, { ip, userAgent: req.headers['user-agent'], authState: 'full' });
+    createSession(res, { id: row!.id }, { ip, userAgent: req.headers['user-agent'], authState: 'full', grantStepUp: true });
     audit(`oidc:${profile.subject}`, ip, 'oidc.login', { userId: row!.id });
     res.redirect(302, '/');
   } catch (err) {
@@ -501,6 +513,30 @@ authRouter.get('/auth/oidc/callback', h(async (req, res) => {
 }));
 
 // ---------- 找回密码 ----------
+
+/**
+ * 重置码错猜计数（单进程语义，与会话/限流桶一致）：同一邮箱 10 分钟窗口内
+ * 错猜 ≥5 次即作废其全部待用重置码（此后正确码也无法通过，须重新获取）；
+ * 同时接入 recordFailure → 复用登录的 IP 自动封禁（累犯倍增）。
+ * 6 位码 10^6 空间 × 每码 5 次尝试 × 每日发码上限，爆破在数学上不可行。
+ */
+const RESET_FAIL_LIMIT = 5;
+const RESET_FAIL_WINDOW_MS = 10 * 60_000;
+const resetFails = new Map<string, { n: number; first: number }>();
+
+function recordResetCodeFail(email: string): number {
+  const now = Date.now();
+  if (resetFails.size > 10_000) {
+    for (const [k, v] of resetFails) if (now - v.first > RESET_FAIL_WINDOW_MS) resetFails.delete(k);
+  }
+  const rec = resetFails.get(email);
+  if (!rec || now - rec.first > RESET_FAIL_WINDOW_MS) {
+    resetFails.set(email, { n: 1, first: now });
+    return 1;
+  }
+  rec.n += 1;
+  return rec.n;
+}
 
 authRouter.post(
   '/auth/forgot/start',
@@ -517,6 +553,7 @@ authRouter.post(
     const user = getDb().select({ id: users.id }).from(users).where(eq(users.email, email)).get();
     if (user) {
       await issueCode('email', email, 'reset', ip);
+      resetFails.delete(email); // 新码 = 全新尝试额度
     }
     res.json({ ok: true });
   }),
@@ -537,8 +574,30 @@ authRouter.post(
     // 用户不存在时也走一次码校验（时序一致）；实际不会有有效码
     const result = verifyCode('email', email, 'reset', String(body.code ?? '').trim());
     if (!user || !result.ok) {
+      if (!result.ok) {
+        const fails = recordResetCodeFail(email);
+        if (fails >= RESET_FAIL_LIMIT) {
+          // 错猜超限：作废该邮箱全部待用重置码（防在线爆破）
+          getDb()
+            .delete(verificationCodes)
+            .where(
+              and(
+                eq(verificationCodes.channel, 'email'),
+                eq(verificationCodes.target, email),
+                eq(verificationCodes.purpose, 'reset'),
+                isNull(verificationCodes.consumedAt),
+              ),
+            )
+            .run();
+          audit(`reset:${email}`, ip, 'auth.reset.code.invalidated', { fails });
+          throw new HttpError(400, 'CODE_TOO_MANY_ATTEMPTS', '验证码错误次数过多，请重新获取', { invalidated: true });
+        }
+        // 错猜计入登录失败队列（超阈值触发 PoW / IP 自动封禁）
+        recordFailure(ip, `reset:${email}`, 'reset-code-mismatch');
+      }
       throw new HttpError(400, result.ok ? 'RESET_FAILED' : result.error, '重置失败：验证码错误或已过期');
     }
+    resetFails.delete(email);
 
     await writeLocalCredentials(user.id, newPassword);
     getDb().update(users).set({ mustChangePassword: false }).where(eq(users.id, user.id)).run();

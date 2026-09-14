@@ -7,7 +7,8 @@ import { eq } from 'drizzle-orm';
 import type { AuthenticationResponseJSON, RegistrationResponseJSON } from '@simplewebauthn/server';
 import type { SessionInfo } from '@aap/shared';
 import { getDb } from '../db/index.js';
-import { users } from '../db/schema.js';
+import { sessions, users } from '../db/schema.js';
+import type { SessionUser } from '../types.js';
 import { HttpError, h } from '../lib/httpError.js';
 import { requireAuth, requireStepUp } from '../lib/auth.js';
 import { createSession, markStepUp, stepUpTtlSec, upgradeSessionToFull } from '../lib/session.js';
@@ -47,17 +48,54 @@ function requireTotpBound(userId: number): void {
   if (!totpConfirmed(userId)) throw new HttpError(400, 'TOTP_NOT_ENROLLED', 'TOTP 未绑定');
 }
 
+// ---------- TOTP 错猜节流 ----------
+// 6 位码 10^6 空间，无节流时持密码会话可在线穷举绕过第二因子：
+// 同一会话 10 分钟窗口内错猜 ≥5 次 → 会话作废，须重新走完整登录。
+
+const TOTP_FAIL_LIMIT = 5;
+const TOTP_FAIL_WINDOW_MS = 10 * 60_000;
+const totpFails = new Map<string, { n: number; first: number }>();
+
+function recordTotpFail(sessionId: string): number {
+  const now = Date.now();
+  if (totpFails.size > 10_000) {
+    for (const [k, v] of totpFails) if (now - v.first > TOTP_FAIL_WINDOW_MS) totpFails.delete(k);
+  }
+  const rec = totpFails.get(sessionId);
+  if (!rec || now - rec.first > TOTP_FAIL_WINDOW_MS) {
+    totpFails.set(sessionId, { n: 1, first: now });
+    return 1;
+  }
+  rec.n += 1;
+  return rec.n;
+}
+
+async function verifyTotpGuarded(req: Request, u: SessionUser, token: string): Promise<void> {
+  try {
+    await verifyTotpForLogin(u.id, token, req.clientIp ?? null);
+  } catch (err) {
+    const fails = recordTotpFail(u.sessionId);
+    if (fails >= TOTP_FAIL_LIMIT) {
+      getDb().delete(sessions).where(eq(sessions.tokenHash, u.sessionId)).run();
+      audit(`user:${u.id}`, req.clientIp ?? null, 'mfa.totp.session_invalidated', { fails });
+      throw new HttpError(400, 'MFA_TOO_MANY_ATTEMPTS', '验证码错误次数过多，会话已作废，请重新登录', { relogin: true });
+    }
+    throw err;
+  }
+  totpFails.delete(u.sessionId);
+}
+
 function loadUserRow(userId: number) {
   const row = getDb().select().from(users).where(eq(users.id, userId)).get();
   if (!row) throw new HttpError(404, 'USER_NOT_FOUND', '用户不存在');
   return row;
 }
 
-// ---------- TOTP 绑定管理（完整登录态） ----------
+// ---------- TOTP 绑定管理（完整登录态 + 步升：防被劫持会话静默绑定新因子） ----------
 
 mfaRouter.post(
   '/auth/mfa/totp/enroll',
-  requireAuth,
+  requireStepUp,
   h(async (req, res) => {
     const u = req.user!;
     const { secret, otpauthUri } = enrollTotp(u.id, getSetting('SITE_NAME') || 'AI应用门户', u.username ?? u.name);
@@ -67,7 +105,7 @@ mfaRouter.post(
 
 mfaRouter.post(
   '/auth/mfa/totp/confirm',
-  requireAuth,
+  requireStepUp,
   h(async (req, res) => {
     const u = req.user!;
     const { token } = (req.body ?? {}) as { token?: string };
@@ -122,7 +160,7 @@ mfaRouter.post(
     const u = req.user!;
     if (u.authState !== 'password_ok') throw new HttpError(400, 'INVALID_STATE', '当前会话无需 MFA 验证');
     const { token } = (req.body ?? {}) as { token?: string };
-    await verifyTotpForLogin(u.id, String(token ?? ''), req.clientIp ?? null);
+    await verifyTotpGuarded(req, u, String(token ?? ''));
     upgradeSessionToFull(u.sessionId);
     u.authState = 'full';
     const row = loadUserRow(u.id);
@@ -180,7 +218,7 @@ mfaRouter.post(
 
 mfaRouter.post(
   '/auth/mfa/passkey/register-options',
-  requireAuth,
+  requireStepUp,
   h(async (req, res) => {
     const u = req.user!;
     const options = await passkeyRegisterOptions(req, u.id, u.username ?? u.name);
@@ -190,7 +228,7 @@ mfaRouter.post(
 
 mfaRouter.post(
   '/auth/mfa/passkey/register-verify',
-  requireAuth,
+  requireStepUp,
   h(async (req, res) => {
     const u = req.user!;
     const { nickname, response } = (req.body ?? {}) as { nickname?: string; response?: RegistrationResponseJSON };
@@ -238,7 +276,7 @@ mfaRouter.post(
     const row = getDb().select().from(users).where(eq(users.id, result.userId)).get();
     if (!row || row.status !== 'active') throw new HttpError(403, 'ACCOUNT_DISABLED', '账号不可用');
     const ip = req.clientIp ?? null;
-    createSession(res, { id: row.id }, { ip, userAgent: req.headers['user-agent'], authState: 'full' });
+    createSession(res, { id: row.id }, { ip, userAgent: req.headers['user-agent'], authState: 'full', grantStepUp: true });
     audit(`user:${row.id}`, ip, 'login.passkey', { credentialId: result.credentialId });
     const info: SessionInfo & { mfaRequired: boolean } = {
       user: publicUserOf(row),
@@ -261,7 +299,7 @@ mfaRouter.post(
     const u = req.user!;
     requireTotpBound(u.id);
     const { token } = (req.body ?? {}) as { token?: string };
-    await verifyTotpForLogin(u.id, String(token ?? ''), req.clientIp ?? null);
+    await verifyTotpGuarded(req, u, String(token ?? ''));
     const until = markStepUp(u.sessionId);
     audit(`user:${u.id}`, req.clientIp ?? null, 'auth.stepup', { via: 'totp' });
     res.json({ stepUpUntil: until, ttlSec: stepUpTtlSec() });

@@ -1,9 +1,9 @@
 /**
- * 开发指南（R2）：所有用户可见。
+ * 开发指南（R2）：登录用户可见（含沙箱模型/审核流程等，不再对匿名开放——P2-12）。
  *  - 「应用开发规范」：app-develop skill.md 全文 + 一键复制（开发 Agent 的输入契约）
  *  - 「平台说明」：仅管理员可见（README + 平台实现约定）
  */
-import { Button, Card, Tabs, Typography, message } from 'antd';
+import { Alert, Button, Card, Tabs, Typography, message } from 'antd';
 import { CopyOutlined } from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
@@ -60,7 +60,12 @@ function DocViewer({ content }: { content: string }): ReactNode {
 
 export function GuidePage() {
   const { me } = useSession();
-  const guide = useQuery({ queryKey: ['dev-guide'], queryFn: () => api<GuideResponse>('/api/dev/guide'), staleTime: 300_000 });
+  const guide = useQuery({
+    queryKey: ['dev-guide'],
+    queryFn: () => api<GuideResponse>('/api/dev/guide'),
+    enabled: Boolean(me),
+    staleTime: 300_000,
+  });
   const isAdmin = me?.user.role === 'admin';
   const docs = useQuery({
     queryKey: ['dev-docs'],
@@ -68,6 +73,15 @@ export function GuidePage() {
     enabled: isAdmin,
     staleTime: 300_000,
   });
+
+  if (!me) {
+    return (
+      <div style={{ maxWidth: 960, margin: '0 auto' }}>
+        <Typography.Title level={4}>开发指南</Typography.Title>
+        <Alert type="info" showIcon message="开发指南仅登录用户可见，请先登录。" />
+      </div>
+    );
+  }
 
   return (
     <div style={{ maxWidth: 960, margin: '0 auto' }}>

@@ -6,6 +6,7 @@
  * 白名单执行点在平台代理侧，沙箱进程无法绕过（防 DNS rebinding/直连 IP）。
  */
 import { Router, type Request, type Response, type NextFunction } from 'express';
+import dns from 'node:dns';
 import net from 'node:net';
 import { eq } from 'drizzle-orm';
 import { getDb } from '../db/index.js';
@@ -82,7 +83,9 @@ aapRouter.post(
     if (typeof idPayload === 'string' && typeof idSig === 'string') {
       const secret = getSetting('AAP_SIGN_SECRET');
       if (secret) {
-        const v = verifyIdentity(idPayload, idSig, secret, token.appId);
+        // allowReplay：invoked 沙箱在一次运行内多次调用复用同一环境身份；
+        // 重放防护由面向外部的网关侧验签承担
+        const v = verifyIdentity(idPayload, idSig, secret, token.appId, { allowReplay: true });
         if (v.ok) userId = Number(v.payload.uid) || null;
       }
     }
@@ -159,6 +162,46 @@ function isBlockedIpHost(hostname: string): boolean {
   return false;
 }
 
+/** 私网/保留段 IP 判定（IPv4 + IPv6）。对 DNS 解析结果逐条复核，防
+ *  `127.0.0.1.nip.io` 类域名经白名单解析到内网（已实测 SSRF 利用路径）。 */
+export function isPrivateIp(ip: string): boolean {
+  if (ip.includes(':')) {
+    const lower = ip.toLowerCase();
+    if (lower === '::' || lower === '::1') return true;
+    if (lower.startsWith('::ffff:')) return isPrivateIp(lower.slice(7)); // v4 映射
+    // fc00::/7 ULA、fe80::/10 链路本地、2001:db8::/32 文档段
+    const first = parseInt(lower.split(':')[0] ?? 'ffff', 16);
+    if ((first & 0xfe00) === 0xfc00) return true;
+    if ((first & 0xffc0) === 0xfe80) return true;
+    if (first === 0x2001 && (lower.startsWith('2001:db8:') || lower.startsWith('2001:db8::'))) return true;
+    return false;
+  }
+  const parts = ip.split('.').map(Number);
+  if (parts.length !== 4 || parts.some((p) => !Number.isInteger(p) || p < 0 || p > 255)) return true; // 非法格式按拒绝处理
+  const [a, b] = parts as [number, number, number, number];
+  if (a === 0 || a === 10 || a === 127) return true; // 本网络/私网/环回
+  if (a === 169 && b === 254) return true; // 链路本地（云元数据 169.254.169.254）
+  if (a === 172 && b >= 16 && b <= 31) return true; // 私网
+  if (a === 192 && b === 168) return true; // 私网
+  if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT
+  if (a === 192 && b === 0) return true; // 192.0.0.0/24、192.0.2.0/24
+  if (a === 198 && (b === 18 || b === 19)) return true; // 基准测试段
+  if (a >= 224) return true; // 组播/保留/广播
+  return false;
+}
+
+/** 解析域名全部 A/AAAA 记录；失败返回 null（按拒绝处理） */
+function resolveHostIps(hostname: string): Promise<string[] | null> {
+  return new Promise((resolve) => {
+    dns.lookup(hostname, { all: true }, (err, addrs) => {
+      if (err || !addrs || addrs.length === 0) resolve(null);
+      else resolve(addrs.map((a) => a.address));
+    });
+  });
+}
+
+const MAX_EGRESS_HOPS = 5;
+
 aapRouter.post(
   '/egress',
   h(async (req: Request, res: Response) => {
@@ -184,21 +227,50 @@ aapRouter.post(
         /* ignore */
       }
     }
-    if (!hostAllowed(parsed.hostname, network)) {
-      throw new HttpError(403, 'EGRESS_DENIED', `域名 ${parsed.hostname} 不在该应用 manifest network 白名单内`);
-    }
-    if (isBlockedIpHost(parsed.hostname)) {
-      throw new HttpError(403, 'EGRESS_DENIED', '禁止直连 IP/内网地址');
-    }
 
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 15_000);
     try {
-      const up = await fetch(url, { method: 'GET', signal: ctrl.signal, redirect: 'follow' });
-      const text = (await up.text()).slice(0, 2 * 1024 * 1024);
-      res.json({ status: up.status, body: text.slice(0, 500_000) });
+      // 白名单与 IP 黑名单逐跳校验：redirect 用 manual 手动跟进，
+      // 防白名单域名经 302 跳转内网/平台自身（SSRF 绕过）
+      let current = parsed;
+      for (let hop = 0; ; hop++) {
+        if (hop > MAX_EGRESS_HOPS) {
+          throw new HttpError(502, 'EGRESS_REDIRECT_LOOP', '出站重定向次数超限');
+        }
+        if (current.protocol !== 'http:' && current.protocol !== 'https:') {
+          throw new HttpError(400, 'INVALID_URL', '仅支持 http/https 出站');
+        }
+        if (isBlockedIpHost(current.hostname)) {
+          throw new HttpError(403, 'EGRESS_DENIED', '禁止直连 IP/内网地址');
+        }
+        if (!hostAllowed(current.hostname, network)) {
+          throw new HttpError(403, 'EGRESS_DENIED', `域名 ${current.hostname} 不在该应用 manifest network 白名单内`);
+        }
+        // 解析后 IP 复核：白名单域名若指向内网/保留地址（nip.io 类 DNS 绕过）
+        // 一律拦截；对全部 A/AAAA 记录判定，任一命中即拒
+        if (!net.isIP(current.hostname)) {
+          const ips = await resolveHostIps(current.hostname);
+          if (!ips || ips.some((ip) => isPrivateIp(ip))) {
+            throw new HttpError(403, 'EGRESS_DENIED', `域名 ${current.hostname} 解析到内网/保留地址，已拦截`);
+          }
+        }
+        const up = await fetch(current.toString(), { method: 'GET', signal: ctrl.signal, redirect: 'manual' });
+        const loc = up.status >= 300 && up.status < 400 ? up.headers.get('location') : null;
+        if (loc) {
+          up.body?.cancel();
+          current = new URL(loc, current);
+          continue;
+        }
+        const text = (await up.text()).slice(0, 2 * 1024 * 1024);
+        res.json({ status: up.status, body: text.slice(0, 500_000) });
+        return;
+      }
     } catch (err) {
-      throw new HttpError(504, 'EGRESS_FAILED', `出站请求失败：${err instanceof Error ? err.message : 'unknown'}`);
+      if (err instanceof HttpError) throw err;
+      // 错误详情（DNS/连接错误信息可作内网探测 oracle）只进服务端日志，不回传调用者
+      console.error('[aap] egress failed:', err instanceof Error ? err.message : err);
+      throw new HttpError(504, 'EGRESS_FAILED', '出站请求失败');
     } finally {
       clearTimeout(timer);
     }

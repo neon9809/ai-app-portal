@@ -33,6 +33,9 @@ import {
 export const adminBillingRouter = Router();
 
 adminBillingRouter.use('/admin/billing', requireAdmin);
+// 显式守卫：/admin/redeem/* 不在上方前缀内，此前仅靠 adminRouter 先挂载的
+// 挂载顺序偶然保护（重构挪序即变成未鉴权的造码/列码接口，渗透测试 P2-10）
+adminBillingRouter.use('/admin/redeem', requireAdmin);
 
 // ---------- 套餐 ----------
 

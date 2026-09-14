@@ -385,6 +385,54 @@ describe('P 可见性新模型（restricted/private/分组）', () => {
   });
 });
 
+describe('P 可见性矩阵（login 态）', () => {
+  it('login 应用：匿名 403 需要登录；登录用户 200；卡片墙 accessible=true', async () => {
+    const base = `http://127.0.0.1:${gwPort}`;
+    // 匿名 → 403 引导登录
+    const anon = await fetch(`${base}/app/priv/`);
+    expect(anon.status).toBe(403);
+    expect(await anon.text()).toContain('需要登录');
+
+    // 登录普通用户 → 可访问（入口 HTML 正常返回）
+    const login = await fetch(`${base}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: base },
+      body: JSON.stringify({ username: 'freeuser', password: 'free-password' }),
+    });
+    const cookie = cookieOf(login);
+    const entry = await fetch(`${base}/app/priv/`, { headers: { cookie } });
+    expect(entry.status).toBe(200);
+    expect(await entry.text()).toContain('<base href="/app/priv/">');
+
+    // 卡片墙：登录用户 accessible=true（回归：canAccess 曾缺 login 分支恒 false）
+    const wall = await fetch(`${base}/api/apps`, { headers: { cookie } });
+    const wallBody = (await wall.json()) as { apps: Array<{ id: string; accessible: boolean }> };
+    expect(wallBody.apps.find((a) => a.id === 'priv')?.accessible).toBe(true);
+  });
+
+  it('login 应用：登录用户 WS 正常升级（匿名此前已被独立用例覆盖）', async () => {
+    const base = `http://127.0.0.1:${gwPort}`;
+    const login = await fetch(`${base}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: base },
+      body: JSON.stringify({ username: 'freeuser', password: 'free-password' }),
+    });
+    const cookie = cookieOf(login);
+    const ws = new WebSocket(`ws://127.0.0.1:${gwPort}/app/priv/echo`, { headers: { cookie } });
+    const received = await new Promise<string>((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error('timeout')), 5000);
+      ws.on('open', () => ws.send('matrix'));
+      ws.on('message', (data) => {
+        clearTimeout(t);
+        resolve(data.toString());
+      });
+      ws.on('error', reject);
+    });
+    expect(received).toBe('echo:matrix');
+    ws.close();
+  });
+});
+
 describe('W5 限流（令牌桶双维度）', () => {
   it('超过每 IP 上限 → 429（放最后，避免污染其他用例）', async () => {
     setSetting('RATE_IP_PER_MIN', '3');

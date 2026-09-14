@@ -5,13 +5,18 @@
  * 依赖系统 python3（执行沙箱）。
  */
 import { execSync } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import AdmZip from 'adm-zip';
+import { WebSocket } from 'ws';
 import { setupTestDb, teardownTestDb } from './testkit.js';
 import { closeDb, getDb } from '../db/index.js';
 import { seedSettings } from '../lib/settings.js';
 import { createApp } from '../app.js';
 import { loadConfig } from '../config/index.js';
+import { handleUpgrade } from '../gateway/wsproxy.js';
+import { stopAllPersistent } from '../lib/sandbox.js';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
@@ -45,6 +50,7 @@ beforeAll(async () => {
 
   const cfg = { ...loadConfig({}), webDist: null };
   gw = createApp(cfg).listen(0, '127.0.0.1');
+  gw.on('upgrade', handleUpgrade);
   await new Promise<void>((r) => gw!.once('listening', r));
   base = `http://127.0.0.1:${(gw.address() as AddressInfo).port}`;
 
@@ -65,6 +71,7 @@ beforeAll(async () => {
 });
 
 afterAll(() => {
+  stopAllPersistent();
   gw.close();
   closeDb();
   teardownTestDb(dir);
@@ -195,5 +202,262 @@ def handle(input, aap):
     const apps = (await anon.json()) as { apps: Array<{ id: string; accessible: boolean }> };
     const t = apps.apps.find((a) => a.id === 'hellotool');
     expect(t?.accessible).toBe(true);
+  });
+
+  it('网络守卫：包内绕过平台代理直连 TCP → 被拒绝', async () => {
+    const dataBase64 = zipPkg({
+      'manifest.json': JSON.stringify({
+        name: 'sneakytool', display_name: 'Sneaky', version: '1.0.0',
+        type: 'python', entry: 'mod.py', runtime: 'invoked', capabilities: [], network: [],
+      }),
+      'mod.py': `
+import socket
+
+def handle(input, aap):
+    s = socket.socket()
+    s.settimeout(2)
+    s.connect(("127.0.0.1", 1))
+    return {"ok": True}
+`,
+    });
+    const submit = await fetch(`${base}/api/apps/submit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: base, cookie: adminCookie },
+      body: JSON.stringify({ filename: 'sneakytool.neon-aap', dataBase64 }),
+    });
+    expect(submit.status).toBe(200);
+
+    const run = await fetch(`${base}/api/apps/sneakytool/run`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: base, cookie: adminCookie },
+      body: JSON.stringify({ input: {} }),
+    });
+    const b = (await run.json()) as { status: string; error: string };
+    expect(b.status).toBe('error');
+    expect(b.error).toContain('守卫');
+  });
+
+  it('persistent：HTTP 反代可达 + WebSocket 经网关透传回声（stdlib WS 回声服务）', async () => {
+    const PERSIST_MOD = `
+import base64
+import hashlib
+import os
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+
+class Handler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, *args):
+        pass
+
+    def do_GET(self):
+        key = self.headers.get("Sec-WebSocket-Key")
+        if key:
+            accept = base64.b64encode(hashlib.sha1((key + GUID).encode()).digest()).decode()
+            self.send_response(101)
+            self.send_header("Upgrade", "websocket")
+            self.send_header("Connection", "Upgrade")
+            self.send_header("Sec-WebSocket-Accept", accept)
+            self.end_headers()
+            try:
+                while True:
+                    hdr = self.rfile.read(2)
+                    if len(hdr) < 2:
+                        break
+                    opcode = hdr[0] & 0x0F
+                    length = hdr[1] & 0x7F
+                    if length == 126:
+                        length = int.from_bytes(self.rfile.read(2), "big")
+                    elif length == 127:
+                        length = int.from_bytes(self.rfile.read(8), "big")
+                    if hdr[1] & 0x80:
+                        mask = self.rfile.read(4)
+                        data = bytes(b ^ mask[i % 4] for i, b in enumerate(self.rfile.read(length)))
+                    else:
+                        data = self.rfile.read(length)
+                    self.wfile.write(bytes([0x80 | opcode, len(data)]) + data)
+                    self.wfile.flush()
+            except Exception:
+                pass
+            return
+        body = b'{"hello": "persistent"}'
+        self.send_response(200)
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+HTTPServer(("127.0.0.1", int(os.environ["PORT"])), Handler).serve_forever()
+`;
+    const dataBase64 = zipPkg({
+      'manifest.json': JSON.stringify({
+        name: 'persistapp', display_name: 'Persist', version: '1.0.0',
+        type: 'python', entry: 'mod.py', runtime: 'persistent', capabilities: [], network: [],
+      }),
+      'mod.py': PERSIST_MOD,
+    });
+    const submit = await fetch(`${base}/api/apps/submit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: base, cookie: adminCookie },
+      body: JSON.stringify({ filename: 'persistapp.neon-aap', dataBase64 }),
+    });
+    expect(submit.status).toBe(200);
+
+    const gwPort = (gw.address() as AddressInfo).port;
+
+    // HTTP：首次请求触发 ensurePersistent 拉起沙箱（最多 ~10s），JSON 经反代原样返回
+    let httpOk = false;
+    let httpBody = '';
+    for (let i = 0; i < 30; i++) {
+      const res = await fetch(`${base}/app/persistapp/`, { headers: { cookie: adminCookie } });
+      const text = await res.text();
+      if (res.status === 200 && text.includes('"hello"')) {
+        httpOk = true;
+        httpBody = text;
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    expect(httpOk).toBe(true);
+    expect(httpBody).toContain('"persistent"');
+
+    // WS：经网关 upgrade 透传到沙箱端口并回声
+    const ws = new WebSocket(`ws://127.0.0.1:${gwPort}/app/persistapp/ws`, { headers: { cookie: adminCookie } });
+    const received = await new Promise<string>((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error('ws timeout')), 8000);
+      ws.on('open', () => ws.send('persist'));
+      ws.on('message', (d) => {
+        clearTimeout(t);
+        resolve(d.toString());
+      });
+      ws.on('error', reject);
+    });
+    expect(received).toBe('persist');
+    ws.close();
+  });
+});
+
+describe('M4 安全回归（鉴权与归属校验）', () => {
+  it('匿名访问 run / submit / mine → 401（修复前为 500 或带副作用崩溃）', async () => {
+    const run = await fetch(`${base}/api/apps/anyapp/run`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: base },
+      body: JSON.stringify({ input: {} }),
+    });
+    expect(run.status).toBe(401);
+    const submit = await fetch(`${base}/api/apps/submit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: base },
+      body: JSON.stringify({ filename: 'x.neon-aap', dataBase64: 'AAAA' }),
+    });
+    expect(submit.status).toBe(401);
+    const mine = await fetch(`${base}/api/apps/mine`);
+    expect(mine.status).toBe(401);
+  });
+
+  it('非归属者同名提交 → 409，且原应用文件不被破坏（回归：曾先删后鉴权）', async () => {
+    const { writeLocalCredentials } = await import('../lib/bootstrap.js');
+    const { users } = await import('../db/schema.js');
+    const { appSiteDir } = await import('../gateway/staticApp.js');
+
+    // 归属者（管理员）上传 victimapp，文件带原始标记
+    const victimPkg = zipPkg({
+      'manifest.json': JSON.stringify({
+        name: 'victimapp', display_name: 'Victim', version: '1.0.0',
+        type: 'python', entry: 'mod.py', runtime: 'invoked', capabilities: [], network: [],
+      }),
+      'mod.py': 'VICTIM_ORIGINAL_MARKER = 1\n',
+    });
+    const up = await fetch(`${base}/api/apps/submit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: base, cookie: adminCookie },
+      body: JSON.stringify({ filename: 'victimapp.neon-aap', dataBase64: victimPkg }),
+    });
+    expect(up.status).toBe(200);
+
+    // 攻击者（普通用户）同名提交恶意包
+    const u = getDb().insert(users)
+      .values({ kind: 'local', username: 'mallory', name: 'm', role: 'user', createdAt: Date.now() })
+      .run();
+    await writeLocalCredentials(Number(u.lastInsertRowid), 'mallory-password');
+    const login = await fetch(`${base}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: base },
+      body: JSON.stringify({ username: 'mallory', password: 'mallory-password' }),
+    });
+    const malloryCookie = cookieOf(login);
+
+    const evilPkg = zipPkg({
+      'manifest.json': JSON.stringify({
+        name: 'victimapp', display_name: 'Evil', version: '9.9.9',
+        type: 'python', entry: 'mod.py', runtime: 'invoked', capabilities: [], network: [],
+      }),
+      'mod.py': 'EVIL_MARKER = 1\n',
+    });
+    const evil = await fetch(`${base}/api/apps/submit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: base, cookie: malloryCookie },
+      body: JSON.stringify({ filename: 'evil.neon-aap', dataBase64: evilPkg }),
+    });
+    expect(evil.status).toBe(409);
+    expect(((await evil.json()) as { error: { code: string } }).error.code).toBe('APP_EXISTS');
+
+    // 归属校验失败 → 不允许触碰正式目录（修复前 rmSync 先行会替换成 EVIL_MARKER）
+    const onDisk = fs.readFileSync(path.join(appSiteDir('victimapp'), 'mod.py'), 'utf8');
+    expect(onDisk).toContain('VICTIM_ORIGINAL_MARKER');
+    expect(onDisk).not.toContain('EVIL_MARKER');
+  });
+
+  it('账号回归：管理员重置 → 凭返回密码登录 → 强制改密设为同值 → 重登成功', async () => {
+    const { writeLocalCredentials } = await import('../lib/bootstrap.js');
+    const { users } = await import('../db/schema.js');
+    const u = getDb()
+      .insert(users)
+      .values({ kind: 'local', username: 'resetflow', name: 'rf', role: 'user', createdAt: Date.now() })
+      .run();
+    const uid = Number(u.lastInsertRowid);
+    await writeLocalCredentials(uid, 'first-password');
+
+    // 管理员重置（系统生成新密码）。回归点：曾因 UPDATE 缺 .run() 未持久化，
+    // 返回的密码登录必然失败
+    const reset = await fetch(`${base}/api/admin/users/${uid}/reset-password`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: base, cookie: adminCookie },
+      body: JSON.stringify({}),
+    });
+    expect(reset.status).toBe(200);
+    const { password: P0 } = (await reset.json()) as { password: string };
+    expect(P0).toBeTruthy();
+
+    const login = await fetch(`${base}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: base },
+      body: JSON.stringify({ username: 'resetflow', password: P0 }),
+    });
+    expect(login.status).toBe(200);
+    const loginBody = (await login.json()) as { mustChangePassword: boolean };
+    expect(loginBody.mustChangePassword).toBe(true);
+    const cookie = cookieOf(login);
+
+    // 强制改密：新密码 = 初始密码（用户实际踩坑场景：同值提交）
+    const change = await fetch(`${base}/api/auth/change-password`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: base, cookie },
+      body: JSON.stringify({ currentPassword: P0, newPassword: P0 }),
+    });
+    expect(change.status).toBe(200);
+
+    // 退出后用同值密码重登 → 必须成功
+    const relogin = await fetch(`${base}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: base },
+      body: JSON.stringify({ username: 'resetflow', password: P0 }),
+    });
+    expect(relogin.status).toBe(200);
+    const reloginBody = (await relogin.json()) as { mustChangePassword: boolean };
+    expect(reloginBody.mustChangePassword).toBe(false);
   });
 });

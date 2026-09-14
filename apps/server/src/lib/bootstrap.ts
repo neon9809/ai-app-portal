@@ -6,10 +6,11 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import { config } from '../config/index.js';
 import { getDb } from '../db/index.js';
-import { localCredentials, users } from '../db/schema.js';
+import { localCredentials, trustedSigningKeys, users } from '../db/schema.js';
 import { generatePassword, hashPassword } from './passwords.js';
 import { audit } from './audit.js';
 
@@ -82,6 +83,37 @@ export function disposeCredentialsFile(): void {
   } catch {
     // 删除失败不影响登录
   }
+}
+
+/** 官方签名公钥内置信任（G4）：AAP_OFFICIAL_SIGN_PUBKEY（base64，32 字节 Ed25519 公钥）
+ *  设置时种入信任列表并标记 builtin（设置页/接口不可删）；不设置则跳过。 */
+export function seedOfficialSigningKey(): void {
+  const b64 = process.env.AAP_OFFICIAL_SIGN_PUBKEY?.trim();
+  if (!b64) return;
+  let raw: Buffer;
+  try {
+    raw = Buffer.from(b64, 'base64');
+  } catch {
+    console.error('[bootstrap] AAP_OFFICIAL_SIGN_PUBKEY 不是合法 base64，跳过内置信任');
+    return;
+  }
+  if (raw.length !== 32) {
+    console.error('[bootstrap] AAP_OFFICIAL_SIGN_PUBKEY 必须是 32 字节 Ed25519 公钥（base64），跳过内置信任');
+    return;
+  }
+  const keyId = 'SHA256:' + createHash('sha256').update(raw).digest('hex').slice(0, 16);
+  getDb()
+    .insert(trustedSigningKeys)
+    .values({
+      keyId,
+      name: process.env.AAP_OFFICIAL_SIGNER_NAME?.trim() || '官方发布',
+      publicKey: raw.toString('base64'),
+      builtin: true,
+      createdAt: Date.now(),
+    })
+    .onConflictDoNothing()
+    .run();
+  console.log(`[bootstrap] 官方签名公钥已内置信任: ${keyId}`);
 }
 
 /** 创建/更新本地凭据（注册、改密、引导共用） */

@@ -1,10 +1,10 @@
 import { Router } from 'express';
-import { AAP_VERSION } from '@aap/shared';
 import { getSqlite } from '../db/index.js';
 
 /**
- * 存活与健康探针（Docker HEALTHCHECK / FPK 健康检查 / 管理端仪表卡数据源）。
- * 故意不含敏感信息。
+ * 存活与健康探针（Docker HEALTHCHECK / FPK 健康检查）。
+ * 仅回 ok/存活状态：version 与 uptimeSec 是指纹/重启监控信息，
+ * 已移入管理员总览 /api/admin/overview（信息泄露收敛，渗透测试 P2-12）。
  */
 export const healthRouter = Router();
 
@@ -15,9 +15,5 @@ healthRouter.get('/health', (_req, res) => {
   } catch {
     dbOk = false;
   }
-  res.status(dbOk ? 200 : 503).json({
-    ok: dbOk,
-    version: AAP_VERSION,
-    uptimeSec: Math.round(process.uptime()),
-  });
+  res.status(dbOk ? 200 : 503).json({ ok: dbOk });
 });

@@ -183,9 +183,21 @@ describe('M2 LLM 网关（C1–C6）', () => {
     expect(JSON.parse(body).choices[0].message.content).toBe('pong');
     expect(balanceOf(U1)).toBeLessThan(before);
 
-    const dead = await chat({ model: 'dead-model', messages: [{ role: 'user', content: 'x' }], max_tokens: 10 });
+    const dead = await chat({ model: 'dead-model', messages: [{ role: 'user', content: 'x' }], max_tokens: 10 }, { ...AUTH, ...identityHeaders(U1) });
     expect(dead.status).toBe(502);
     expect(JSON.parse(dead.body).error.type).toBe('ai_app_portal_error');
+  });
+
+  it('失败路径退款：全候选失败（502）不白扣预估成本（测试内无结算循环，退款须来自即时校正）', async () => {
+    grantTokens(U1, 100_000, 'refund', 1);
+    const before = balanceOf(U1);
+    // max_tokens=4096 → 预检曾扣减大额预估；修复前该扣减永久丢失
+    const dead = await chat(
+      { model: 'dead-model', messages: [{ role: 'user', content: 'x' }], max_tokens: 4096 },
+      { ...AUTH, ...identityHeaders(U1) },
+    );
+    expect(dead.status).toBe(502);
+    expect(balanceOf(U1)).toBe(before);
   });
 
   it('流式：SSE 透传 + 末帧 usage 捕获入账', async () => {
@@ -229,12 +241,13 @@ describe('M2 LLM 网关（C1–C6）', () => {
     expect(getDb().select().from(llmBalanceCache).where(eq(llmBalanceCache.userId, U3)).get()?.balance).toBe(1300);
   });
 
-  it('用户归因：无身份头不动用户余额；有身份头按 (kind,uid) 归因扣减', async () => {
+  it('用户归因：无身份头被预检拒绝（防绕过余额闸门）；有身份头按 (kind,uid) 归因扣减', async () => {
     grantTokens(U1, 100_000, 'anon', 1);
     const before = balanceOf(U1);
-    // 无身份头：仍可调用（仅应用级计量），用户余额不动
+    // 无身份头：网关直接 403 拒绝（ATTRIBUTION_REQUIRED），余额与上游均不可及
     const anon = await chat({ model: 'test-model', messages: [{ role: 'user', content: 'hi' }], max_tokens: 10 });
-    expect(anon.status).toBe(200);
+    expect(anon.status).toBe(403);
+    expect(JSON.parse(anon.body).error.code).toBe('ATTRIBUTION_REQUIRED');
     expect(balanceOf(U1)).toBe(before);
     // 带身份头（应用转发）：归因到 U1，余额扣减
     const uid = 510;

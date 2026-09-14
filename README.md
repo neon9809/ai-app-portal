@@ -30,7 +30,7 @@
 ```bash
 pnpm install
 pnpm dev          # server: http://localhost:8080 · web: http://localhost:5173
-pnpm test         # 单元/集成测试（服务端 49 个）
+pnpm test          # 单元/集成测试（服务端 110 个）
 pnpm test:e2e     # Playwright 端到端（自动起真实服务 + mock 上游）
 pnpm typecheck    # 全部类型检查
 ```
@@ -68,8 +68,8 @@ push 到 `main` 或打 `v*` tag 时，GitHub Actions 自动：
 
 - **应用网关**：`/app/<id>/` 路径反代（HTML 改写 / `<base>` / fetch+XHR+script 猴补丁 / 路径穿越防御 / SSE 零缓冲），**WebSocket 透传**（HTTP+HTTPS 双通道），passUser 签名身份注入（X-AAP-Identity）
 - **门户托管应用**：简单 HTML 页直接粘贴接入；上传 `.neon-aap` 包自动校验 manifest 并提取字段；声明 `llm` 能力的包自动签发网关凭据（加密保管，运行时注入）
-- **LLM 网关**：OpenAI 兼容 `/v1/chat/completions`（流式）+ `/v1/models`；多上游按优先级+权重 failover；网关凭据（SHA-256 存储/可吊销/限流）；用户级+应用级计量（append-only 账本）、余额预检 402、预估事后校正
-- **账号与安全**：本地账号+注册（验证码 SMTP/Resend/日志兜底、邀请码、Turnstile）、MFA（TOTP+Passkey）、OIDC 单点登录（PKCE）、登录防爆破+IP 封禁累犯倍增+PoW、步升认证、审计日志
+- **LLM 网关**：OpenAI 兼容 `/v1/chat/completions`（流式）+ `/v1/models`；多上游按优先级+权重 failover；网关凭据（SHA-256 存储/可吊销/限流）；用户级+应用级计量（append-only 账本）、余额预检 402、预估事后校正；**无归因调用默认拒绝**（`LLM_UNATTRIBUTED_POLICY` 可放行）
+- **账号与安全**：本地账号+注册（验证码 SMTP/Resend/日志兜底、邀请码事务化防双花、Turnstile）、MFA（TOTP+Passkey，绑定新因子需步升）、OIDC 单点登录（PKCE）、登录防爆破（IP+账号双维度）+IP 封禁累犯倍增+PoW、步升认证（登录即授窗口）、审计日志、敏感配置 AES-GCM 落盘、HTTPS 启用即挂 HSTS
 - **订阅与计费**：功能订阅套餐（开通即入分组、到期自动降级）、额度充值与**卡券码兑换**（manual 确认渠道，支付渠道 adapter 可扩展）、运营面板（订单确认/排行/成本毛利）
 - **可见性模型**：公开 / 需登录 / 指定分组与账号 / 仅自己（用户自建应用默认私有，门户对他人隐藏）
 - **统一页面元素**：所有托管/代理应用右上角自动注入「应用门户 / 个人中心 / 退出登录」（portal-chrome.js，幂等失败静默）
@@ -79,6 +79,6 @@ push 到 `main` 或打 `v*` tag 时，GitHub Actions 自动：
 - **M1 门户可用** ✅：路径反代（HTTP+WS/SSE）、自动 HTTPS、本地账号+注册、MFA、用户中心、管理后台、Docker/FPK 分发
 - **M2 LLM 网关** ✅：OpenAI 兼容端点（含流式）、多上游路由与 failover、网关凭据、用户级+应用级计量与预检、OIDC SSO
 - **M3 计费闭环** ✅：功能订阅×分组可见性、额度充值与卡券码、结算对账+到期降级、运营面板
-- **M4 生态** ◐：Python 沙箱运行时（invoked 全链路 + persistent 拉起/回收/重启）、用户上传默认私有 + 审核流、统一页面元素注入；剩 persistent WS、ed25519 官方包签名、aap-dev 完整版
+- **M4 生态** ◐：Python 沙箱运行时（invoked 全链路 + persistent 拉起/回收/重启 + **HTTP/WS 反代透传**）、用户上传默认私有 + 审核流（审核门禁进 canAccess，未审新版对非归属者不可见）、**包签名信任链（Ed25519，官方签名免审）**、**用户包 iframe 沙箱（PRD G1：opaque origin，禁同源 cookie 面）**、统一页面元素注入（沙箱外壳层）；**沙箱内 LLM 调用已闭环归因到调用者**（环境/请求身份 → 平台代理验签 → 网关预检扣费）。剩 aap-dev 完整版。**沙箱隔离现状**：SDK 出网的受控通道为平台 egress 代理（manifest 白名单 + **解析后 IP 私网段复核**逐跳校验），runner 内置 Python 层出站守卫（直连仅放行平台地址，`AAP_NET_GUARD=0` 关闭），容器内可设 `SANDBOX_UID/GID` 降权运行（compose 已注记推荐开启）；进程级禁网、CPU/内存限额与 ns/cgroups 硬隔离待补，第三方包须先经审核再放开可见性
 
 详见 `ai-app-portal-docs/ai-app-portal-PRD-v0.3.1.md`；开发者文档见 `docs/DEVELOPMENT.md`。

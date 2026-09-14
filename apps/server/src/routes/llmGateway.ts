@@ -11,7 +11,7 @@ import { Router, type Request, type Response, type NextFunction } from 'express'
 
 import { randomBytes } from 'node:crypto';
 import { Readable } from 'node:stream';
-import { getSetting } from '../lib/settings.js';
+import { getSetting, getSettingInt } from '../lib/settings.js';
 import { HttpError } from '../lib/httpError.js';
 import { h } from '../lib/httpError.js';
 import {
@@ -182,7 +182,8 @@ llmGatewayRouter.post(
           continue;
         }
         if (!up.ok) {
-          // 客户端类错误（参数/key 无效）：原样透传，不切换
+          // 客户端类错误（参数/key 无效）：原样透传，不切换；本次无实际用量，
+          // 预检扣减的预估成本全额退回（否则错误请求会白扣用户余额）
           const text = await up.text();
           recordUsage({
             userId,
@@ -195,6 +196,7 @@ llmGatewayRouter.post(
             status: 'error',
             requestId,
           });
+          settleEstimate(userId, estimatedCost, 0);
           res.status(up.status).type('application/json').set('x-aap-request-id', requestId).send(text);
           return;
         }
@@ -204,7 +206,7 @@ llmGatewayRouter.post(
             userId,
             appId: token.appId,
             model,
-            multiplier,
+            multiplier: candidate.multiplier, // 按实际服务的候选计费（各上游倍率可不同）
             started,
             requestId,
             estimatedCost,
@@ -225,12 +227,12 @@ llmGatewayRouter.post(
           model,
           promptTokens,
           completionTokens,
-          multiplier,
+          multiplier: candidate.multiplier,
           latencyMs: Date.now() - started,
           status: 'ok',
           requestId,
         });
-        settleEstimate(userId, estimatedCost, Math.ceil(((promptTokens + completionTokens) * multiplier) / 100));
+        settleEstimate(userId, estimatedCost, Math.ceil(((promptTokens + completionTokens) * candidate.multiplier) / 100));
         res.status(200).set('x-aap-request-id', requestId).json(json);
         return;
       } catch (err) {
@@ -251,6 +253,8 @@ llmGatewayRouter.post(
       status: 'error',
       requestId,
     });
+    // 全部候选失败：无实际用量，退回预检扣减的预估成本
+    settleEstimate(userId, estimatedCost, 0);
     const { status, body: e } = openaiError(502, 'upstream_error', `所有上游均不可用（最后错误：${lastError}）`);
     res.status(status).set('x-aap-request-id', requestId).json(e);
   }),
@@ -288,26 +292,44 @@ async function streamPassthrough(
     void reader.cancel().catch(() => {});
   });
 
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done || closed) break;
-    res.write(value);
-    // 增量解析 SSE data 行，捕获 usage（通常在最后一个 chunk）
-    carry += dec.decode(value, { stream: true });
-    const lines = carry.split('\n');
-    carry = lines.pop() ?? '';
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed.startsWith('data:')) continue;
-      const payload = trimmed.slice(5).trim();
-      if (payload === '[DONE]') continue;
-      try {
-        const json = JSON.parse(payload) as { usage?: { prompt_tokens?: number; completion_tokens?: number } };
-        if (json.usage) usage = json.usage;
-      } catch {
-        /* 非完整 JSON 行，跳过 */
+  // 流式闲置超时：建连后若连续 N 秒无新字节（上游挂起），主动断开并按已收
+  // usage 结算——避免请求无限占用客户端与网关连接（预估会按实际用量校正）
+  const idleMs = Math.max(5, getSettingInt('LLM_STREAM_IDLE_TIMEOUT', 60)) * 1000;
+  let idleTimer: NodeJS.Timeout | null = setTimeout(() => {
+    void reader.cancel().catch(() => {});
+  }, idleMs);
+  const bumpIdle = (): void => {
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => {
+      void reader.cancel().catch(() => {});
+    }, idleMs);
+  };
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done || closed) break;
+      res.write(value);
+      bumpIdle();
+      // 增量解析 SSE data 行，捕获 usage（通常在最后一个 chunk）
+      carry += dec.decode(value, { stream: true });
+      const lines = carry.split('\n');
+      carry = lines.pop() ?? '';
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith('data:')) continue;
+        const payload = trimmed.slice(5).trim();
+        if (payload === '[DONE]') continue;
+        try {
+          const json = JSON.parse(payload) as { usage?: { prompt_tokens?: number; completion_tokens?: number } };
+          if (json.usage) usage = json.usage;
+        } catch {
+          /* 非完整 JSON 行，跳过 */
+        }
       }
     }
+  } finally {
+    if (idleTimer) clearTimeout(idleTimer);
   }
   res.end();
 

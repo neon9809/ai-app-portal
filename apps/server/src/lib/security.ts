@@ -22,6 +22,7 @@ export function getClientIp(req: Request): string {
 // ---- 惰性预编译语句（等 initDb 完成后再 prepare） ----
 interface Stmts {
   countFailures: Database.Statement;
+  countAccountFailures: Database.Statement;
   insertAttempt: Database.Statement;
   getBan: Database.Statement;
   upsertBan: Database.Statement;
@@ -38,6 +39,7 @@ function S(): Stmts {
     const s = getSqlite();
     stmts = {
       countFailures: s.prepare('SELECT COUNT(*) AS n FROM login_attempts WHERE ip = ? AND success = 0 AND created_at > ?'),
+      countAccountFailures: s.prepare('SELECT COUNT(*) AS n FROM login_attempts WHERE user_key = ? AND success = 0 AND created_at > ?'),
       insertAttempt: s.prepare('INSERT INTO login_attempts(ip, user_key, success, reason, created_at) VALUES (?, ?, ?, ?, ?)'),
       getBan: s.prepare('SELECT * FROM ip_bans WHERE ip = ?'),
       upsertBan: s.prepare(
@@ -63,6 +65,14 @@ interface BanRow {
 export function failuresInWindow(ip: string): number {
   const window = getSettingInt('LOGIN_FAIL_WINDOW', 600);
   const row = S().countFailures.get(ip, Date.now() - window * 1000) as { n: number } | undefined;
+  return row?.n ?? 0;
+}
+
+/** 账号维度失败计数（login_attempts.user_key）：IP 维度对分布式撞库无效，
+ *  同一账号跨 IP 穷举也要进 PoW/封禁语义（终审 P1） */
+export function accountFailuresInWindow(userKey: string): number {
+  const window = getSettingInt('LOGIN_FAIL_WINDOW', 600);
+  const row = S().countAccountFailures.get(userKey, Date.now() - window * 1000) as { n: number } | undefined;
   return row?.n ?? 0;
 }
 
@@ -126,10 +136,13 @@ export function consumePowToken(token: string, ip: string): boolean {
   return true;
 }
 
-/** 某 IP 当前请求是否需要 PoW（失败超阈值即要求） */
-export function needsPow(ip: string): boolean {
+/** 某 IP/账号当前登录是否需要 PoW（任一维度失败超阈值即要求） */
+export function needsPow(ip: string, userKey?: string | null): boolean {
   if (!getSettingBool('POW_ENABLED', true)) return false;
-  return failuresInWindow(ip) >= getSettingInt('LOGIN_FAIL_THRESHOLD', 5);
+  const threshold = getSettingInt('LOGIN_FAIL_THRESHOLD', 5);
+  if (failuresInWindow(ip) >= threshold) return true;
+  if (userKey && accountFailuresInWindow(userKey) >= threshold) return true;
+  return false;
 }
 
 /** 根据 IP 失败次数计算 PoW 难度（前导零位数；保证浏览器可解） */

@@ -219,6 +219,8 @@ export const apps = sqliteTable('apps', {
   reviewStatus: text('review_status').notNull().default('none'),
   reviewNote: text('review_note'),
   submittedAt: integer('submitted_at'),
+  /** 包签名状态（Ed25519 信任链）：verified | untrusted | unsigned | invalid；官方签名免审（G4） */
+  signatureStatus: text('signature_status'),
   inputSchema: text('input_schema'),
   /** 是否向上游注入签名身份头（X-AAP-Identity） */
   passUser: integer('pass_user', { mode: 'boolean' }).notNull().default(false),
@@ -265,6 +267,20 @@ export const appAcl = sqliteTable('app_acl', {
     .references(() => apps.id, { onDelete: 'cascade' }),
   allowGroupIds: text('allow_group_ids').notNull().default('[]'), // JSON number[]
   allowUserIds: text('allow_user_ids').notNull().default('[]'), // JSON number[]
+});
+
+// ---------- 包签名信任链（G4，Ed25519；设计参照 fnos-dashboard 的 ndash 方案） ----------
+
+/** 受信任的签名公钥：key_id 命中 → verified（官方/可信签名者可免审）；builtin 内置不可删 */
+export const trustedSigningKeys = sqliteTable('trusted_signing_keys', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  /** 'SHA256:' + sha256(public_key) 前 16 字节 hex */
+  keyId: text('key_id').notNull().unique(),
+  name: text('name').notNull().default(''),
+  /** base64 的 32 字节 Ed25519 公钥 */
+  publicKey: text('public_key').notNull(),
+  builtin: integer('builtin', { mode: 'boolean' }).notNull().default(false),
+  createdAt: integer('created_at').notNull(),
 });
 
 // ---------- A3：MFA ----------

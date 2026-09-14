@@ -91,6 +91,8 @@ interface Overview {
     appCount: number;
   };
   liveSessions: number;
+  releaseVersion?: string;
+  uptimeSec?: number;
 }
 interface AuditRow {
   id: number;
@@ -114,7 +116,16 @@ function dot(state: string): ReactNode {
 
 // ---------- 通用：分组配置表单（③一句话说明 + 默认值标注；⑦保存即生效） ----------
 
-function SettingsForm({ groups, excludeKeys = [] }: { groups: string[]; excludeKeys?: string[] }): ReactNode {
+function SettingsForm({
+  groups,
+  excludeKeys = [],
+  banners,
+}: {
+  groups: string[];
+  excludeKeys?: string[];
+  /** 按组名渲染在配置项上方的提示块（如 OIDC 回调地址） */
+  banners?: Record<string, ReactNode>;
+}): ReactNode {
   const qc = useQueryClient();
   const settingsQ = useQuery({
     queryKey: ['admin-settings'],
@@ -184,18 +195,21 @@ function SettingsForm({ groups, excludeKeys = [] }: { groups: string[]; excludeK
   }
 
   return (
-    <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-      {ordered.map(([g, items]) =>
-        items.length > 0 ? (
-          <Card key={g} size="small" title={g} extra={<Tag bordered={false} style={{ fontSize: 11 }}>{items.length} 项</Tag>}>
-            {items.map(renderItem)}
-          </Card>
-        ) : null,
-      )}
-      <Button type="primary" loading={saving} onClick={() => void save()}>
-        保存（即时生效）
-      </Button>
-    </Space>
+    <Form form={form} layout="vertical">
+      <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+        {ordered.map(([g, items]) =>
+          items.length > 0 ? (
+            <Card key={g} size="small" title={g} extra={<Tag bordered={false} style={{ fontSize: 11 }}>{items.length} 项</Tag>}>
+              {banners?.[g]}
+              {items.map(renderItem)}
+            </Card>
+          ) : null,
+        )}
+        <Button type="primary" loading={saving} onClick={() => void save()}>
+          保存（即时生效）
+        </Button>
+      </Space>
+    </Form>
   );
 }
 
@@ -399,7 +413,6 @@ export function AdminPage() {
 function OverviewTab({ onShowRail, onGoTab }: { onShowRail: () => void; onGoTab: (tab: string) => void }): ReactNode {
   const qc = useQueryClient();
   const overview = useQuery({ queryKey: ['admin-overview'], queryFn: () => api<Overview>('/api/admin/overview'), refetchInterval: 30_000 });
-  const health = useQuery({ queryKey: ['health'], queryFn: () => api<{ version: string; uptimeSec: number }>('/api/health') });
   const appsQ = useQuery({ queryKey: ['admin-apps'], queryFn: () => api<{ apps: AdminApp[] }>('/api/admin/apps') });
   const auditQ = useQuery({ queryKey: ['admin-audit-recent'], queryFn: () => api<{ logs: AuditRow[] }>('/api/admin/audit?limit=6') });
 
@@ -433,9 +446,9 @@ function OverviewTab({ onShowRail, onGoTab }: { onShowRail: () => void; onGoTab:
         </Card>
         <Card size="small">
           <Descriptions column={1} size="small" title="服务">
-            <Descriptions.Item label="版本">{health.data?.version ?? '—'}</Descriptions.Item>
+            <Descriptions.Item label="版本">{overview.data?.releaseVersion ?? '—'}</Descriptions.Item>
             <Descriptions.Item label="运行时长">
-              {health.data ? `${Math.floor(health.data.uptimeSec / 3600)}h ${Math.floor((health.data.uptimeSec % 3600) / 60)}m` : '—'}
+              {overview.data?.uptimeSec != null ? `${Math.floor(overview.data.uptimeSec / 3600)}h ${Math.floor((overview.data.uptimeSec % 3600) / 60)}m` : '—'}
             </Descriptions.Item>
           </Descriptions>
         </Card>
@@ -960,7 +973,12 @@ function UsersRegTab(): ReactNode {
   );
 }
 
-// ---------- 安全（防爆破/PoW/会话/密钥/Turnstile + 审计日志） ----------
+// ---------- 安全（防爆破/PoW/会话/密钥/Turnstile + OIDC + 审计日志） ----------
+
+/** OIDC 回调地址：以当前访问地址自动生成（与 oidc.ts redirectUri 同语义） */
+function oidcCallbackUrl(): string {
+  return `${window.location.origin}/api/auth/oidc/callback`;
+}
 
 function SecurityTab(): ReactNode {
   const qc = useQueryClient();
@@ -969,6 +987,30 @@ function SecurityTab(): ReactNode {
     <Space direction="vertical" size="middle" style={{ width: '100%' }}>
       <Card size="small" title="安全策略">
         <SettingsForm groups={['安全与限流', '人机验证']} />
+      </Card>
+      <Card size="small" title="OIDC 单点登录">
+        <SettingsForm
+          groups={['OIDC 单点登录']}
+          banners={{
+            'OIDC 单点登录': (
+              <Alert
+                type="info"
+                showIcon
+                message="在 IdP 登记的重定向 URI（回调地址）——一键复制"
+                description={
+                  <Space direction="vertical" size={4}>
+                    <Typography.Text copyable={{ text: oidcCallbackUrl(), tooltips: ['复制回调地址', '已复制'] }} code>
+                      {oidcCallbackUrl()}
+                    </Typography.Text>
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      地址按当前访问的站点自动生成；与 Client ID/Secret 同时配置即启用单点登录，修改后需重启服务生效。
+                    </Typography.Text>
+                  </Space>
+                }
+              />
+            ),
+          }}
+        />
       </Card>
       <Card
         size="small"

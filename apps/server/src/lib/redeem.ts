@@ -1,7 +1,8 @@
 /**
  * 卡券码（充值/会员兑换码）：
  *  - 管理员按批次生成（kind=tokens 指定额度 / kind=membership 绑定套餐；可设有效期）
- *  - 码格式 AAP-XXXX-XXXX-XXXX（去易混淆字符，80bit 随机空间，防爆破）
+ *  - 码格式 AAP-XXXX-XXXX-XXXX（31 字母表去易混淆字符，12 字符 ≈ 59.3bit 随机空间，
+ *    叠加兑换限速 10 次/分，在线爆破不可行）
  *  - 兑换：原子置已用（防并发双花）→ tokens 入账（grant 三触发失效缓存）或会员开通
  *  - 可作废单枚；全事件审计；兑换接口按用户限速防穷举
  */
@@ -168,37 +169,34 @@ export interface RedeemResult {
   planName?: string;
 }
 
-/** 兑换：原子置已用 → tokens 入账（grant，三触发失效缓存）/ 会员开通 */
+/** 兑换：单事务内「原子置已用 → 入账」，入账失败整体回滚（码回到未用态） */
 export function redeem(userId: number, rawCode: string, ip: string | null): RedeemResult {
   const code = normalizeCode(rawCode);
   const db = getDb();
   const row = db.select().from(redeemCodes).where(eq(redeemCodes.code, code)).get() as RedeemCodeRow | undefined;
-  if (!row) throw new HttpError(404, 'CODE_NOT_FOUND', '兑换码不存在，请检查输入');
+  // 不存在与状态异常统一措辞（存在性 oracle 价值低，但避免为枚举者确认码格式有效）
+  if (!row) throw new HttpError(404, 'CODE_NOT_FOUND', '兑换码无效，请检查输入');
   if (row.status === 'used') throw new HttpError(400, 'CODE_USED', '该兑换码已被使用');
   if (row.status === 'disabled') throw new HttpError(400, 'CODE_DISABLED', '该兑换码已作废');
   if (row.expiresAt && row.expiresAt <= Date.now()) throw new HttpError(400, 'CODE_EXPIRED', '该兑换码已过期');
 
-  // 原子消费：仅 unused 状态可置 used（防并发双花）
-  const res = db
-    .update(redeemCodes)
-    .set({ status: 'used', usedBy: userId, usedAt: Date.now() })
-    .where(and(eq(redeemCodes.code, code), eq(redeemCodes.status, 'unused')))
-    .run();
-  if (res.changes === 0) throw new HttpError(400, 'CODE_USED', '该兑换码已被使用');
+  return db.transaction(() => {
+    // 原子消费：仅 unused 状态可置 used（防并发双花）
+    const res = db
+      .update(redeemCodes)
+      .set({ status: 'used', usedBy: userId, usedAt: Date.now() })
+      .where(and(eq(redeemCodes.code, code), eq(redeemCodes.status, 'unused')))
+      .run();
+    if (res.changes === 0) throw new HttpError(400, 'CODE_USED', '该兑换码已被使用');
 
-  try {
     if (row.kind === 'tokens') {
       grantTokens(userId, row.tokens ?? 0, `兑换码 ${code}`, userId);
       audit(`user:${userId}`, ip, 'redeem.tokens', { code, tokens: row.tokens });
-      return { kind: 'tokens', tokens: row.tokens ?? 0 };
+      return { kind: 'tokens' as const, tokens: row.tokens ?? 0 };
     }
     // 会员码：开通/续费套餐（activateMembership 内含赠送额度入账）
     const planName = activateMembership(userId, row.planId!);
     audit(`user:${userId}`, ip, 'redeem.membership', { code, planId: row.planId });
-    return { kind: 'membership', planName };
-  } catch (err) {
-    // 入账失败（如套餐被删）：回滚码状态，避免用户损失
-    db.update(redeemCodes).set({ status: 'unused', usedBy: null, usedAt: null }).where(eq(redeemCodes.code, code)).run();
-    throw err;
-  }
+    return { kind: 'membership' as const, planName };
+  });
 }

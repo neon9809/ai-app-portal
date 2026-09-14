@@ -16,17 +16,18 @@ import { Readable } from 'node:stream';
 import path from 'node:path';
 import express, { Router, type Request, type Response } from 'express';
 import { config } from '../config/index.js';
-import { canAccess, findApp, getUrlSecret, type UrlSecret } from './registry.js';
+import { canAccess, findApp, getUrlSecret, isSlug, type UrlSecret } from './registry.js';
 import { signIdentity } from './identity.js';
 import { allowRequest } from './limiter.js';
 import { getSettingInt } from '../lib/settings.js';
-import { injectChrome, serveHtmlApp } from './staticApp.js';
+import { injectChrome, serveHtmlApp, serveSandboxShell, needsIframeSandbox, stripRawPrefix } from './staticApp.js';
 import { ensurePersistent, touchByPort } from '../lib/sandbox.js';
 import http from 'node:http';
 
 export const gatewayRouter = Router();
 
-// 不转发给上游的请求头
+// 不转发给上游的请求头（x-aap-identity* 也在列：客户端自带的身份头一律剥除，
+// 仅在 passUser 启用时由网关注入重新签名的身份头，防伪造）
 const REQ_SKIP = new Set([
   'host',
   'connection',
@@ -38,6 +39,8 @@ const REQ_SKIP = new Set([
   'origin',
   'referer',
   'x-forwarded-for',
+  'x-aap-identity',
+  'x-aap-identity-sig',
 ]);
 // 不回传给客户端的响应头
 const RESP_STRIP = new Set([
@@ -61,14 +64,19 @@ function decodeSafe(sub: string): string {
   }
 }
 
+/** HTML 转义：错误页插入路由参数/应用名（含用户可控的 display_name）前必须转义（防反射/存储 XSS） */
+function escapeHtml(s: string): string {
+  return String(s).replace(/[&<>"']/g, (c) => (c === '&' ? '&amp;' : c === '<' ? '&lt;' : c === '>' ? '&gt;' : c === '"' ? '&quot;' : '&#39;'));
+}
+
 function htmlError(res: Response, status: number, title: string, detail: string): void {
   res
     .status(status)
     .type('html')
     .send(
-      `<!doctype html><meta charset="utf-8"><title>${title}</title>` +
+      `<!doctype html><meta charset="utf-8"><title>${escapeHtml(title)}</title>` +
         `<body style="font-family:system-ui;display:grid;place-items:center;min-height:80vh">` +
-        `<div style="text-align:center"><h1>${status}</h1><p>${title}</p><p style="color:#888">${detail}</p></div>`,
+        `<div style="text-align:center"><h1>${status}</h1><p>${escapeHtml(title)}</p><p style="color:#888">${escapeHtml(detail)}</p></div>`,
     );
 }
 
@@ -195,6 +203,8 @@ gatewayRouter.all('/app/:id/*', async (req: Request, res: Response) => {
   if (!config.proxyEnabled) return htmlError(res, 404, 'Not Found', '应用网关未启用');
 
   const id = String(req.params.id);
+  // 与 WS 通道（wsproxy 正则）对齐：非法 id 不进 DB 查询，也不回显到错误页
+  if (!isSlug(id)) return htmlError(res, 404, 'Not Found', '应用不存在');
   const app = findApp(id);
   if (!app || !app.enabled) {
     return htmlError(res, 404, '应用不存在', `未找到应用 ${id} 或已被停用`);
@@ -220,17 +230,25 @@ gatewayRouter.all('/app/:id/*', async (req: Request, res: Response) => {
 
   // 门户托管应用（简单 HTML / .neon-aap 包）不走上游
   if (app.kind !== 'upstream') {
+    const sub0 = decodeSafe((req.params[0] as string | undefined) ?? '');
+    // 用户上传包（归属者非管理员）经 iframe 沙箱隔离（PRD G1）：
+    // 外壳层挂统一页面元素；内容只经 /raw/ 通道输出（不直出门户源）
+    const sandboxed = needsIframeSandbox(app);
+    const inRaw = sandboxed && /^raw\/?/.test(sub0);
+    if (sandboxed && !inRaw) return serveSandboxShell(res, app.id, sub0);
+
     if (app.kind === 'package' && app.runtimeMode === 'persistent') {
       // G2 persistent：拉起长驻沙箱并反代（纳入 B 域门禁/限流/审计）
       const port = await ensurePersistent(app.id, manifestEntry(app), () => {
         console.log(`[sandbox] persistent 崩溃重启: ${app.id}`);
       });
       if (!port) return htmlError(res, 503, '应用启动中', '请稍后重试');
-      const sub = decodeSafe((req.params[0] as string | undefined) ?? '');
-      return proxyToSandbox(req, res, port, sub);
+      // passUser：为沙箱逐请求签名注入身份头（persistent 内 LLM 调用按浏览用户归因计费）
+      const identity = app.passUser && user ? signIdentity(user, app.id) : null;
+      return proxyToSandbox(req, res, port, inRaw ? stripRawPrefix(sub0) : sub0, identity);
     }
-    const sub = decodeSafe((req.params[0] as string | undefined) ?? '');
-    return serveHtmlApp(req, res, app, sub);
+    const sub = inRaw ? stripRawPrefix(sub0) : sub0;
+    return serveHtmlApp(req, res, app, sub, inRaw);
   }
 
   const base = (() => {
@@ -353,7 +371,7 @@ gatewayRouter.all('/app/:id/*', async (req: Request, res: Response) => {
 
 // ---------- persistent 沙箱反代（HTTP；WS 由 upgrade 通道类似处理，M4 后续补齐） ----------
 
-function manifestEntry(app: { manifestJson: string | null }): string {
+export function manifestEntry(app: { manifestJson: string | null }): string {
   if (!app.manifestJson) return 'mod.py';
   try {
     const m = JSON.parse(app.manifestJson) as { entry?: string };
@@ -363,20 +381,40 @@ function manifestEntry(app: { manifestJson: string | null }): string {
   }
 }
 
-function proxyToSandbox(req: Request, res: Response, port: number, sub: string): void {
+function proxyToSandbox(
+  req: Request,
+  res: Response,
+  port: number,
+  sub: string,
+  identity: { payload: string; sig: string } | null,
+): void {
   touchPersistentByPort(port);
+  // 沙箱跑的是用户上传代码（不可信）：与 upstream 反代同一张剥离表，
+  // 会话 cookie / 凭据 / 自带身份头一律不下发沙箱；身份头仅由网关
+  // 在 passUser 启用时重新签名注入（persistent 内 LLM 归因用）
   const headers: Record<string, string> = {};
   for (const [k, v] of Object.entries(req.headers)) {
-    if (['host', 'connection', 'content-length', 'transfer-encoding'].includes(k.toLowerCase())) continue;
+    if (REQ_SKIP.has(k.toLowerCase())) continue;
     headers[k] = Array.isArray(v) ? v.join(', ') : (v ?? '');
   }
-  const pathAndQuery = req.originalUrl ?? req.url ?? '/';
+  if (identity) {
+    headers['x-aap-identity'] = identity.payload;
+    headers['x-aap-identity-sig'] = identity.sig;
+  }
+  // 沙箱外壳 raw 通道：剥掉 raw 段，沙箱看到的路径与既往一致（/app/<id>/...）
+  const pathAndQuery = (req.originalUrl ?? req.url ?? '/').replace(
+    /^(\/app\/[^/]+)\/raw(?=\/|\/?\?|$)/,
+    '$1',
+  );
   const up = http.request(
     { hostname: '127.0.0.1', port, path: pathAndQuery, method: req.method, headers },
     (upRes) => {
       res.status(upRes.statusCode ?? 502);
+      // 响应头同一张剥离表：沙箱不得给浏览器种 cookie（cookie tossing 固定会话）
+      // 或覆盖 CSP/XFO 等安全头
       for (const [key, value] of Object.entries(upRes.headers)) {
         if (value === undefined) continue;
+        if (RESP_STRIP.has(key.toLowerCase())) continue;
         if (Array.isArray(value)) res.setHeader(key, value);
         else res.setHeader(key, value);
       }

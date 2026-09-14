@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { setupTestDb, teardownTestDb } from './testkit.js';
 import { closeDb, getDb } from '../db/index.js';
-import { llmBalanceCache, userGroupMembers, userGroups, users } from '../db/schema.js';
+import { llmBalanceCache, topupOrders, userGroupMembers, userGroups, users } from '../db/schema.js';
 import { seedSettings } from '../lib/settings.js';
 import {
   cancelOrder,
@@ -207,5 +207,27 @@ describe('M3 卡券码（兑换）', () => {
       byUserId: 1,
     });
     expect(() => redeem(uid, exp[0]!, null)).toThrow(/过期/);
+  });
+});
+
+describe('M3 计费事务化回归', () => {
+  it('确认到账：入账失败（套餐已删）整体回滚，订单保持 pending、用户状态不变', () => {
+    const before = getDb().select().from(users).where(eq(users.id, userId)).get()!;
+    const order = createOrder(userId, 'membership', { priceFen: 1000, planId: 999999 });
+
+    expect(() => confirmOrder(order.id, 1)).toThrow();
+
+    const afterOrder = getDb()
+      .select()
+      .from(topupOrders)
+      .where(eq(topupOrders.id, order.id))
+      .get();
+    expect(afterOrder?.status).toBe('pending');
+    expect(afterOrder?.paidAt).toBeNull();
+
+    const after = getDb().select().from(users).where(eq(users.id, userId)).get()!;
+    expect(after.membershipPlanId).toBe(before.membershipPlanId);
+    expect(after.membershipExpiresAt).toBe(before.membershipExpiresAt);
+    expect(after.plan).toBe(before.plan);
   });
 });

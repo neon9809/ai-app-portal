@@ -4,6 +4,8 @@
  * 可用 APP_ALLOW_PUBLIC_UPSTREAM 显式放开（高级项）。
  */
 import express, { Router } from 'express';
+import fs from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { getDb } from '../db/index.js';
 import { apps } from '../db/schema.js';
@@ -11,6 +13,7 @@ import { HttpError, h } from '../lib/httpError.js';
 import { requireAdmin } from '../lib/auth.js';
 import { isSlug, listApps, findApp, getAcl, setAcl } from '../gateway/registry.js';
 import { writeHtmlApp, storePackageFiles, validateManifest, appSiteDir } from '../gateway/staticApp.js';
+import { checkPackageSignature, type SignatureCheck, type SignatureObj } from '../lib/signing.js';
 import { ensureAutoProvisionedToken } from '../lib/llm.js';
 import { encryptSecret } from '../lib/cryptoSecrets.js';
 import { getSettingBool } from '../lib/settings.js';
@@ -283,23 +286,31 @@ adminAppsRouter.post(
       throw new HttpError(400, 'INVALID_PACKAGE_EXT', '包文件必须是 .zip / .neon-aap');
     }
 
+    // 临时目录按请求唯一（并发上传互踩防御）；正式目录的覆盖必须等到
+    // 签名校验与同名查重都通过之后（否则 409 时他人/自己的站点已被换掉）
+    const tmpDir = `upload_tmp_${randomBytes(8).toString('hex')}`;
     let manifest: ReturnType<typeof validateManifest>;
+    let signatureCheck: SignatureCheck;
     try {
-      const r = storePackageFiles('_upload_tmp', zipBuf);
+      const r = storePackageFiles(tmpDir, zipBuf);
       manifest = validateManifest(r.manifest);
-      // 校验通过：挪到正式目录（同名包 = 版本更新，直接覆盖，符合「版本更新=重新审核」语义）
-      const fs = await import('node:fs');
-      const from = appSiteDir('_upload_tmp');
+      signatureCheck = checkPackageSignature(r.entries, r.signature as SignatureObj | null);
+      if (signatureCheck.status === 'invalid') {
+        throw new HttpError(400, 'PACKAGE_TAMPERED', `包签名校验失败：${signatureCheck.reason ?? '签名无效'}`);
+      }
+      if (findApp(manifest.name)) {
+        throw new HttpError(409, 'APP_EXISTS', '同名应用已存在（包版本更新请删除后重传，或直接覆盖文件目录）');
+      }
+      // 校验与查重通过：挪到正式目录
+      const from = appSiteDir(tmpDir);
       const to = appSiteDir(manifest.name);
       fs.rmSync(to, { recursive: true, force: true });
       fs.renameSync(from, to);
     } catch (err) {
-      const fs = await import('node:fs');
-      fs.rmSync(appSiteDir('_upload_tmp'), { recursive: true, force: true });
+      fs.rmSync(appSiteDir(tmpDir), { recursive: true, force: true });
+      if (err instanceof HttpError) throw err;
       throw new HttpError(400, 'PACKAGE_INVALID', err instanceof Error ? err.message : '包校验失败');
     }
-
-    if (findApp(manifest.name)) throw new HttpError(409, 'APP_EXISTS', '同名应用已存在（包版本更新请删除后重传，或直接覆盖文件目录）');
     const visibility = body.visibility ?? 'private';
     if (!VISIBILITIES.has(visibility)) throw new HttpError(400, 'INVALID_VISIBILITY', '访问策略非法');
 
@@ -318,6 +329,7 @@ adminAppsRouter.post(
         passUser: body.passUser ?? false,
         upstream: '',
         urlSecretEnc: body.urlSecret ? encryptSecret(body.urlSecret) : null,
+        signatureStatus: signatureCheck.status,
         enabled: isHtml, // python 包等待运行时（M4），先不展示
         createdAt: now,
         updatedAt: now,

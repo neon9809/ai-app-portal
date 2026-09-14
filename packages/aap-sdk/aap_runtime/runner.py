@@ -24,14 +24,41 @@ def _env(key, default=None):
     return os.environ.get(key, default)
 
 
-def _platform(path, payload=None, timeout=60):
-    """平台内部调用（LLM 代理 / 出站代理）。统一携带网关凭据。"""
+def _resolve_identity(explicit=None):
+    """LLM 归因身份（M4 出口标准：调用计入发起用户）。优先级：
+    1. 调用方显式传入 (payload, sig)；
+    2. persistent 场景：当前 flask 请求上门户代理注入的 x-aap-identity*；
+    3. invoked 场景：平台注入的环境变量 AAP_IDENTITY_PAYLOAD/SIG。
+    """
+    if isinstance(explicit, (tuple, list)) and len(explicit) == 2 and explicit[0] and explicit[1]:
+        return explicit[0], explicit[1]
+    try:
+        from flask import request
+
+        p = request.headers.get("x-aap-identity")
+        s = request.headers.get("x-aap-identity-sig")
+        if p and s:
+            return p, s
+    except Exception:
+        pass
+    p = _env("AAP_IDENTITY_PAYLOAD")
+    s = _env("AAP_IDENTITY_SIG")
+    if p and s:
+        return p, s
+    return None
+
+
+def _platform(path, payload=None, timeout=60, extra_headers=None):
+    """平台内部调用（LLM 代理 / 出站代理）。统一携带网关凭据；
+    extra_headers 用于回传用户身份头（x-aap-identity*，网关验签归因计费）。"""
     url = _env("AAP_PLATFORM", "http://127.0.0.1:8080").rstrip("/") + path
     data = None if payload is None else json.dumps(payload).encode()
     req = urllib.request.Request(url, data=data, method="POST" if payload is not None else "GET")
     req.add_header("x-aap-token", _env("AAP_TOKEN", ""))
     if data is not None:
         req.add_header("content-type", "application/json")
+    for k, v in (extra_headers or {}).items():
+        req.add_header(k, v)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.status, json.loads(resp.read().decode() or "{}")
@@ -48,9 +75,14 @@ def _quota_bytes():
 
 
 class Llm:
-    """LLM 调用（经平台代理 → 网关 → 上游；计入发起用户的额度池）。"""
+    """LLM 调用（经平台代理 → 网关 → 上游；计入发起用户的额度池）。
 
-    def chat(self, messages, model=None, temperature=None, max_tokens=None, stream=False):
+    identity：可选 (payload, sig) 身份二元组。persistent 场景由门户代理把
+    x-aap-identity* 注入每个请求，模组把它透传到这里即可按浏览用户计费；
+    不传时 runner 自动取 flask 请求头（invoked 取平台注入的环境变量）。
+    """
+
+    def chat(self, messages, model=None, temperature=None, max_tokens=None, stream=False, identity=None):
         payload = {"messages": messages}
         if model:
             payload["model"] = model
@@ -58,7 +90,12 @@ class Llm:
             payload["temperature"] = temperature
         if max_tokens:
             payload["max_tokens"] = int(max_tokens)
-        status, resp = _platform("/api/aap/llm/chat", payload)
+        headers = {}
+        ident = _resolve_identity(identity)
+        if ident:
+            headers["x-aap-identity"] = ident[0]
+            headers["x-aap-identity-sig"] = ident[1]
+        status, resp = _platform("/api/aap/llm/chat", payload, extra_headers=headers)
         choices = resp.get("choices") or []
         content = ""
         if choices:
@@ -67,8 +104,8 @@ class Llm:
         return {"content": content, "usage": resp.get("usage") or {}, "model": resp.get("model", model or "")}
 
     # 流式的便捷形式：逐段产出增量文本（底层仍整段返回后切片，行为对齐契约）
-    def chat_stream(self, messages, model=None, temperature=None, max_tokens=None):
-        result = self.chat(messages, model=model, temperature=temperature, max_tokens=max_tokens)
+    def chat_stream(self, messages, model=None, temperature=None, max_tokens=None, identity=None):
+        result = self.chat(messages, model=model, temperature=temperature, max_tokens=max_tokens, identity=identity)
         content = result.get("content", "")
         step = max(1, len(content) // 8)
         for i in range(0, len(content), step):
@@ -214,11 +251,56 @@ def run_serve(mod_path, aap):
 def main():
     mode = _env("AAP_MODE", "run")
     mod_path = _env("AAP_MOD_PATH", "mod.py")
+    _install_net_guard()
     aap = build_aap()
     if mode == "serve":
         run_serve(mod_path, aap)
     else:
         run_invoked(mod_path, aap)
+
+
+# ---------- 出站网络守卫 ----------
+def _install_net_guard():
+    """SDK 出网唯一「受控」通道 = 平台代理（app-develop.skill v0.2 契约）。
+    进程级网络隔离由容器形态（ns/cgroups）保证；在此之前，本守卫在 Python 层
+    拦截绕过 aap.http.fetch 的直连出站：connect 仅放行平台地址（AAP_PLATFORM），
+    其余 TCP 连接（含 Unix socket）直接报错。设置 AAP_NET_GUARD=0 可关闭
+    （aap-dev 本地调试不受影响——开发者自行运行进程时不经过 runner）。
+    注意：这是纵深防御，非硬隔离；恶意代码仍可能经 ctypes 等底层手段绕过。"""
+    if _env("AAP_NET_GUARD", "1") != "1":
+        return
+    import socket as _socket
+    from urllib.parse import urlparse
+
+    plat = urlparse(_env("AAP_PLATFORM", "http://127.0.0.1:8080"))
+    plat_host = (plat.hostname or "").lower()
+    plat_port = plat.port or (443 if plat.scheme == "https" else 80)
+
+    _real_socket = _socket.socket
+
+    class GuardedSocket(_real_socket):
+        @staticmethod
+        def _target(address):
+            """(host, port)；解析不了返回 (None, None)。"""
+            try:
+                if isinstance(address, (tuple, list)) and len(address) >= 2:
+                    return address[0], address[1]
+            except Exception:
+                pass
+            return None, None
+
+        def connect(self, address):
+            if isinstance(address, str):
+                raise RuntimeError("沙箱网络守卫：禁止 Unix socket 直连（出站请用 aap.http.fetch）")
+            host, port = self._target(address)
+            if host is not None and str(host).lower() == plat_host and port == plat_port:
+                return super().connect(address)
+            raise RuntimeError(
+                "沙箱网络守卫：仅允许访问平台（AAP_PLATFORM=%s:%s），出站请使用 aap.http.fetch"
+                % (plat_host, plat_port)
+            )
+
+    _socket.socket = GuardedSocket
 
 
 if __name__ == "__main__":

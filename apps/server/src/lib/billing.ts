@@ -156,10 +156,11 @@ export function createOrder(
     })
     .run();
   audit(`user:${userId}`, null, 'billing.order.create', { id, kind, priceFen: opts.priceFen });
-  return listOrders('all', 1).find((o) => o.id === id)!;
+  // 按主键回查（此前取「最新一行再 find」，并发建单时可能拿到 undefined）
+  return getDb().select().from(topupOrders).where(eq(topupOrders.id, id)).get() as OrderRow;
 }
 
-/** 开通/续费会员：顺延到期 + 入组 + 赠送额度 */
+/** 开通/续费会员：顺延到期 + 入组 + 赠送额度（单事务；部分失败整体回滚） */
 export function activateMembership(userId: number, planId: number): string {
   const plan = getDb().select().from(membershipPlans).where(eq(membershipPlans.id, planId)).get();
   if (!plan) throw new HttpError(404, 'PLAN_NOT_FOUND', '套餐不存在');
@@ -169,41 +170,43 @@ export function activateMembership(userId: number, planId: number): string {
   // 到期续费从当前到期时间顺延；新购从现在起算
   const base = me.membershipExpiresAt && me.membershipPlanId === planId ? me.membershipExpiresAt : Date.now();
   const expiresAt = base + plan.durationDays * 86_400_000;
-  getDb()
-    .update(users)
-    .set({ membershipPlanId: planId, membershipExpiresAt: expiresAt, plan: 'member' })
-    .where(eq(users.id, userId))
-    .run();
-  // 加入套餐分组（可见性权益），重复加入幂等
-  getDb()
-    .insert(userGroupMembers)
-    .values({ groupId: plan.groupId, userId, createdAt: Date.now() })
-    .onConflictDoNothing()
-    .run();
-  if (plan.tokenGrant > 0) {
-    grantTokens(userId, plan.tokenGrant, `功能订阅赠送（${plan.name}）`, 0);
-  }
+  getDb().transaction(() => {
+    getDb()
+      .update(users)
+      .set({ membershipPlanId: planId, membershipExpiresAt: expiresAt, plan: 'member' })
+      .where(eq(users.id, userId))
+      .run();
+    // 加入套餐分组（可见性权益），重复加入幂等
+    getDb()
+      .insert(userGroupMembers)
+      .values({ groupId: plan.groupId, userId, createdAt: Date.now() })
+      .onConflictDoNothing()
+      .run();
+    if (plan.tokenGrant > 0) {
+      grantTokens(userId, plan.tokenGrant, `功能订阅赠送（${plan.name}）`, 0);
+    }
+  });
   return plan.name;
 }
 
-/** 确认到账（D3 manual 确认点；真实渠道 adapter 回调最终也走这里） */
+/** 确认到账（D3 manual 确认点；真实渠道 adapter 回调最终也走这里）。
+ *  单事务：置 paid 与入账/开通同生共死，杜绝「已收款未入账」的崩溃窗口
+ *  （如套餐被删，订单回滚为 pending，可处理后重新确认）。 */
 export function confirmOrder(orderId: string, byUserId: number): OrderRow {
-  const order = getDb().select().from(topupOrders).where(eq(topupOrders.id, orderId)).get() as OrderRow | undefined;
+  const db = getDb();
+  const order = db.select().from(topupOrders).where(eq(topupOrders.id, orderId)).get() as OrderRow | undefined;
   if (!order) throw new HttpError(404, 'ORDER_NOT_FOUND', '订单不存在');
   if (order.status !== 'pending') throw new HttpError(400, 'ORDER_STATE', '订单已处理');
-  getDb()
-    .update(topupOrders)
-    .set({ status: 'paid', paidAt: Date.now() })
-    .where(eq(topupOrders.id, orderId))
-    .run();
-
-  if (order.kind === 'tokens' && order.tokens) {
-    grantTokens(order.userId, order.tokens, `充值到账 ${orderId}`, byUserId);
-  } else if (order.kind === 'membership' && order.planId) {
-    activateMembership(order.userId, order.planId);
-  }
+  db.transaction(() => {
+    db.update(topupOrders).set({ status: 'paid', paidAt: Date.now() }).where(eq(topupOrders.id, orderId)).run();
+    if (order.kind === 'tokens' && order.tokens) {
+      grantTokens(order.userId, order.tokens, `充值到账 ${orderId}`, byUserId);
+    } else if (order.kind === 'membership' && order.planId) {
+      activateMembership(order.userId, order.planId);
+    }
+  });
   audit(`admin:${byUserId}`, null, 'billing.order.paid', { orderId, userId: order.userId });
-  return getDb().select().from(topupOrders).where(eq(topupOrders.id, orderId)).get() as OrderRow;
+  return db.select().from(topupOrders).where(eq(topupOrders.id, orderId)).get() as OrderRow;
 }
 
 export function cancelOrder(orderId: string, byUserId: number, byAdmin: boolean): void {

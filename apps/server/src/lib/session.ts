@@ -134,24 +134,29 @@ export function loadSessionByToken(token: string | undefined | null): SessionUse
   };
 }
 
-/** 创建会话并种 cookie；authState 供 MFA 状态机（W4） */
+/** 创建会话并种 cookie；authState 供 MFA 状态机（W4）。
+ *  grantStepUp：登录即授予步升窗口——密码/Passkey/邮箱码本身就是刚验证过的
+ *  因子，强制绑 MFA（F3）因此可在登录后立即进行；窗口过期后的敏感操作仍需
+ *  重验因子（防被劫持会话静默绑定新 MFA，渗透测试 P2-9）。 */
 export function createSession(
   res: Response,
   user: { id: number },
-  opts: { ip?: string | null; userAgent?: string | null; authState?: AuthState; ttlSec?: number },
+  opts: { ip?: string | null; userAgent?: string | null; authState?: AuthState; ttlSec?: number; grantStepUp?: boolean },
 ): string {
   const token = generateToken();
   const now = Date.now();
   const ttl = opts.ttlSec ?? sessionTtlSec();
   const expiresAt = now + ttl * 1000;
+  const stepUpUntil = opts.grantStepUp ? now + stepUpTtlSec() * 1000 : null;
   const s = getSqlite();
   s.prepare(
-    `INSERT INTO sessions(token_hash, user_id, auth_state, created_at, last_seen_at, expires_at, ip, user_agent)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO sessions(token_hash, user_id, auth_state, step_up_until, created_at, last_seen_at, expires_at, ip, user_agent)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     hashToken(token),
     user.id,
     opts.authState ?? 'full',
+    stepUpUntil,
     now,
     now,
     expiresAt,

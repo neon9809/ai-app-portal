@@ -8,6 +8,21 @@ import { eq } from 'drizzle-orm';
 import { config } from '../config/index.js';
 import { getDb } from '../db/index.js';
 import { settings } from '../db/schema.js';
+import { decryptSecret, encryptSecret } from './cryptoSecrets.js';
+
+/** secret 型配置的密文前缀（自描述；无前缀 = 存量明文，读取兼容） */
+const ENC_PREFIX = 'enc:';
+
+function storeValue(key: string, value: string): string {
+  if (SETTING_DEFS[key]?.secret && value !== '' && !value.startsWith(ENC_PREFIX)) {
+    try {
+      return ENC_PREFIX + encryptSecret(value);
+    } catch {
+      return value; // 主密钥不可用时退回明文（保持可用性；与既往行为一致）
+    }
+  }
+  return value;
+}
 
 export interface SettingDef {
   type: 'string' | 'int' | 'bool';
@@ -206,6 +221,12 @@ export const SETTING_DEFS: Record<string, SettingDef> = {
     group: '计费', type: 'bool',
     desc: '用户中心是否显示「额度充值」面板（关闭后用户只能使用兑换码/管理员发放）',
     initial: () => 'true', defaultsWork: true },
+  LLM_UNATTRIBUTED_POLICY: {
+    label: '无归因 LLM 调用',
+    group: '计费', type: 'string',
+    choiceLabels: { reject: '拒绝（推荐）', allow: '放行（仅计量不计费）' },
+    desc: '网关收到未携带用户身份归因（X-AAP-Identity）的调用时：拒绝（推荐，杜绝绕过余额闸门）或放行（可信内网应用的应用级调用）',
+    initial: () => 'reject', defaultsWork: true },
   TOPUP_TOKENS_PER_FEN: {
     label: '充值单价（token/分）',
     group: '计费', type: 'int',
@@ -220,6 +241,12 @@ export const SETTING_DEFS: Record<string, SettingDef> = {
   PROXY_TIMEOUT: {
     label: '上游超时（秒）',
     group: '应用网关', type: 'int', desc: '应用网关上游超时（秒，仅覆盖首字节/HTML 拉取，不断流式连接）', initial: () => String(config.proxyTimeoutSec), defaultsWork: true, advanced: true },
+  SANDBOX_MAX_CONCURRENT_RUNS: {
+    label: '沙箱并发执行上限',
+    group: '应用网关', type: 'int', desc: '.neon-aap invoked 执行的全局并发进程数上限（超出排队，防进程炸弹）', initial: () => '8', defaultsWork: true, advanced: true },
+  LLM_STREAM_IDLE_TIMEOUT: {
+    label: 'LLM 流式闲置超时（秒）',
+    group: '应用网关', type: 'int', desc: '流式转发中连续无新字节的容忍时长，超时断开（防上游挂起占满连接）', initial: () => '60', defaultsWork: true, advanced: true },
 
   // ---- HTTPS / 证书（B3；默认纯门户模式 = 不启 HTTPS，反代外置） ----
   ACME_DOMAIN: {
@@ -279,13 +306,13 @@ export const SETTING_DEFS: Record<string, SettingDef> = {
     initial: () => '', defaultsWork: true },
 };
 
-/** 首启把全部默认值种入 settings（INSERT OR IGNORE，env 只作初值不覆盖已存值） */
+/** 首启把全部默认值种入 settings（INSERT OR IGNORE，env 只作初值不覆盖已存值；secret 型加密落盘） */
 export function seedSettings(): void {
   const db = getDb();
   const now = Date.now();
   for (const [key, def] of Object.entries(SETTING_DEFS)) {
     db.insert(settings)
-      .values({ key, value: def.initial(), updatedAt: now })
+      .values({ key, value: storeValue(key, def.initial()), updatedAt: now })
       .onConflictDoNothing()
       .run();
   }
@@ -293,7 +320,17 @@ export function seedSettings(): void {
 
 export function getSetting(key: string): string | null {
   const row = getDb().select().from(settings).where(eq(settings.key, key)).get();
-  return row?.value ?? null;
+  const value = row?.value ?? null;
+  if (value !== null && value.startsWith(ENC_PREFIX)) {
+    try {
+      return decryptSecret(value.slice(ENC_PREFIX.length));
+    } catch (err) {
+      // 主密钥缺失/轮换：解密失败按未配置处理（fail-closed），错误进日志
+      console.error(`[settings] 密文配置 ${key} 解密失败:`, err instanceof Error ? err.message : err);
+      return null;
+    }
+  }
+  return value;
 }
 
 export function getSettingInt(key: string, fallback: number): number {
@@ -311,8 +348,8 @@ export function getSettingBool(key: string, fallback: boolean): boolean {
 export function setSetting(key: string, value: string): void {
   getDb()
     .insert(settings)
-    .values({ key, value, updatedAt: Date.now() })
-    .onConflictDoUpdate({ target: settings.key, set: { value, updatedAt: Date.now() } })
+    .values({ key, value: storeValue(key, value), updatedAt: Date.now() })
+    .onConflictDoUpdate({ target: settings.key, set: { value: storeValue(key, value), updatedAt: Date.now() } })
     .run();
 }
 

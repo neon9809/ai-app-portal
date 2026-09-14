@@ -7,6 +7,9 @@ FROM node:22-alpine AS build
 # CN 网络优化：alpine 源与 npm registry 走国内镜像
 RUN sed -i 's#https://dl-cdn.alpinelinux.org#https://mirrors.cloud.tencent.com#g' /etc/apk/repositories \
  && npm config set registry https://registry.npmmirror.com
+# better-sqlite3 源码编译时 node-gyp 拉 Node 头文件也走国内镜像（否则 nodejs.org 直连常僵死）
+ENV NODEJS_ORG_MIRROR=https://npmmirror.com/mirrors/node \
+    NVM_NODEJS_ORG_MIRROR=https://npmmirror.com/mirrors/node
 # better-sqlite3 无 musl 预编译时的源码编译依赖
 RUN apk add --no-cache python3 make g++ libc6-compat
 RUN corepack enable
@@ -27,7 +30,10 @@ RUN pnpm --filter @aap/server --prod deploy --legacy /out
 # ---------- 运行阶段 ----------
 FROM node:22-alpine
 RUN sed -i 's#https://dl-cdn.alpinelinux.org#https://mirrors.cloud.tencent.com#g' /etc/apk/repositories \
- && apk add --no-cache tini python3 py3-flask
+ && apk add --no-cache tini python3 py3-flask \
+ # 沙箱可选降权：预建非特权用户；运行时加 SANDBOX_UID=10001 SANDBOX_GID=10001 生效
+ # （需保证数据卷对 10001 可写，如：docker run 时对挂载目录 chown 10001:10001）
+ && addgroup -g 10001 aap && adduser -D -u 10001 -G aap aap
 WORKDIR /out
 # pnpm deploy 产物：package.json + node_modules（含 @aap/shared 构建产物）
 COPY --from=build /out ./

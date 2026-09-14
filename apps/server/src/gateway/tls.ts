@@ -13,6 +13,7 @@ import type { Server as HttpsServer } from 'node:https';
 import { config } from '../config/index.js';
 import { audit } from '../lib/audit.js';
 import { setSecureCookie } from '../lib/session.js';
+import { enableHsts, disableHsts } from '../lib/securityHeaders.js';
 import { getSetting, getSettingBool } from '../lib/settings.js';
 
 const TLS_DIR = path.join(config.dataDir, 'tls');
@@ -164,10 +165,12 @@ export function apply(): HttpsServer | null {
   const stored = readStored();
   if (!stored || !mainApp) {
     setSecureCookie(null);
+    disableHsts();
     return null;
   }
   const info = validate(stored.cert, stored.key); // 损坏/不匹配时抛错
   const opts = { cert: stored.cert, key: stored.key };
+  enableHsts(false); // HTTPS 实际生效：全站响应挂 HSTS（主域；子域未必全 HTTPS 不默认 include）
   if (httpsServer) {
     httpsServer.setSecureContext(opts); // 热替换，不中断现有连接
     return httpsServer;
@@ -233,6 +236,7 @@ export function remove(): void {
     s.close(() => console.log('[tls] HTTPS 服务已停止'));
   }
   setSecureCookie(false);
+  disableHsts();
   audit('system', null, 'tls.cert.removed', {});
 }
 

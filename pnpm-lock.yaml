@@ -11,6 +11,9 @@ importers:
       '@playwright/test':
         specifier: ^1.63.0
         version: 1.63.0
+      adm-zip:
+        specifier: ^0.6.1
+        version: 0.6.1
       otplib:
         specifier: ^13.5.0
         version: 13.5.0

@@ -96,15 +96,24 @@ function isAdminUser(user: { role: string } | null | undefined): boolean {
  *  - login：全部登录用户
  *  - restricted：登录 + 指定分组/指定账号任一命中；ACL 为空 = 全部登录用户；归属者与管理员始终可见
  *  - private：仅归属者（用户自建应用默认）
+ * 审核门禁（G3/G4）：pending/rejected 的应用仅归属者与管理员可访问——
+ * 否则已公开应用推未审新版即对全员生效（渗透测试 P1-6 实锤利用路径）。
+ * reviewStatus='none' 视为免审（历史/管理员自建/官方签名通道外的默认态）。
  */
 export function canAccess(
   app: AppRow,
   user: { id: number; authState: string; role: string } | null | undefined,
 ): boolean {
   if (isAdminUser(user)) return true;
+  if ((app.reviewStatus === 'pending' || app.reviewStatus === 'rejected') &&
+      !(user && user.authState === 'full' && app.ownerUserId === user.id)) {
+    return false;
+  }
   switch (app.visibility) {
     case 'public':
       return true;
+    case 'login':
+      return Boolean(user && user.authState === 'full');
     case 'private':
       return Boolean(user && user.authState === 'full' && app.ownerUserId === user.id);
     case 'restricted': {
@@ -121,9 +130,12 @@ export function canAccess(
   }
 }
 
-/** 门户卡片是否对该用户展示（private 且非归属者/管理员 → 直接隐藏） */
+/** 门户卡片是否对该用户展示（private 且非归属者/管理员 → 隐藏；待审/驳回对非归属者同样隐藏） */
 export function isVisibleInPortal(app: AppRow, user: { id: number; role: string } | null | undefined): boolean {
-  if (app.visibility !== 'private') return true;
   if (isAdminUser(user)) return true;
+  if ((app.reviewStatus === 'pending' || app.reviewStatus === 'rejected') && app.ownerUserId !== user?.id) {
+    return false;
+  }
+  if (app.visibility !== 'private') return true;
   return Boolean(user && app.ownerUserId === user.id);
 }

@@ -10,7 +10,7 @@ import { getDb } from '../db/index.js';
 import { llmAppTokens, llmBalanceCache, llmLedger, llmRoutes, llmUpstreams } from '../db/schema.js';
 import { decryptSecret, encryptSecret } from './cryptoSecrets.js';
 import { HttpError } from './httpError.js';
-import { getSettingInt } from './settings.js';
+import { getSetting, getSettingInt } from './settings.js';
 
 // ---------- 网关凭据（C2） ----------
 
@@ -268,14 +268,33 @@ export function cachedBalance(userId: number): number | null {
   return row ? row.balance : null;
 }
 
-/** 从账本重算余额并写缓存（结算语义：读流水算余额；供事件失效与定时校正调用） */
+/** 在途请求的预估成本（进程内；预检扣减只存在于缓存不在账本）。
+ *  不记账则重算/对账会周期性抹掉在途扣减 → 常态化漏账（终审 P1）。 */
+const inFlightEstimate = new Map<number, number>();
+
+function addInFlightEstimate(userId: number, cost: number): void {
+  inFlightEstimate.set(userId, (inFlightEstimate.get(userId) ?? 0) + cost);
+}
+
+function releaseInFlightEstimate(userId: number, cost: number): void {
+  const left = (inFlightEstimate.get(userId) ?? 0) - cost;
+  if (left > 0) inFlightEstimate.set(userId, left);
+  else inFlightEstimate.delete(userId);
+}
+
+export function hasInFlightRequests(userId: number): boolean {
+  return (inFlightEstimate.get(userId) ?? 0) > 0;
+}
+
+/** 从账本重算余额并写缓存（结算语义：读流水算余额；供事件失效与定时校正调用）。
+ *  在途预估成本不在账本，重算时补减，避免对账/查账抹掉预检扣减。 */
 export function recomputeBalance(userId: number): number {
   const row = getDb()
     .select({ sum: sql<number>`coalesce(sum(delta), 0)` })
     .from(llmLedger)
     .where(eq(llmLedger.userId, userId))
     .get();
-  const balance = Number(row?.sum ?? 0);
+  const balance = Number(row?.sum ?? 0) - (inFlightEstimate.get(userId) ?? 0);
   getDb()
     .insert(llmBalanceCache)
     .values({ userId, balance, updatedAt: Date.now() })
@@ -333,16 +352,22 @@ function auditGrant(userId: number, delta: number, note: string, by: number): vo
   audit(`admin:${by}`, null, 'llm.balance.adjust', { userId, delta, note });
 }
 
-/** 预检闸门（C6）：原子递减预估成本；余额不足 → 402，请求不出网关。 */
+/** 预检闸门（C6）：原子递减预估成本；余额不足 → 402，请求不出网关。
+ *  无用户归因（userId=null）默认拒绝（403）：否则任何持 app token 者可绕过
+ *  全部余额闸门免费调用（已实测利用路径）；可信内网应用可由管理员切 'allow'。 */
 export function precheck(userId: number | null, estimatedCost: number): void {
-  if (userId === null) return; // 无用户归因 → 仅计量不拦截（M3 应用级配额再扩展）
+  if (userId === null) {
+    if (getSetting('LLM_UNATTRIBUTED_POLICY') !== 'allow') {
+      throw new HttpError(403, 'ATTRIBUTION_REQUIRED', '该调用未携带用户身份归因（X-AAP-Identity），网关拒绝无归因请求；如确需应用级匿名调用，请在计费设置中调整');
+    }
+    return;
+  }
   const db = getDb();
   const row = db.select().from(llmBalanceCache).where(eq(llmBalanceCache.userId, userId)).get();
   if (!row) {
-    // 缓存未初始化：先按流水重算再判（避免首请求误拒）
-    const balance = recomputeBalance(userId);
-    if (balance < estimatedCost) throw insufficient(balance);
-    return;
+    // 缓存未初始化：先按流水重算建行（避免首请求误拒），随后与其他请求
+    // 走同一条条件递减路径（首请求同样占用预估）
+    recomputeBalance(userId);
   }
   // 原子条件递减：balance >= est 才扣
   const res = db
@@ -351,9 +376,9 @@ export function precheck(userId: number | null, estimatedCost: number): void {
     .where(and(eq(llmBalanceCache.userId, userId), sql`balance >= ${estimatedCost}`))
     .run();
   if (res.changes === 0) {
-    const balance = row.balance;
-    throw insufficient(balance);
+    throw insufficient(cachedBalance(userId) ?? 0);
   }
+  addInFlightEstimate(userId, estimatedCost);
 }
 
 function insufficient(balance: number): HttpError {
@@ -362,9 +387,11 @@ function insufficient(balance: number): HttpError {
   });
 }
 
-/** 事后校正：实际扣费与预估的差值补回/补扣（不动账本——账本只记实际用量） */
+/** 事后校正：实际扣费与预估的差值补回/补扣（不动账本——账本只记实际用量）；
+ *  同时释放在途预估占用。 */
 export function settleEstimate(userId: number | null, estimatedCost: number, actualCost: number): void {
   if (userId === null) return;
+  releaseInFlightEstimate(userId, estimatedCost);
   const diff = estimatedCost - actualCost;
   if (diff === 0) return;
   getDb()
