@@ -204,6 +204,10 @@ adminAppsRouter.post(
   h(async (req, res) => {
     const app = findApp(String(req.params.id ?? ''));
     if (!app) throw new HttpError(404, 'APP_NOT_FOUND', '应用不存在');
+    // 门户托管应用（html/package）没有独立上游，由门户自身直接服务
+    if (app.kind !== 'upstream') {
+      return res.json({ ok: true, status: 200, latencyMs: 0, note: '门户托管应用（无独立上游，由门户直接服务）' });
+    }
     const started = Date.now();
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 5000);

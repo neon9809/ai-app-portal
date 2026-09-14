@@ -488,6 +488,33 @@ describe('邀请码并发双花（批二⑧）', () => {
   });
 });
 
+describe('托管应用健康探测（批：html/package 无 upstream 不再恒「异常」）', () => {
+  it('html 应用探测记 ok；persistent 未拉起记 unknown；测试按钮对托管应用返回 ok', async () => {
+    getDb().insert(apps).values({
+      id: 'health-html', name: 'HtmlApp', visibility: 'public', kind: 'html', upstream: '',
+      ownerUserId: ownerId, enabled: true, createdAt: Date.now(), updatedAt: Date.now(),
+    }).run();
+    getDb().insert(apps).values({
+      id: 'health-sbx', name: 'SbxApp', visibility: 'private', kind: 'package', upstream: '',
+      runtimeMode: 'persistent', ownerUserId: ownerId, enabled: true, createdAt: Date.now(), updatedAt: Date.now(),
+    }).run();
+
+    const { probeAll } = await import('../gateway/health.js');
+    await probeAll();
+
+    const rows = getDb().select().from(apps).all();
+    expect(rows.find((r) => r.id === 'health-html')?.healthState).toBe('ok');
+    expect(rows.find((r) => r.id === 'health-sbx')?.healthState).toBe('unknown');
+
+    const test = await fetch(`${base}/api/admin/apps/health-html/test`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: base, cookie: adminCookie },
+    });
+    expect(test.status).toBe(200);
+    expect(((await test.json()) as { ok?: boolean }).ok).toBe(true);
+  });
+});
+
 describe('登录 401 信息泄露收敛（P2-12）', () => {
   it('登录失败响应不含 failures/banned', async () => {
     const res = await fetch(`${base}/api/auth/login`, {
