@@ -813,6 +813,7 @@ function AppsTab(): ReactNode {
 
 function UsersRegTab(): ReactNode {
   const qc = useQueryClient();
+  const { me } = useSession();
   const usersQ = useQuery({ queryKey: ['admin-users'], queryFn: () => api<{ users: PublicUser[] }>('/api/admin/users') });
   const invitesQ = useQuery({ queryKey: ['admin-invites'], queryFn: () => api<{ invites: Invite[] }>('/api/admin/invites') });
   const [creating, setCreating] = useState(false);
@@ -898,6 +899,41 @@ function UsersRegTab(): ReactNode {
                       启用
                     </Button>
                   )}
+                  {me?.user.id !== r.id ? (
+                    r.role === 'admin' ? (
+                      <Popconfirm
+                        title={`取消「${r.name}」的管理员？`}
+                        description="取消后该用户失去全部后台权限。"
+                        onConfirm={async () => {
+                          try {
+                            await api(`/api/admin/users/${r.id}`, { method: 'PUT', json: { role: 'user' } });
+                            message.success('已取消管理员');
+                            void reload();
+                          } catch (err) {
+                            message.error(err instanceof Error ? err.message : '操作失败');
+                          }
+                        }}
+                      >
+                        <Button size="small">取消管理员</Button>
+                      </Popconfirm>
+                    ) : (
+                      <Popconfirm
+                        title={`将「${r.name}」设为管理员？`}
+                        description="管理员拥有全部后台权限。"
+                        onConfirm={async () => {
+                          try {
+                            await api(`/api/admin/users/${r.id}`, { method: 'PUT', json: { role: 'admin' } });
+                            message.success('已设为管理员');
+                            void reload();
+                          } catch (err) {
+                            message.error(err instanceof Error ? err.message : '操作失败');
+                          }
+                        }}
+                      >
+                        <Button size="small">设为管理员</Button>
+                      </Popconfirm>
+                    )
+                  ) : null}
                   <Button
                     size="small"
                     onClick={async () => {
@@ -979,6 +1015,14 @@ function UsersRegTab(): ReactNode {
           </Form.Item>
           <Form.Item name="name" label="昵称">
             <Input />
+          </Form.Item>
+          <Form.Item name="role" label="角色" initialValue="user" extra="管理员拥有全部后台权限（创建后也可在列表中调整）">
+            <Select
+              options={[
+                { value: 'user', label: '用户' },
+                { value: 'admin', label: '管理员' },
+              ]}
+            />
           </Form.Item>
           <Form.Item name="password" label="初始密码" extra="留空自动生成；用户首次登录会强制改密">
             <Input.Password />

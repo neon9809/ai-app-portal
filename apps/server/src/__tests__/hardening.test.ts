@@ -488,6 +488,38 @@ describe('邀请码并发双花（批二⑧）', () => {
   });
 });
 
+describe('用户角色管理（指定/取消管理员）', () => {
+  it('可设为/取消管理员；不能改自己的角色；最后一名管理员不可降级', async () => {
+    const a = getDb().insert(users).values({ kind: 'local', username: 'roleu1', role: 'user', createdAt: Date.now() }).run();
+    const uid = Number(a.lastInsertRowid);
+    const put = (id: number, json: Record<string, unknown>): Promise<{ status: number; body: { error?: { code?: string } } }> =>
+      fetch(`${base}/api/admin/users/${id}`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json', origin: base, cookie: adminCookie },
+        body: JSON.stringify(json),
+      }).then(async (r) => ({ status: r.status, body: (await r.json()) as { error?: { code?: string } } }));
+
+    // 设为管理员
+    expect((await put(uid, { role: 'admin' })).status).toBe(200);
+    expect(getDb().select().from(users).where(eq(users.id, uid)).get()?.role).toBe('admin');
+
+    // 改自己的角色 → 400（防自锁；adminCookie 对应 admin 账号）。
+    // 注：LAST_ADMIN（至少保留一名管理员）为并发竞态纵深防御——API 路径上
+    // 操作者必是管理员，单人管理员的降级必然是改自己而先被防自锁拦截。
+    const adminId = getDb().select().from(users).where(eq(users.username, 'admin')).get()!.id;
+    const self = await put(adminId, { role: 'user' });
+    expect(self.status).toBe(400);
+    expect(self.body.error?.code).toBe('CANNOT_MODIFY_SELF_ROLE');
+
+    // 正常取消（此时有两名管理员）
+    expect((await put(uid, { role: 'user' })).status).toBe(200);
+    expect(getDb().select().from(users).where(eq(users.id, uid)).get()?.role).toBe('user');
+
+    // 非法角色值 → 400
+    expect((await put(uid, { role: 'root' })).status).toBe(400);
+  });
+});
+
 describe('HTML 页面内容编辑（编辑弹窗数据面）', () => {
   it('GET 读取当前页面；PUT 更新落盘保存即生效；空内容 400；非 html 应用 400', async () => {
     writeHtmlApp('edit-html', '<h1>V1</h1>');

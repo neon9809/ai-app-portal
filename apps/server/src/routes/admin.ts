@@ -70,7 +70,22 @@ adminRouter.put(
     const uid = Number(req.params.id);
     const target = getDb().select().from(users).where(eq(users.id, uid)).get();
     if (!target) throw new HttpError(404, 'USER_NOT_FOUND', '用户不存在');
-    const body = (req.body ?? {}) as { status?: string };
+    const body = (req.body ?? {}) as { status?: string; role?: string };
+
+    // 角色变更（设为管理员/取消管理员）
+    if (body.role !== undefined) {
+      const role = body.role === 'admin' || body.role === 'user' ? body.role : null;
+      if (!role) throw new HttpError(400, 'INVALID_ROLE', '角色必须是 admin/user');
+      if (uid === req.user!.id) throw new HttpError(400, 'CANNOT_MODIFY_SELF_ROLE', '不能修改自己的角色（防自锁）');
+      if (target.role === 'admin' && role === 'user') {
+        const admins = getDb().select({ n: sql<number>`count(*)` }).from(users).where(eq(users.role, 'admin')).get()?.n ?? 0;
+        if (admins <= 1) throw new HttpError(409, 'LAST_ADMIN', '至少保留一名管理员');
+      }
+      getDb().update(users).set({ role }).where(eq(users.id, uid)).run();
+      // 角色每请求随会话装载读取，变更即时生效，无需踢会话
+      audit(`${req.user!.kind}:${req.user!.id}`, req.clientIp ?? null, 'admin.user.role', { uid, role });
+    }
+
     if (body.status !== undefined) {
       if (body.status !== 'active' && body.status !== 'disabled') {
         throw new HttpError(400, 'INVALID_STATUS', '状态必须是 active/disabled');
