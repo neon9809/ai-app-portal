@@ -5,7 +5,7 @@
 import { Alert, Button, Card, Form, Input, Tabs, Typography, message } from 'antd';
 import { KeyOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import type { PortalBootstrap } from '@aap/shared';
 import { startAuthentication } from '@simplewebauthn/browser';
@@ -18,6 +18,15 @@ type LoginResult = SessionInfo & { mfaRequired: boolean };
 
 export function LoginPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  // OIDC 回跳错误提示（auth.ts callback redirect 到 /login?error=<code>）
+  const oidcError = searchParams.get('error');
+  const oidcErrorMessages: Record<string, string> = {
+    oidc_pending: 'OIDC 账号已创建，等待管理员批准后方可登录。',
+    oidc_failed: 'OIDC 登录失败，请重试；多次失败请联系管理员查看服务端日志。',
+    account_disabled: '账号已被禁用，无法登录。',
+  };
+  const oidcErrorMsg = oidcError ? (oidcErrorMessages[oidcError] ?? `登录失败（${oidcError}）`) : null;
   const { data: boot } = useQuery({
     queryKey: ['bootstrap'],
     queryFn: () => api<PortalBootstrap>('/api/portal/bootstrap'),
@@ -121,6 +130,15 @@ export function LoginPage() {
       <Typography.Title level={4} style={{ marginTop: 0 }}>
         登录
       </Typography.Title>
+
+      {oidcErrorMsg ? (
+        <Alert
+          type={oidcError === 'oidc_pending' ? 'warning' : 'error'}
+          showIcon
+          message={oidcErrorMsg}
+          style={{ marginBottom: 16 }}
+        />
+      ) : null}
 
       {mfaRequired ? (
         <>
