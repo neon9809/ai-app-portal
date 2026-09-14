@@ -20,7 +20,8 @@
 | `apps/web` | 前端：React 18 + Vite + TS + Ant Design 5（门户 / 用户中心 / 管理后台三合一 SPA） |
 | `packages/shared` | 前后端共享类型与 API 契约 |
 | `packages/aap-sdk` | Python：`aap` 运行时存根 + `aap-dev` 本地调试沙箱（M4 实装） |
-| `examples/hk-toast-recipe` | .neon-aap 包示例（纯前端 HTML 应用：manifest.json + index.html，可直接上传门户安装） |
+| `examples/hk-toast-recipe` | .neon-aap HTML 包示例（纯前端：manifest.json + index.html，可直接上传门户安装） |
+| `examples/ip-analyzer` | .neon-aap Python 包示例（persistent 沙箱 + manifest.env 机密注入 + egress 白名单出站，移植自 neon9809/ip-analyzer） |
 | `deploy/` | Docker / FPK 分发形态 |
 | `docs/DEVELOPMENT.md` | 开发者文档（架构 / 配置 / LLM 网关接入 / 通知通道 / 订阅计费） |
 | `ai-app-portal-docs/` | 产品需求与规范（PRD / app-develop 技能） |
@@ -67,7 +68,7 @@ push 到 `main` 或打 `v*` tag 时，GitHub Actions 自动：
 ## 核心能力（当前实现）
 
 - **应用网关**：`/app/<id>/` 路径反代（HTML 改写 / `<base>` / fetch+XHR+script 猴补丁 / 路径穿越防御 / SSE 零缓冲），**WebSocket 透传**（HTTP+HTTPS 双通道），passUser 签名身份注入（X-AAP-Identity）
-- **门户托管应用**：简单 HTML 页直接粘贴接入；上传 `.neon-aap` 包自动校验 manifest 并提取字段；声明 `llm` 能力的包自动签发网关凭据（加密保管，运行时注入）
+- **门户托管应用**：简单 HTML 页直接粘贴接入；上传 `.neon-aap` 包自动校验 manifest 并提取字段；声明 `llm` 能力的包自动签发网关凭据（加密保管，运行时注入）；manifest `env` 声明环境变量/机密（必填/可选/格式校验/默认值），归属者或管理员在门户填值、密钥加密存储（只写不读），沙箱启动时注入进程环境变量
 - **LLM 网关**：OpenAI 兼容 `/v1/chat/completions`（流式）+ `/v1/models`；多上游按优先级+权重 failover；网关凭据（SHA-256 存储/可吊销/限流）；用户级+应用级计量（append-only 账本）、余额预检 402、预估事后校正；**无归因调用默认拒绝**（`LLM_UNATTRIBUTED_POLICY` 可放行）
 - **账号与安全**：本地账号+注册（验证码 SMTP/Resend/日志兜底、邀请码事务化防双花、Turnstile）、MFA（TOTP+Passkey，绑定新因子需步升）、OIDC 单点登录（PKCE）、登录防爆破（IP+账号双维度）+IP 封禁累犯倍增+PoW、步升认证（登录即授窗口）、审计日志、敏感配置 AES-GCM 落盘、HTTPS 启用即挂 HSTS
 - **订阅与计费**：功能订阅套餐（开通即入分组、到期自动降级）、额度充值与**卡券码兑换**（manual 确认渠道，支付渠道 adapter 可扩展）、运营面板（订单确认/排行/成本毛利）
