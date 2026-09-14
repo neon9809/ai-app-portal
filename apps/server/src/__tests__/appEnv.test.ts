@@ -259,7 +259,7 @@ describe.skipIf(!pythonOk)('环境变量配置与沙箱注入', () => {
     expect(rb.result.max_items).toBe('50');
   });
 
-  it('persistent 沙箱：路由处理器可见 aap（runner 须在模块执行前经 builtins 注入）', async () => {
+  it('persistent 沙箱：路由处理器可见 aap；网关剥挂载前缀并下发 x-forwarded-prefix', async () => {
     const PERSIST_MOD = `
 import json
 import os
@@ -275,6 +275,8 @@ class Handler(BaseHTTPRequestHandler):
             "aap_top": AAP_VISIBLE,
             "aap_route": aap is not None,
             "app_id": os.environ.get("AAP_APP_ID", ""),
+            "path": self.path,
+            "xfp": self.headers.get("x-forwarded-prefix", ""),
         }).encode()
         self.send_response(200)
         self.send_header("content-type", "application/json")
@@ -300,6 +302,7 @@ HTTPServer(("127.0.0.1", int(os.environ["PORT"])), Handler).serve_forever()
     });
     expect(submit.status).toBe(200);
 
+    // 带尾斜杠：沙箱应收到剥掉 /app/<id> 前缀后的 '/'，并拿到 x-forwarded-prefix
     let body = '';
     for (let i = 0; i < 30; i++) {
       const res = await fetch(`${base}/app/persistenv/`, { headers: { cookie: adminCookie } });
@@ -307,10 +310,17 @@ HTTPServer(("127.0.0.1", int(os.environ["PORT"])), Handler).serve_forever()
       if (res.status === 200 && body.includes('aap_top')) break;
       await new Promise((r) => setTimeout(r, 500));
     }
-    const parsed = JSON.parse(body) as { aap_top: boolean; aap_route: boolean; app_id: string };
+    const parsed = JSON.parse(body) as { aap_top: boolean; aap_route: boolean; app_id: string; path: string; xfp: string };
     expect(parsed.aap_top).toBe(true);
     expect(parsed.aap_route).toBe(true);
     expect(parsed.app_id).toBe('persistenv');
+    expect(parsed.path).toBe('/');
+    expect(parsed.xfp).toBe('/app/persistenv');
+
+    // 无尾斜杠同样剥到 '/'
+    const res2 = await fetch(`${base}/app/persistenv`, { headers: { cookie: adminCookie } });
+    const parsed2 = (await res2.json()) as { path: string };
+    expect(parsed2.path).toBe('/');
   });
 
   it('egress：自定义请求头经平台代理转发（逐跳头剥除，管理员内网白名单放行本地桩）', async () => {

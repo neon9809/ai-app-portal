@@ -251,7 +251,7 @@ gatewayRouter.all('/app/:id/*', async (req: Request, res: Response) => {
       if (!port) return htmlError(res, 503, '应用启动中', '请稍后重试');
       // passUser：为沙箱逐请求签名注入身份头（persistent 内 LLM 调用按浏览用户归因计费）
       const identity = app.passUser && user ? signIdentity(user, app.id) : null;
-      return proxyToSandbox(req, res, port, inRaw ? stripRawPrefix(sub0) : sub0, identity);
+      return proxyToSandbox(req, res, port, inRaw ? stripRawPrefix(sub0) : sub0, identity, app.id);
     }
     const sub = inRaw ? stripRawPrefix(sub0) : sub0;
     return serveHtmlApp(req, res, app, sub, inRaw);
@@ -393,6 +393,7 @@ function proxyToSandbox(
   port: number,
   sub: string,
   identity: { payload: string; sig: string } | null,
+  appId: string,
 ): void {
   touchPersistentByPort(port);
   // 沙箱跑的是用户上传代码（不可信）：与 upstream 反代同一张剥离表，
@@ -408,10 +409,18 @@ function proxyToSandbox(
     headers['x-aap-identity-sig'] = identity.sig;
   }
   // 沙箱外壳 raw 通道：剥掉 raw 段，沙箱看到的路径与既往一致（/app/<id>/...）
-  const pathAndQuery = (req.originalUrl ?? req.url ?? '/').replace(
+  const rawStripped = (req.originalUrl ?? req.url ?? '/').replace(
     /^(\/app\/[^/]+)\/raw(?=\/|\/?\?|$)/,
     '$1',
   );
+  // 沙箱路由挂根路径（规范 §二 persistent 模板即 @app.route("/")）：剥掉
+  // /app/<id> 前缀再转发，前缀经 x-forwarded-prefix 交给包（拼绝对 URL 用）；
+  // 否则包作者要在自己的 mod.py 里逐个兼容挂载前缀
+  const prefix = `/app/${encodeURIComponent(appId)}`;
+  let pathAndQuery = rawStripped;
+  if (pathAndQuery === prefix) pathAndQuery = '/';
+  else if (pathAndQuery.startsWith(`${prefix}/`)) pathAndQuery = pathAndQuery.slice(prefix.length);
+  headers['x-forwarded-prefix'] = prefix;
   const up = http.request(
     { hostname: '127.0.0.1', port, path: pathAndQuery, method: req.method, headers },
     (upRes) => {
@@ -421,6 +430,11 @@ function proxyToSandbox(
       for (const [key, value] of Object.entries(upRes.headers)) {
         if (value === undefined) continue;
         if (RESP_STRIP.has(key.toLowerCase())) continue;
+        // 沙箱按根路径产生的站内相对 Location 重写回挂载前缀（镜像路径剥离）
+        if (key.toLowerCase() === 'location' && typeof value === 'string' && value.startsWith('/')) {
+          res.setHeader(key, prefix + value);
+          continue;
+        }
         if (Array.isArray(value)) res.setHeader(key, value);
         else res.setHeader(key, value);
       }
