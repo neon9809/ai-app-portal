@@ -33,12 +33,9 @@ margin-bottom: 1rem;
         }
 </style></head><body><div class="row mb-4"><div class="col-12"><div class="text-center py-4 bg-primary text-white"><h1><i class="fas fa-shield-alt"></i> IP地址分析工具
 					</h1><p class="mb-0">批量查询AbuseIPDB</p></div></div></div><div class="container" style="width:88.8%;padding-bottom: 80px;padding-top: 40px;"><div class="row mb-4"><div class="col-md-6"><h5><i class="fas fa-key"></i> API配置
-					</h5><div class="row g-3"><div class="col-9"><label for="apiKey" class="form-label"><i class="fas fa-shield-alt"></i> AbuseIPDB API密钥
-							</label><input type="text" class="form-control" id="apiKey" readonly value="已由门户环境变量安全注入（ABUSEIPDB_API_KEY）"></div><div class="col-3 d-flex align-items-end"><button type="button" class="btn btn-outline-primary w-100"
-									id="validateApiBtn" onclick="validateApiKey()"><i class="fas fa-check-circle"></i> 验证
-							</button></div></div><small class="text-muted">
-						免费账户限制：每日1,000次IP查询 |
-						<a href="https://www.abuseipdb.com/account/api" target="_blank">获取API密钥</a></small><div class="mt-2"><div id="apiStatus" class="alert alert-secondary"><i class="fas fa-info-circle"></i> 未配置
+					</h5><div class="row g-3"><div class="col-12"><small class="text-muted">密钥已由门户「环境变量」注入服务端（ABUSEIPDB_API_KEY），浏览器不持有 · 免费账户每日 1,000 次查询</small></div><div class="col-12"><button type="button" class="btn btn-outline-primary btn-sm"
+									id="validateApiBtn" onclick="validateApiKey()"><i class="fas fa-check-circle"></i> 重新检测
+							</button></div></div><div class="mt-2"><div id="apiStatus" class="alert alert-secondary"><i class="fas fa-info-circle"></i> 未配置
 						</div><div id="apiQuotaInfo" class="small text-muted" style="display: none;">
 							API配额信息: <span id="quotaDetails"></span></div></div></div><div class="col-md-6"><h5><i class="fas fa-network-wired"></i> IP地址输入
 					</h5><div class="mb-3"><label for="ipInput" class="form-label"><i class="fas fa-list"></i> IP地址列表
@@ -128,21 +125,8 @@ margin-bottom: 1rem;
 			}
 			// 页面加载完成后初始化
 			document.addEventListener('DOMContentLoaded', function() {
-			// 密钥由门户环境变量注入服务端，前端不持有
-			const savedApiKey = '';
-			if (savedApiKey) {
-			document.getElementById('apiKey').value = savedApiKey;
-			// 不自动设置为已配置，需要重新验证
-			updateApiStatus('需要重新验证', 'warning');
-			    }
-			// API密钥输入事件 - 移除自动保存逻辑
-			document.getElementById('apiKey').addEventListener('input', function() {
-			// 输入变化时重置验证状态
-			isApiKeyValid = false;
-			updateApiStatus('未验证', 'secondary');
-			hideQuotaInfo();
-			updateAnalyzeButtonState();
-			    });
+			// 密钥由门户环境变量注入服务端：加载即自动检测可用性
+			validateApiKey();
 			// IP输入框事件
 			document.getElementById('ipInput').addEventListener('input', countIPs);
 			// 初始化分析按钮状态
@@ -150,12 +134,8 @@ margin-bottom: 1rem;
 			});
 			// API密钥验证功能
 			async function validateApiKey() {
-			const apiKey = document.getElementById('apiKey').value.trim();
 			const validateBtn = document.getElementById('validateApiBtn');
-			if (!apiKey) {
-			updateApiStatus('请输入API密钥', 'danger');
-			return;
-			    }
+			// 服务端自动使用注入的环境变量密钥（前端不持有）
 			// 显示验证中状态
 			validateBtn.disabled = true;
 			validateBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 验证中...';
@@ -166,9 +146,7 @@ margin-bottom: 1rem;
 			headers: {
 			'Content-Type': 'application/json'
 			            },
-			body: JSON.stringify({
-			api_key: apiKey
-			            })
+			body: JSON.stringify({})
 			        });
 			const result = await response.json();
 			if (result.valid) {
@@ -347,7 +325,6 @@ margin-bottom: 1rem;
 			// 开始分析 - 修改版本（支持保留地址过滤）
 			async function startAnalysis() {
 			const ipText = document.getElementById('ipInput').value.trim();
-			const apiKey = document.getElementById('apiKey').value.trim();
 			const skipPrivate = document.getElementById('skipPrivateIPs').checked;
 			if (!ipText) {
 			alert('请输入IP地址');
@@ -390,8 +367,7 @@ margin-bottom: 1rem;
 			'Content-Type': 'application/json'
 			            },
 			body: JSON.stringify({
-			ips: ipList.join('\n'), // 将过滤后的IP列表转为字符串
-			api_key: apiKey
+			ips: ipList.join('\n') // 密钥由服务端环境变量提供
 			            })
 			        });
 			if (!response.ok) {

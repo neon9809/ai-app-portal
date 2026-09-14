@@ -47,6 +47,18 @@ def abuseipdb_key() -> str | None:
     return key or None
 
 
+def egress_reason(err: Exception) -> str:
+    """从 runner 的 RuntimeError（平台接口错误(<code>): <body json>）里提取可读原因"""
+    m = re.search(r"\((\d+)\):\s*(.+)", str(err), re.S)
+    if m:
+        try:
+            msg = json.loads(m.group(2)).get("error", {}).get("message", "")
+            return f"HTTP {m.group(1)} {msg}".strip()[:200]
+        except ValueError:
+            return f"HTTP {m.group(1)}"[:200]
+    return str(err)[:200]
+
+
 def fetch_json(url: str, headers: dict | None = None) -> tuple[int, dict]:
     """经平台 egress 代理 GET 并解析 JSON，返回 (上游状态码, 解析结果)。
     平台侧拒绝（白名单未声明等）以 RuntimeError 抛出，由调用方兜底。"""
@@ -266,10 +278,10 @@ def validate_api():
         return jsonify({"valid": False, "error": f"API验证失败 (状态码: {status})"}), 400
     except RuntimeError as err:
         logger.warning("密钥验证出站被拒: %s", err)
-        return jsonify({"valid": False, "error": "出站请求被平台拒绝（请确认 manifest.network 白名单）"}), 400
+        return jsonify({"valid": False, "error": f"出站请求被平台拒绝：{egress_reason(err)}"}), 400
     except Exception as err:  # noqa: BLE001
         logger.error("密钥验证异常: %s", err)
-        return jsonify({"valid": False, "error": "验证过程中发生错误"}), 500
+        return jsonify({"valid": False, "error": f"平台出站代理不可达：{str(err)[:160]}"}), 502
 
 
 @app.route("/analyze", methods=["POST"])

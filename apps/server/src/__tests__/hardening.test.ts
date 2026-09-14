@@ -417,6 +417,21 @@ describe('HTTPS 跳转 Host 白名单（P2-11）', () => {
       setSetting('ACME_DOMAIN', '');
     }
   });
+
+  it('loopback Host 豁免：平台内部调用（沙箱 egress/LLM、健康检查）不被 302——否则 302 会让 urllib 把 POST 降级为 GET 打挂沙箱出站（ip-analyzer 实测）', async () => {
+    setSetting('HTTPS_REDIRECT', 'true');
+    setSetting('ACME_DOMAIN', 'regtest.example.com');
+    try {
+      for (const host of ['127.0.0.1', 'localhost']) {
+        const r = await get(host);
+        expect(`${host}:${String(r)}`).not.toContain(':302');
+        expect(String(r)).not.toContain('https://');
+      }
+    } finally {
+      setSetting('HTTPS_REDIRECT', 'false');
+      setSetting('ACME_DOMAIN', '');
+    }
+  });
 });
 
 describe('身份头验签（P3-16：exp 强制 + jti 一次性）', () => {

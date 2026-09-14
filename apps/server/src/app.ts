@@ -84,6 +84,15 @@ export function createApp(cfg: AapConfig = config): Express {
     if (getSettingBool('HTTPS_REDIRECT', false) && !exempt) {
       const proto = req.protocol;
       if (proto === 'http') {
+        const hostname = (req.headers.host ?? '').replace(/:\d+$/, '').replace(/^\[|\]$/g, '').toLowerCase();
+        // 平台内部调用（沙箱 runner 的 egress / LLM 代理、FPK 统一网关）走 loopback
+        // Host：重定向到公网域名会让 urllib/undici 跟随 302 并把 POST 降级为 GET，
+        // 打挂所有沙箱出站（ip-analyzer 实测）。豁免判断只读 Host，不回显（P2-11
+        // 的禁令约束的是「跳转目标」，targetHost 逻辑保持不变）。
+        if (hostname === '127.0.0.1' || hostname === 'localhost' || hostname === '::1') {
+          next();
+          return;
+        }
         // Host 白名单（P2-11）：跳转目标只认配置域名，不反射请求 Host——
         // 直达源 IP 场景可被利用做钓鱼/缓存投毒。ACME_DOMAIN 未配置时退回
         // Host 回显（纯门户模式无已知域名，保持旧行为）。
