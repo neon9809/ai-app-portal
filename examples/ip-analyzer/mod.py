@@ -38,8 +38,58 @@ PKG_DIR = os.environ.get("AAP_PACKAGE_DIR") or os.path.dirname(os.path.abspath(_
 
 app = Flask(__name__)
 
-# 分析任务表（persistent 进程内长驻；invoked 模式禁这种内存态）
-analysis_tasks: dict = {}
+# 分析任务落 aap.db（每包独立 SQLite）：persistent 进程会被空闲回收 / 崩溃重启 /
+# 平台重新部署，进程内存态不可靠——任务与结果必须跨进程存活（状态纪律）。
+TASK_SCHEMA = """
+CREATE TABLE IF NOT EXISTS analysis_tasks (
+    task_id      TEXT PRIMARY KEY,
+    status       TEXT NOT NULL,
+    total        INTEGER,
+    completed    INTEGER DEFAULT 0,
+    current_ip   TEXT,
+    meta_json    TEXT,
+    results_json TEXT,
+    error        TEXT,
+    created_at   TEXT,
+    completed_at TEXT
+)
+"""
+
+
+def ensure_schema() -> None:
+    aap.db.execute(TASK_SCHEMA)  # noqa: F821 — runner 注入
+
+
+def task_create(task_id: str, meta: dict) -> None:
+    ensure_schema()
+    aap.db.execute(  # noqa: F821
+        "INSERT INTO analysis_tasks (task_id, status, meta_json, created_at) VALUES (?, ?, ?, ?)",
+        (task_id, "pending", json.dumps(meta), datetime.now().isoformat()),
+    )
+
+
+def task_update(task_id: str, **fields) -> None:
+    cols = ", ".join(f"{k} = ?" for k in fields)
+    aap.db.execute(  # noqa: F821
+        f"UPDATE analysis_tasks SET {cols} WHERE task_id = ?",
+        (*fields.values(), task_id),
+    )
+
+
+def task_get(task_id: str) -> dict | None:
+    ensure_schema()
+    rows = aap.db.query(  # noqa: F821
+        "SELECT * FROM analysis_tasks WHERE task_id = ?",
+        (task_id,),
+    )
+    if not rows:
+        return None
+    r = rows[0]
+    out = {k: r[k] for k in ("task_id", "status", "total", "completed", "current_ip", "error", "created_at", "completed_at")}
+    out.update(json.loads(r["meta_json"] or "{}"))
+    if r["results_json"]:
+        out["results"] = json.loads(r["results_json"])
+    return out
 
 
 def abuseipdb_key() -> str | None:
@@ -224,30 +274,27 @@ def analyze_ips_background(task_id: str, ip_list: list[str]) -> None:
     try:
         analyzer = IPAnalyzer(abuseipdb_key())
         results: list[dict] = []
-        analysis_tasks[task_id]["status"] = "running"
-        analysis_tasks[task_id]["total"] = len(ip_list)
-        analysis_tasks[task_id]["completed"] = 0
+        task_update(task_id, status="running", total=len(ip_list), completed=0)
 
         for i, ip in enumerate(ip_list):
-            if analysis_tasks[task_id]["status"] == "cancelled":
-                logger.info("任务已取消 task=%s done=%d", task_id[:8], i)
-                break
             try:
                 results.append(analyzer.analyze_ip(ip))
-                analysis_tasks[task_id]["completed"] = i + 1
-                analysis_tasks[task_id]["current_ip"] = ip
+                # 进度即时落库：进程即使被回收，已完成的进度也不丢
+                task_update(task_id, completed=i + 1, current_ip=ip)
             except Exception as err:  # noqa: BLE001 — 单 IP 失败记录后继续
                 logger.error("分析失败 ip=%s err=%s", ip, err)
                 results.append({"ip": ip, "error": str(err), "risk_level": "未知", "risk_color": "secondary"})
 
-        analysis_tasks[task_id]["status"] = "completed"
-        analysis_tasks[task_id]["results"] = results
-        analysis_tasks[task_id]["completed_at"] = datetime.now().isoformat()
+        task_update(
+            task_id,
+            status="completed",
+            results_json=json.dumps(results, ensure_ascii=False),
+            completed_at=datetime.now().isoformat(),
+        )
         logger.info("分析完成 task=%s total=%d", task_id[:8], len(results))
     except Exception as err:  # noqa: BLE001
         logger.error("后台任务失败 task=%s err=%s", task_id[:8], err)
-        analysis_tasks[task_id]["status"] = "error"
-        analysis_tasks[task_id]["error"] = str(err)
+        task_update(task_id, status="error", error=str(err))
 
 
 # ---------- 页面与静态资源（相对路径；门户前缀 /app/ip-analyzer/ 由平台反代） ----------
@@ -301,15 +348,13 @@ def analyze():
         return jsonify({"error": "单次最多分析 200 个IP"}), 400
 
     task_id = str(uuid.uuid4())
-    analysis_tasks[task_id] = {
-        "status": "pending",
-        "created_at": datetime.now().isoformat(),
+    task_create(task_id, {
         "ip_count": len(ip_list),
         "ip_types": {
             "ipv4": len([ip for ip in ip_list if ":" not in ip]),
             "ipv6": len([ip for ip in ip_list if ":" in ip]),
         },
-    }
+    })
     threading.Thread(target=analyze_ips_background, args=(task_id, ip_list), daemon=True).start()
     logger.info("分析任务创建 task=%s count=%d", task_id[:8], len(ip_list))
     return jsonify({"task_id": task_id})
@@ -317,15 +362,16 @@ def analyze():
 
 @app.route("/status/<task_id>")
 def get_status(task_id):
-    task = analysis_tasks.get(task_id)
+    task = task_get(task_id)
     if not task:
         return jsonify({"error": "任务不存在"}), 404
+    task.pop("results", None)  # 进度轮询不带大结果集
     return jsonify(task)
 
 
 @app.route("/results/<task_id>")
 def get_results(task_id):
-    task = analysis_tasks.get(task_id)
+    task = task_get(task_id)
     if not task:
         return jsonify({"error": "任务不存在"}), 404
     if task["status"] != "completed":
@@ -335,17 +381,18 @@ def get_results(task_id):
 
 @app.route("/download/<task_id>")
 def download_results(task_id):
-    task = analysis_tasks.get(task_id)
+    task = task_get(task_id)
     if not task:
         return jsonify({"error": "任务不存在"}), 404
     if task["status"] != "completed":
         return jsonify({"error": "分析未完成"}), 400
+    results = task.get("results") or []
 
     output = io.StringIO()
-    if task["results"]:
-        writer = csv.DictWriter(output, fieldnames=list(task["results"][0].keys()))
+    if results:
+        writer = csv.DictWriter(output, fieldnames=list(results[0].keys()))
         writer.writeheader()
-        writer.writerows(task["results"])
+        writer.writerows(results)
     return send_file(
         io.BytesIO(output.getvalue().encode("utf-8")),
         mimetype="text/csv",

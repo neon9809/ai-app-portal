@@ -1,11 +1,12 @@
 ---
 name: app-develop
 description: "开发 ai-app-portal（AI应用门户）时用：架构决策与路径反代经验。"
-version: 2.3.0
+version: 2.3.1
 ---
 
 # ai-app-portal（AI应用门户）开发指南
 
+> v2.3.1 变更：§二 补两条实测经验——persistent 沙箱反代剥 /app/<id> 前缀（下发 x-forwarded-prefix、Location 镜像回写）；HTTPS_REDIRECT 按 loopback Host 豁免（沙箱内部 POST 曾被 302→GET 打断全部出站）。
 > v2.3.0 变更：新增 §9.5「应用环境变量 / 机密（G6）」——manifest.env 声明 + 加密存储 + 沙箱启动注入；与 app-develop 规范 v0.2.2 §1.1 配套。
 > v2.2.0 变更：新增 §十「实现状态快照（M1–M3 交付）」；§三 身份头更名 X-AAP-* 并写明密钥来源。
 > v2.1.0 变更：新增 §九「沙箱日志收口与调试沙箱」，与 app-develop 规范 v0.2（§3.5 日志 / §3.6 统一元素 / §八 aap-dev）配套。
@@ -44,6 +45,7 @@ Neon 的 OSS 项目：自托管 AI 应用网关 + 门户，中文名「AI应用�
 8. **凭据注入**：上游凭据存服务端注册表（urlSecret），转发时才拼入，绝不写配置下发浏览器；支持 path 型凭据（Dify `/chat/<id>`，路径即凭据）。
 9. **限流**：双维度令牌桶——每登录用户为主（NAT 场景同事不互相挤爆）+ 每 IP 兜底。
 10. **明示限制**：不做 JS/HTML 深度改写；依赖 Cookie 会话的上游不工作（set-cookie 剥离）。
+11. **persistent 沙箱反代**（实装于 G2）：转发前剥 `/app/<id>` 前缀（包路由挂根，规范模板 `@app.route("/")` 才能命中；此前全路径转发使 ip-analyzer 直接 Werkzeug 404），前缀经 `x-forwarded-prefix` 下发、站内相对 `Location` 镜像回写前缀。**HTTPS_REDIRECT 必须豁免 loopback Host**：沙箱 runner 走 `http://127.0.0.1:<port>` 调平台 egress/LLM，302 到公网域名会被 urllib 跟随且 POST 降级 GET，全部沙箱出站断连（ip-analyzer 实测「出站请求被平台拒绝」）。
 
 ## 三、身份传递（passUser）
 
