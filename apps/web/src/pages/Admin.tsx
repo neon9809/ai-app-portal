@@ -695,7 +695,7 @@ function AppsTab(): ReactNode {
       {/* 接入 / 编辑 弹窗 */}
       <Modal
         title={editing ? `编辑应用：${editing.name}` : creating === 'html' ? '接入 HTML 页' : creating === 'package' ? '上传 .neon-aap 包' : '接入上游应用'}
-        open={Boolean(creating)}
+        open={Boolean(creating) || Boolean(editing)}
         onCancel={() => { setCreating(null); setEditing(null); }}
         footer={null}
         width={580}
