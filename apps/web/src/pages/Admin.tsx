@@ -860,9 +860,9 @@ function UsersRegTab(): ReactNode {
             },
             {
               title: '操作',
-              width: 220,
+              width: 400,
               render: (_, r) => (
-                <Space size="small">
+                <Space size={4} wrap>
                   {r.status === 'pending_approval' ? (
                     <Popconfirm
                       title={`批准「${r.name}」？`}
