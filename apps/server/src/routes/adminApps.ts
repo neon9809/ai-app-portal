@@ -5,6 +5,7 @@
  */
 import express, { Router } from 'express';
 import fs from 'node:fs';
+import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { getDb } from '../db/index.js';
@@ -37,6 +38,8 @@ interface AppPayload {
   enabled?: boolean;
   sort?: number;
   kind?: string;
+  /** kind=html 编辑页面内容（PUT 时生效） */
+  html?: string;
   allowedGroupIds?: number[];
   allowedUserIds?: number[];
 }
@@ -152,6 +155,18 @@ adminAppsRouter.post(
   }),
 );
 
+adminAppsRouter.get(
+  '/admin/apps/:id/html',
+  h(async (req, res) => {
+    const app = findApp(String(req.params.id ?? ''));
+    if (!app) throw new HttpError(404, 'APP_NOT_FOUND', '应用不存在');
+    if (app.kind !== 'html') throw new HttpError(400, 'NOT_HTML', '仅门户托管的 HTML 应用可读取页面内容');
+    const file = path.join(appSiteDir(app.id), 'index.html');
+    if (!fs.existsSync(file)) throw new HttpError(404, 'NO_CONTENT', '该应用尚无页面文件');
+    res.json({ html: fs.readFileSync(file, 'utf8') });
+  }),
+);
+
 adminAppsRouter.put(
   '/admin/apps/:id',
   h(async (req, res) => {
@@ -159,6 +174,16 @@ adminAppsRouter.put(
     const existing = findApp(id);
     if (!existing) throw new HttpError(404, 'APP_NOT_FOUND', '应用不存在');
     const body = (req.body ?? {}) as AppPayload;
+
+    // HTML 页面内容更新（保存即生效；仅 kind=html）
+    if (body.html !== undefined) {
+      if (existing.kind !== 'html') throw new HttpError(400, 'NOT_HTML', '仅门户托管的 HTML 应用可更新页面内容');
+      const html = String(body.html);
+      if (!html.trim()) throw new HttpError(400, 'INVALID_HTML', '页面内容不能为空');
+      if (html.length > 2 * 1024 * 1024) throw new HttpError(400, 'HTML_TOO_LARGE', '页面过大（≤2MB）');
+      writeHtmlApp(id, html);
+      audit(`${req.user!.kind}:${req.user!.id}`, req.clientIp ?? null, 'app.html.update', { id, bytes: html.length });
+    }
 
     const patch: Partial<typeof apps.$inferInsert> = { updatedAt: Date.now() };
     if (body.name !== undefined) patch.name = body.name.trim();

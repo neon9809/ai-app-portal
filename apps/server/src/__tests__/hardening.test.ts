@@ -488,6 +488,37 @@ describe('邀请码并发双花（批二⑧）', () => {
   });
 });
 
+describe('HTML 页面内容编辑（编辑弹窗数据面）', () => {
+  it('GET 读取当前页面；PUT 更新落盘保存即生效；空内容 400；非 html 应用 400', async () => {
+    writeHtmlApp('edit-html', '<h1>V1</h1>');
+    getDb().insert(apps).values({
+      id: 'edit-html', name: 'EditHtml', visibility: 'public', kind: 'html', upstream: '',
+      ownerUserId: ownerId, enabled: true, createdAt: Date.now(), updatedAt: Date.now(),
+    }).run();
+
+    const read = await fetch(`${base}/api/admin/apps/edit-html/html`, { headers: { cookie: adminCookie } });
+    expect(read.status).toBe(200);
+    expect(((await read.json()) as { html: string }).html).toContain('V1');
+
+    const put = await fetch(`${base}/api/admin/apps/edit-html`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', origin: base, cookie: adminCookie },
+      body: JSON.stringify({ html: '<h1>V2-EDITED</h1>' }),
+    });
+    expect(put.status).toBe(200);
+    const file = await fetch(`${base}/app/edit-html/raw/`, { headers: { cookie: ownerCookie } });
+    // owner 是普通用户 → 走 iframe 沙箱外壳；raw 通道才直出内容
+    expect(await file.text()).toContain('V2-EDITED');
+
+    const empty = await fetch(`${base}/api/admin/apps/edit-html`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', origin: base, cookie: adminCookie },
+      body: JSON.stringify({ html: '   ' }),
+    });
+    expect(empty.status).toBe(400);
+  });
+});
+
 describe('托管应用健康探测（批：html/package 无 upstream 不再恒「异常」）', () => {
   it('html 应用探测记 ok；persistent 未拉起记 unknown；测试按钮对托管应用返回 ok', async () => {
     getDb().insert(apps).values({

@@ -605,6 +605,7 @@ function AppsTab(): ReactNode {
           passUser: values.passUser,
           ...(values.urlSecret ? { urlSecret: values.urlSecret } : {}),
           ...(editing.kind === 'upstream' ? { upstream: values.upstream } : {}),
+          ...(editing.kind === 'html' && values.html !== undefined ? { html: String(values.html) } : {}),
         },
       });
       message.success('已保存并生效');
@@ -659,7 +660,13 @@ function AppsTab(): ReactNode {
                     onClick={() => {
                       setEditing(r);
                       setVisMode(r.visibility);
-                      form.setFieldsValue({ ...r, urlSecret: undefined });
+                      form.setFieldsValue({ ...r, urlSecret: undefined, html: undefined });
+                      // HTML 托管应用：拉取当前页面代码预填（编辑内容保存即生效）
+                      if (r.kind === 'html') {
+                        void api<{ html: string }>(`/api/admin/apps/${r.id}/html`)
+                          .then((res) => form.setFieldsValue({ html: res.html }))
+                          .catch(() => undefined);
+                      }
                     }}
                   >
                     编辑
@@ -701,7 +708,7 @@ function AppsTab(): ReactNode {
         width={580}
         destroyOnClose
       >
-        <Form form={form} layout="vertical" onFinish={creating === 'package' ? uploadPackage : saveApp}>
+        <Form form={form} layout="vertical" onFinish={creating === 'package' ? uploadPackage : editing ? saveEdit : saveApp}>
           {!editing ? (
             <Form.Item
               name="id"
@@ -748,10 +755,14 @@ function AppsTab(): ReactNode {
             </Form.Item>
           ) : null}
 
-          {creating === 'html' ? (
-            <Form.Item name="html" label="页面 HTML" rules={[{ required: true, message: '请填写页面内容' }]}
-              extra="门户直接托管在 /app/<ID>/ 下；整页粘贴即可">
-              <Input.TextArea rows={8} placeholder="<!doctype html>…" style={{ fontFamily: 'monospace', fontSize: 12 }} />
+          {creating === 'html' || editing?.kind === 'html' ? (
+            <Form.Item
+              name="html"
+              label={editing ? '页面 HTML（保存即生效）' : '页面 HTML'}
+              rules={[{ required: true, message: '请填写页面内容' }]}
+              extra="门户直接托管在 /app/<ID>/ 下；整页粘贴即可"
+            >
+              <Input.TextArea rows={12} placeholder="<!doctype html>…" style={{ fontFamily: 'monospace', fontSize: 12 }} />
             </Form.Item>
           ) : null}
 
