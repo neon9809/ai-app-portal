@@ -24,7 +24,7 @@ import { getSetting, seedSettings, setSetting } from '../lib/settings.js';
 import { createApp } from '../app.js';
 import { loadConfig } from '../config/index.js';
 import { appSiteDir, storePackageFiles, validateManifest, writeHtmlApp } from '../gateway/staticApp.js';
-import { isPrivateIp } from '../routes/aap.js';
+import { egressHostGate, ipInAllowCidr, isPrivateIp, parseIntranetAllowlist } from '../routes/aap.js';
 import { identityEnv } from '../lib/sandbox.js';
 import { signIdentity, verifyIdentity } from '../gateway/identity.js';
 import { hasLeadingZeroBits } from '../lib/pow.js';
@@ -580,6 +580,34 @@ describe('.neon-aap 包预解析（上传前预览）', () => {
   it('坏包 → 400', async () => {
     const res = await preview(Buffer.from('not a zip').toString('base64'));
     expect(res.status).toBe(400);
+  });
+});
+
+describe('内网出站白名单（EGRESS_INTRANET_ALLOWLIST）', () => {
+  it('解析：域名/IP/CIDR 混合条目', () => {
+    const a = parseIntranetAllowlist('nas.local\n192.168.1.50, 10.0.0.0/8; HTTP://svc.internal/');
+    expect(a.hosts.has('nas.local')).toBe(true);
+    expect(a.hosts.has('192.168.1.50')).toBe(true);
+    expect(a.hosts.has('svc.internal')).toBe(true);
+    expect(ipInAllowCidr('10.1.2.3', a.cidrs)).toBe(true);
+    expect(ipInAllowCidr('192.168.1.3', a.cidrs)).toBe(false);
+    expect(parseIntranetAllowlist('').hosts.size).toBe(0);
+  });
+
+  it('闸门：默认拒绝内网目标；白名单命中即完全放行（管理员权威高于包声明）', () => {
+    const allow = parseIntranetAllowlist('nas.local, 192.168.1.0/24');
+    const manifest = ['nas.local', '192.168.1.50'];
+    // 无白名单：IP 字面量/内网主机名拒绝
+    expect(egressHostGate('192.168.1.50', manifest, parseIntranetAllowlist('')).ok).toBe(false);
+    expect(egressHostGate('nas.local', manifest, parseIntranetAllowlist('')).ok).toBe(false);
+    // 白名单命中 → 放行（IP 精确/CIDR 覆盖/主机名三种形态），无需 manifest 声明
+    expect(egressHostGate('192.168.1.50', manifest, allow).ok).toBe(true);
+    expect(egressHostGate('192.168.1.99', [], allow).ok).toBe(true);
+    expect(egressHostGate('nas.local', [], allow).ok).toBe(true);
+    // 未命中：公网域名不在 manifest → 照旧拒绝
+    expect(egressHostGate('example.com', ['other.com'], allow).ok).toBe(false);
+    // CIDR 覆盖范围外仍按内网拒绝
+    expect(egressHostGate('192.168.2.1', ['192.168.2.1'], allow).ok).toBe(false);
   });
 });
 

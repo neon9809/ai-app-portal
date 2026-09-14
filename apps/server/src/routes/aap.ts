@@ -155,13 +155,6 @@ function hostAllowed(hostname: string, network: string[]): boolean {
   return false;
 }
 
-function isBlockedIpHost(hostname: string): boolean {
-  // 防直连 IP 绕过白名单/SSRF 内网：IP 字面量一律拒绝（白名单域名走 DNS 由平台出站）
-  if (net.isIP(hostname)) return true;
-  if (hostname === 'localhost' || hostname.endsWith('.local') || hostname.endsWith('.internal')) return true;
-  return false;
-}
-
 /** 私网/保留段 IP 判定（IPv4 + IPv6）。对 DNS 解析结果逐条复核，防
  *  `127.0.0.1.nip.io` 类域名经白名单解析到内网（已实测 SSRF 利用路径）。 */
 export function isPrivateIp(ip: string): boolean {
@@ -200,6 +193,80 @@ function resolveHostIps(hostname: string): Promise<string[] | null> {
   });
 }
 
+// ---------- 内网出站白名单（管理员级；供内网部署放行局域网目标） ----------
+
+export interface IntranetAllowlist {
+  /** 精确域名 / IP 字面量（小写） */
+  hosts: Set<string>;
+  /** IPv4 CIDR */
+  cidrs: Array<{ net: number; prefix: number }>;
+}
+
+function ipv4ToInt(ip: string): number | null {
+  const parts = ip.split('.');
+  if (parts.length !== 4) return null;
+  let n = 0;
+  for (const p of parts) {
+    const v = Number(p);
+    if (!Number.isInteger(v) || v < 0 || v > 255 || !/^\d+$/.test(p)) return null;
+    n = n * 256 + v;
+  }
+  return n >>> 0;
+}
+
+export function parseIntranetAllowlist(raw: string | null | undefined): IntranetAllowlist {
+  const hosts = new Set<string>();
+  const cidrs: Array<{ net: number; prefix: number }> = [];
+  for (const rawEntry of (raw ?? '').split(/[,\n;]+/)) {
+    const entry = rawEntry.trim().toLowerCase().replace(/^https?:\/\//, '');
+    if (!entry) continue;
+    const [base, suffix] = entry.split('/');
+    if (!base) continue;
+    // 仅当「base 是 IPv4 且后缀是纯数字」才按 CIDR 解析；否则视为域名/IP 字面量
+    if (suffix !== undefined && /^\d+$/.test(suffix)) {
+      const net = ipv4ToInt(base);
+      const prefix = Number(suffix);
+      if (net === null || prefix < 0 || prefix > 32) continue;
+      cidrs.push({ net, prefix });
+    } else {
+      hosts.add(base);
+    }
+  }
+  return { hosts, cidrs };
+}
+
+export function ipInAllowCidr(ip: string, cidrs: IntranetAllowlist['cidrs']): boolean {
+  const n = ipv4ToInt(ip);
+  if (n === null) return false; // IPv6 仅支持精确条目，不走 CIDR
+  return cidrs.some(({ net, prefix }) => prefix === 0 || ((n ^ net) >>> (32 - prefix)) === 0);
+}
+
+/**
+ * 单跳出站闸门：IP 字面量与内网主机名默认拒绝；管理员「内网出站白名单」
+ * 命中（精确域名/IP 或 CIDR 覆盖）即完全放行——管理员权威高于包声明，
+ * CIDR 区间无法要求包逐 IP 自我声明。未命中时包的 manifest network
+ * 白名单照常生效。
+ */
+export function egressHostGate(
+  hostname: string,
+  network: string[],
+  allow: IntranetAllowlist,
+): { ok: true } | { ok: false; message: string } {
+  const host = hostname.toLowerCase();
+  const adminVouched = allow.hosts.has(host) || (net.isIP(host) && ipInAllowCidr(host, allow.cidrs));
+  if (adminVouched) return { ok: true };
+  if (net.isIP(host)) {
+    return { ok: false, message: '禁止直连 IP/内网地址（如需内网出站，管理员可在「内网出站白名单」放行）' };
+  }
+  if (host === 'localhost' || host.endsWith('.local') || host.endsWith('.internal')) {
+    return { ok: false, message: '禁止访问内网主机名（如需内网出站，管理员可在「内网出站白名单」放行）' };
+  }
+  if (!hostAllowed(host, network)) {
+    return { ok: false, message: `域名 ${hostname} 不在该应用 manifest network 白名单内` };
+  }
+  return { ok: true };
+}
+
 const MAX_EGRESS_HOPS = 5;
 
 aapRouter.post(
@@ -230,6 +297,7 @@ aapRouter.post(
 
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 15_000);
+    const allow = parseIntranetAllowlist(getSetting('EGRESS_INTRANET_ALLOWLIST'));
     try {
       // 白名单与 IP 黑名单逐跳校验：redirect 用 manual 手动跟进，
       // 防白名单域名经 302 跳转内网/平台自身（SSRF 绕过）
@@ -241,17 +309,26 @@ aapRouter.post(
         if (current.protocol !== 'http:' && current.protocol !== 'https:') {
           throw new HttpError(400, 'INVALID_URL', '仅支持 http/https 出站');
         }
-        if (isBlockedIpHost(current.hostname)) {
-          throw new HttpError(403, 'EGRESS_DENIED', '禁止直连 IP/内网地址');
-        }
-        if (!hostAllowed(current.hostname, network)) {
-          throw new HttpError(403, 'EGRESS_DENIED', `域名 ${current.hostname} 不在该应用 manifest network 白名单内`);
+        const gate = egressHostGate(current.hostname, network, allow);
+        if (!gate.ok) {
+          throw new HttpError(403, 'EGRESS_DENIED', gate.message);
         }
         // 解析后 IP 复核：白名单域名若指向内网/保留地址（nip.io 类 DNS 绕过）
-        // 一律拦截；对全部 A/AAAA 记录判定，任一命中即拒
+        // 一律拦截；对全部 A/AAAA 记录判定。管理员「内网出站白名单」可放行：
+        // 精确主机名（vouch 其全部解析）或 CIDR（覆盖解析 IP）。169.254/fe80 链路
+        // 本地（云元数据）无条件拒绝。
         if (!net.isIP(current.hostname)) {
           const ips = await resolveHostIps(current.hostname);
-          if (!ips || ips.some((ip) => isPrivateIp(ip))) {
+          if (!ips) {
+            throw new HttpError(403, 'EGRESS_DENIED', `域名 ${current.hostname} 无法解析`);
+          }
+          const linkLocal = ips.some((ip) => ip.startsWith('169.254.') || ip.toLowerCase().startsWith('fe80:'));
+          if (linkLocal) {
+            throw new HttpError(403, 'EGRESS_DENIED', '链路本地地址（云元数据段）始终拒绝');
+          }
+          const vouched = allow.hosts.has(current.hostname.toLowerCase());
+          const uncovered = (ip: string): boolean => isPrivateIp(ip) && !ipInAllowCidr(ip, allow.cidrs);
+          if (!vouched && ips.some(uncovered)) {
             throw new HttpError(403, 'EGRESS_DENIED', `域名 ${current.hostname} 解析到内网/保留地址，已拦截`);
           }
         }

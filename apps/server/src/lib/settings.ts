@@ -247,6 +247,11 @@ export const SETTING_DEFS: Record<string, SettingDef> = {
   LLM_STREAM_IDLE_TIMEOUT: {
     label: 'LLM 流式闲置超时（秒）',
     group: '应用网关', type: 'int', desc: '流式转发中连续无新字节的容忍时长，超时断开（防上游挂起占满连接）', initial: () => '60', defaultsWork: true, advanced: true },
+  EGRESS_INTRANET_ALLOWLIST: {
+    label: '内网出站白名单',
+    group: '应用网关', type: 'string',
+    desc: '允许沙箱包访问的内网目标（逗号/换行分隔：域名、IP 或 IPv4 CIDR 如 192.168.1.0/24）。命中即完全放行（无需包 manifest 声明，管理员权威高于包声明）；169.254 链路本地始终拒绝。留空 = 禁止一切内网出站（默认，公网部署无需改动）',
+    initial: () => '', defaultsWork: true, advanced: true },
 
   // ---- HTTPS / 证书（B3；默认纯门户模式 = 不启 HTTPS，反代外置） ----
   ACME_DOMAIN: {
