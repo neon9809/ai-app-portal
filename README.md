@@ -22,6 +22,7 @@
 | `packages/aap-sdk` | Python：`aap` 运行时存根 + `aap-dev` 本地调试沙箱（M4 实装） |
 | `examples/hk-toast-recipe` | .neon-aap HTML 包示例（纯前端：manifest.json + index.html，可直接上传门户安装） |
 | `examples/ip-analyzer` | .neon-aap Python 包示例（persistent 沙箱 + manifest.env 机密注入 + egress 白名单出站，移植自 neon9809/ip-analyzer） |
+| `examples/llm-proofread` | .neon-aap Python 包示例（文语校对：规则引擎 + 逐段 LLM + 全文一致性，每用户提示词/词库落 aap.db，LLM 走统一网关按账号归因计费） |
 | `deploy/` | Docker / FPK 分发形态 |
 | `docs/DEVELOPMENT.md` | 开发者文档（架构 / 配置 / LLM 网关接入 / 通知通道 / 订阅计费） |
 | `ai-app-portal-docs/` | 产品需求与规范（PRD / app-develop 技能） |

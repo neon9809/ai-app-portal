@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>文语校对</title>
+<!--
+  AAP 沙箱前端纪律（app-develop.skill §3.7）：
+  无 localStorage/cookie（opaque origin 直接抛 SecurityError）；全部相对路径；
+  剪贴板带 execCommand 降级；右上角留白给门户统一悬浮条。
+-->
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --text: #1d2129; --sub: #6b7280;
+    --primary: #2f6fed; --primary-dark: #2558c4; --border: #e5e7eb;
+    --ins: #16a34a; --ins-bg: #e8f7ee; --del: #dc2626; --del-bg: #fdecec;
+    --warn-bg: #fff7e8; --warn-border: #f5c66d;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 64px 16px 60px; } /* 顶部留白避开门户右上角悬浮条 */
+  header { margin-bottom: 18px; }
+  header h1 { font-size: 22px; letter-spacing: -0.3px; }
+  header p { color: var(--sub); font-size: 13px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 14px; }
+  .card h2 { font-size: 14px; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+  textarea { width: 100%; min-height: 160px; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font: inherit; resize: vertical; outline: none; }
+  textarea:focus { border-color: var(--primary); }
+  .opts { display: flex; flex-wrap: wrap; gap: 14px; margin: 10px 0; font-size: 13px; color: var(--sub); }
+  .opts label { display: flex; align-items: center; gap: 5px; cursor: pointer; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .spacer { flex: 1; }
+  button { font: inherit; cursor: pointer; border: none; border-radius: 8px; padding: 8px 16px; background: var(--primary); color: #fff; font-size: 13px; }
+  button:hover { background: var(--primary-dark); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button.ghost { background: #fff; color: var(--text); border: 1px solid var(--border); }
+  button.ghost:hover { background: #f3f4f6; }
+  button.tiny { padding: 3px 10px; font-size: 12px; border-radius: 6px; }
+  .muted { color: var(--sub); font-size: 12px; }
+  .notice { background: var(--warn-bg); border: 1px solid var(--warn-border); border-radius: 8px; padding: 8px 12px; font-size: 12.5px; margin-bottom: 12px; }
+  .progress { height: 8px; background: #edf0f4; border-radius: 99px; overflow: hidden; }
+  .progress > i { display: block; height: 100%; background: var(--primary); border-radius: 99px; transition: width .4s; }
+  /* diff */
+  .para { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; }
+  .para-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 12px; color: var(--sub); }
+  .diff { font-size: 13.5px; line-height: 1.9; word-break: break-all; }
+  .diff ins { color: var(--ins); background: var(--ins-bg); text-decoration: none; border-radius: 3px; padding: 0 1px; }
+  .diff del { color: var(--del); background: var(--del-bg); border-radius: 3px; padding: 0 1px; }
+  .diff mark.banned { background: #fde8e8; color: var(--del); border-bottom: 2px solid var(--del); border-radius: 3px; padding: 0 1px; }
+  .notes { margin-top: 8px; font-size: 12.5px; color: var(--sub); }
+  .notes li { margin-left: 18px; }
+  .score { font-size: 26px; font-weight: 700; }
+  .err { color: var(--del); font-size: 12.5px; margin-top: 6px; }
+  .badge { font-size: 11px; padding: 1px 8px; border-radius: 99px; background: #eef2ff; color: var(--primary); }
+  /* 设置抽屉 */
+  #settingsMask { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 1000; }
+  #settings { display: none; position: fixed; top: 0; right: 0; bottom: 0; width: min(520px, 96vw); background: #fff; z-index: 1001; overflow-y: auto; padding: 20px; box-shadow: -8px 0 24px rgba(0,0,0,.12); }
+  #settings h3 { font-size: 16px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; }
+  #settings section { margin-bottom: 18px; }
+  #settings h4 { font-size: 13px; margin-bottom: 6px; }
+  #settings textarea { min-height: 110px; font-size: 12.5px; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; background: #f3f4f6; border-radius: 99px; padding: 3px 10px; font-size: 12px; margin: 0 6px 6px 0; }
+  .chip b { font-weight: 500; }
+  .chip button { background: none; color: var(--sub); padding: 0 2px; font-size: 13px; }
+  .chip button:hover { color: var(--del); background: none; }
+  .toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: 28px; background: #1d2129; color: #fff; border-radius: 8px; padding: 9px 18px; font-size: 13px; opacity: 0; transition: opacity .25s; pointer-events: none; z-index: 2000; }
+  .toast.show { opacity: .95; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>文语校对</h1>
+    <p>规则引擎 + 大模型双重审核 · 段落级 Inline Diff · 配置与历史按门户账号隔离</p>
+  </header>
+
+  <div id="idnNotice" class="notice hidden"></div>
+
+  <div class="card">
+    <h2>待校对文本 <span class="muted" id="countInfo"></span></h2>
+    <textarea id="input" placeholder="粘贴长文本（支持多段，按换行分段）。上限 3 万字符 / 60 段。"></textarea>
+    <div class="opts">
+      <label><input type="checkbox" id="optLlm" checked> 大模型逐段校对</label>
+      <label><input type="checkbox" id="optRules" checked> 违禁词 / 替换规则</label>
+      <label><input type="checkbox" id="optCoherence" checked> 全文一致性检查</label>
+    </div>
+    <div class="row">
+      <button id="startBtn" onclick="startJob()">开始校对</button>
+      <span class="spacer"></span>
+      <button class="ghost" onclick="openSettings()">校对设置（提示词 / 词库）</button>
+    </div>
+  </div>
+
+  <div class="card hidden" id="progressCard">
+    <h2>校对进行中 <span class="muted" id="progressText"></span></h2>
+    <div class="progress"><i id="progressBar" style="width:0%"></i></div>
+  </div>
+
+  <div id="results" class="hidden">
+    <div class="card" id="coherenceCard">
+      <h2>全文一致性 <span class="muted">事件逻辑 · 主体线索 · 时空连贯 · 数据细节</span></h2>
+      <div id="coherenceBody" class="muted">未启用</div>
+    </div>
+    <div class="card">
+      <h2>
+        逐段校对结果
+        <span class="row">
+          <button class="ghost tiny" onclick="setAll(true)">全部接受</button>
+          <button class="ghost tiny" onclick="setAll(false)">全部忽略</button>
+          <button class="tiny" onclick="copyFinal()">复制修正后全文</button>
+        </span>
+      </h2>
+      <div id="paraList"></div>
+      <div class="muted" id="usageInfo"></div>
+    </div>
+  </div>
+</div>
+
+<!-- 设置抽屉 -->
+<div id="settingsMask" onclick="closeSettings()"></div>
+<div id="settings">
+  <h3>校对设置 <button class="ghost tiny" onclick="closeSettings()">关闭</button></h3>
+  <div id="setNotice" class="notice hidden"></div>
+  <section>
+    <h4>校对提示词（每段一次；留空用内置默认）</h4>
+    <textarea id="pPrompt"></textarea>
+  </section>
+  <section>
+    <h4>一致性提示词（全文一次；留空用内置默认）</h4>
+    <textarea id="cPrompt"></textarea>
+    <div class="row" style="margin-top:8px">
+      <button onclick="savePrompts()">保存提示词</button>
+      <button class="ghost" onclick="resetPrompts()">恢复内置默认</button>
+      <span class="muted">提示词整体替换默认 system，输出须为严格 JSON</span>
+    </div>
+  </section>
+  <section>
+    <h4>违禁词（命中段落标红）</h4>
+    <div class="row"><input id="wordInput" placeholder="输入违禁词回车添加" style="flex:1;border:1px solid var(--border);border-radius:8px;padding:7px 10px;font:inherit;font-size:13px"><button class="tiny" onclick="addWord()">添加</button></div>
+    <div id="wordChips" style="margin-top:8px"></div>
+  </section>
+  <section>
+    <h4>替换规则（错误写法 → 建议写法）</h4>
+    <div class="row"><input id="rkInput" placeholder="错误写法" style="width:40%;border:1px solid var(--border);border-radius:8px;padding:7px 10px;font:inherit;font-size:13px"><input id="rvInput" placeholder="建议写法" style="flex:1;border:1px solid var(--border);border-radius:8px;padding:7px 10px;font:inherit;font-size:13px"><button class="tiny" onclick="addRule()">添加</button></div>
+    <div id="ruleChips" style="margin-top:8px"></div>
+  </section>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+'use strict';
+/* ================= 工具 ================= */
+const $ = (id) => document.getElementById(id);
+let toastTimer = null;
+function toast(msg) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
+}
+function esc(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+async function api(path, opts = {}) {
+  const res = await fetch('.' + path, {
+    method: opts.method || 'GET',
+    headers: opts.body ? { 'Content-Type': 'application/json' } : {},
+    body: opts.body ? JSON.stringify(opts.body) : undefined,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || ('请求失败 ' + res.status));
+  return data;
+}
+function doCopy(text) {
+  const ok = () => toast('已复制 ✓');
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(ok).catch(() => fallbackCopy(text, ok));
+  } else fallbackCopy(text, ok);
+}
+function fallbackCopy(text, cb) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+  document.body.appendChild(ta);
+  ta.focus(); ta.select();
+  document.execCommand('copy');
+  document.body.removeChild(ta);
+  cb();
+}
+
+/* ================= 状态 ================= */
+let settings = null;      // {identified, proofread_prompt, coherence_prompt, banned_words, replace_rules}
+let job = null;           // {jobId, paragraphs: [{original, accepted}], result}
+let pollTimer = null;
+
+/* ================= 设置 ================= */
+async function openSettings() {
+  try {
+    settings = await api('/settings');
+  } catch (e) { toast(e.message); return; }
+  const n = $('idnNotice');
+  if (!settings.identified) {
+    n.textContent = '未获取到门户用户身份（应用上传时未开启 passUser？）：当前配置与历史将与其他访客共用 shared 空间。';
+    n.classList.remove('hidden');
+  } else n.classList.add('hidden');
+  $('pPrompt').value = settings.proofread_prompt || '';
+  $('cPrompt').value = settings.coherence_prompt || '';
+  renderChips();
+  $('settingsMask').style.display = 'block';
+  $('settings').style.display = 'block';
+}
+function closeSettings() {
+  $('settingsMask').style.display = 'none';
+  $('settings').style.display = 'none';
+}
+async function savePrompts() {
+  try {
+    await api('/settings', { method: 'PUT', body: { proofread_prompt: $('pPrompt').value, coherence_prompt: $('cPrompt').value } });
+    toast('提示词已保存');
+  } catch (e) { toast(e.message); }
+}
+async function resetPrompts() {
+  $('pPrompt').value = ''; $('cPrompt').value = '';
+  await savePrompts();
+  toast('已恢复内置默认');
+}
+function renderChips() {
+  $('wordChips').innerHTML = (settings.banned_words || []).map((w) =>
+    `<span class="chip"><b>${esc(w)}</b><button onclick="delWord('${esc(w)}')" title="删除">✕</button></span>`).join('') || '<span class="muted">暂无</span>';
+  $('ruleChips').innerHTML = (settings.replace_rules || []).map((r) =>
+    `<span class="chip"><b>${esc(r.k)} → ${esc(r.v)}</b><button onclick="delRule('${esc(r.k)}')" title="删除">✕</button></span>`).join('') || '<span class="muted">暂无</span>';
+}
+async function addWord() {
+  const w = $('wordInput').value.trim();
+  if (!w) return;
+  try { await api('/words', { method: 'POST', body: { word: w } }); $('wordInput').value = ''; settings.banned_words.unshift(w); renderChips(); }
+  catch (e) { toast(e.message); }
+}
+async function delWord(w) {
+  try { await api('/words/' + encodeURIComponent(w), { method: 'DELETE' }); settings.banned_words = settings.banned_words.filter((x) => x !== w); renderChips(); }
+  catch (e) { toast(e.message); }
+}
+async function addRule() {
+  const k = $('rkInput').value.trim(), v = $('rvInput').value;
+  if (!k) return;
+  try {
+    await api('/rules', { method: 'POST', body: { k, v } });
+    $('rkInput').value = ''; $('rvInput').value = '';
+    settings.replace_rules = settings.replace_rules.filter((x) => x.k !== k);
+    settings.replace_rules.unshift({ k, v });
+    renderChips();
+  } catch (e) { toast(e.message); }
+}
+async function delRule(k) {
+  try { await api('/rules/' + encodeURIComponent(k), { method: 'DELETE' }); settings.replace_rules = settings.replace_rules.filter((x) => x.k !== k); renderChips(); }
+  catch (e) { toast(e.message); }
+}
+
+/* ================= 校对任务 ================= */
+$('input').addEventListener('input', () => {
+  const t = $('input').value;
+  const paras = t.split('\n').filter((s) => s.trim()).length;
+  $('countInfo').textContent = t.length ? `${t.length} 字符 / ${paras} 段` : '';
+});
+
+async function startJob() {
+  const text = $('input').value;
+  if (!text.trim()) { toast('请先粘贴文本'); return; }
+  $('startBtn').disabled = true;
+  try {
+    const r = await api('/jobs', {
+      method: 'POST',
+      body: {
+        text,
+        use_llm: $('optLlm').checked,
+        use_rules: $('optRules').checked,
+        use_coherence: $('optCoherence').checked,
+      },
+    });
+    job = { jobId: r.job_id, paragraphs: null, accepted: null, result: null };
+    $('results').classList.add('hidden');
+    $('progressCard').classList.remove('hidden');
+    setProgress(0, r.total);
+    pollTimer = setInterval(poll, 1500);
+  } catch (e) {
+    toast(e.message);
+    $('startBtn').disabled = false;
+  }
+}
+function setProgress(done, total) {
+  const pct = total ? Math.round((done / total) * 100) : 0;
+  $('progressBar').style.width = pct + '%';
+  $('progressText').textContent = total ? `${done} / ${total} 段` : '';
+}
+async function poll() {
+  if (!job) return;
+  try {
+    const s = await api('/jobs/' + job.jobId);
+    setProgress(s.done || 0, s.total || 0);
+    if (s.status === 'completed') { clearInterval(pollTimer); await loadResult(); }
+    else if (s.status === 'error') {
+      clearInterval(pollTimer);
+      $('progressCard').classList.add('hidden');
+      $('startBtn').disabled = false;
+      toast('校对失败：' + (s.error || '未知错误'));
+    }
+  } catch (e) { /* 轮询失败静默重试 */ }
+}
+async function loadResult() {
+  job.result = await api('/jobs/' + job.jobId + '/result');
+  const paras = [];
+  const n = (job.result.paragraphs || []).length;
+  for (let i = 0; i < n; i++) paras.push(null);
+  for (const p of job.result.paragraphs || []) paras[p.idx] = p;
+  // 原文要从结果里带回：后端未返回 original 的话用 corrected/original 混合逻辑——
+  // 后端 paragraphs[].rule/original 均有；这里直接用后端字段
+  job.paragraphs = (job.result.paragraphs || []).map((p) => ({
+    original: p.original || '',
+    accepted: true,
+  }));
+  $('progressCard').classList.add('hidden');
+  $('results').classList.remove('hidden');
+  $('startBtn').disabled = false;
+  renderResults();
+}
+
+/* ================= 渲染 ================= */
+function charDiff(a, b) {
+  // 字符级 LCS diff；规模超限退化为整段替换展示
+  if (a.length * b.length > 400000 || !a || !b) return null;
+  const m = a.length, n = b.length;
+  const dp = new Uint32Array((m + 1) * (n + 1));
+  const at = (i, j) => i * (n + 1) + j;
+  for (let i = m - 1; i >= 0; i--)
+    for (let j = n - 1; j >= 0; j--)
+      dp[at(i, j)] = a[i] === b[j] ? dp[at(i + 1, j + 1)] + 1 : Math.max(dp[at(i + 1, j)], dp[at(i, j + 1)]);
+  const ops = [];
+  let i = 0, j = 0;
+  while (i < m && j < n) {
+    if (a[i] === b[j]) { pushOp(ops, '=', a[i]); i++; j++; }
+    else if (dp[at(i + 1, j)] >= dp[at(i, j + 1)]) { pushOp(ops, '-', a[i]); i++; }
+    else { pushOp(ops, '+', b[j]); j++; }
+  }
+  while (i < m) { pushOp(ops, '-', a[i++]); }
+  while (j < n) { pushOp(ops, '+', b[j++]); }
+  return ops;
+}
+function pushOp(ops, t, ch) {
+  const last = ops[ops.length - 1];
+  if (last && last.t === t) last.s += ch;
+  else ops.push({ t, s: ch });
+}
+function renderDiff(original, corrected, rule) {
+  let html = '';
+  // 违禁词标红（打在原文上）
+  if (rule && rule.hits && rule.hits.length) {
+    let h = esc(original);
+    const words = [...new Set(rule.hits.map((x) => x.word))].sort((x, y) => y.length - x.length);
+    for (const w of words) h = h.split(esc(w)).join(`<mark class="banned">${esc(w)}</mark>`);
+    html += `<div class="diff">${h}</div>`;
+  }
+  const ops = corrected != null ? charDiff(original, corrected) : null;
+  if (ops) {
+    let body = '';
+    for (const op of ops) {
+      const s = esc(op.s);
+      if (op.t === '=') body += s;
+      else if (op.t === '-') body += `<del>${s}</del>`;
+      else body += `<ins>${s}</ins>`;
+    }
+    html += `<div class="diff">${body}</div>`;
+  } else if (corrected != null) {
+    html += `<div class="diff"><del>${esc(original)}</del></div><div class="diff"><ins>${esc(corrected)}</ins></div>`;
+  } else if (!html) {
+    html = `<div class="diff">${esc(original)}</div>`;
+  }
+  return html;
+}
+function paraFinal(p, idx) {
+  // 接受状态下的"修正后文本"：LLM corrected > 规则替换文本 > 原文
+  const slot = job.result.paragraphs[idx] || {};
+  if (slot.llm && slot.llm.corrected != null && slot.llm.corrected !== '') return slot.llm.corrected;
+  if (slot.rule && slot.rule.replaced != null) return slot.rule.replaced;
+  return p.original;
+}
+function renderResults() {
+  // 一致性卡片
+  const c = job.result.coherence;
+  const cb = $('coherenceBody');
+  if (!c) { cb.textContent = '未启用'; }
+  else if (c.error) { cb.innerHTML = `<span class="err">✗ ${esc(c.error)}</span>`; }
+  else {
+    const score = c.score != null ? c.score : '—';
+    cb.innerHTML =
+      `<div class="row"><span class="score">${esc(String(score))}<span class="muted" style="font-size:13px">/10</span></span>` +
+      `<span>${esc(c.suggestion || '')}</span></div>` +
+      ((c.issues || []).length ? `<ul class="notes">${c.issues.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : '<div class="notes muted">未发现一致性问题</div>');
+  }
+  // 段落卡片
+  $('paraList').innerHTML = (job.result.paragraphs || []).map((slot, idx) => {
+    const original = slot.original || (job.paragraphs[idx] && job.paragraphs[idx].original) || '';
+    const accepted = job.paragraphs[idx].accepted;
+    const corrected = slot.llm && slot.llm.corrected != null && slot.llm.corrected !== original ? slot.llm.corrected : null;
+    const finalText = paraFinal({ original }, idx);
+    const changed = finalText !== original;
+    const head =
+      `<span class="badge">第 ${idx + 1} 段</span>` +
+      (changed ? `<span class="badge" style="background:var(--ins-bg);color:var(--ins)">有修改</span>` : `<span class="muted">无修改</span>`) +
+      `<span class="spacer"></span>` +
+      (changed
+        ? `<button class="ghost tiny" style="background:${accepted ? 'var(--primary)' : '#fff'};color:${accepted ? '#fff' : 'var(--text)'};border-color:${accepted ? 'var(--primary)' : 'var(--border)'}" onclick="togglePara(${idx},${!accepted})">${accepted ? '✓ 已接受（点击忽略）' : '已忽略（点击接受）'}</button>`
+        : '') +
+      `<button class="ghost tiny" onclick="copyText('${esc(finalText)}')">复制本段</button>`;
+    const notes = slot.llm && slot.llm.notes && slot.llm.notes.length
+      ? `<ul class="notes">${slot.llm.notes.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : '';
+    const ruleInfo = slot.rule && (slot.rule.hits.length || slot.rule.suggestions.length)
+      ? `<div class="notes">规则：命中违禁词 ${slot.rule.hits.map((x) => esc(x.word)).join('、') || '无'}` +
+        (slot.rule.suggestions.length ? `；替换建议 ${slot.rule.suggestions.map((x) => `${esc(x.from)}→${esc(x.to)}×${x.count}`).join('、')}` : '') + `</div>`
+      : '';
+    const llmErr = slot.llm && slot.llm.error ? `<div class="err">LLM：${esc(slot.llm.error)}</div>` : '';
+    return `<div class="para"><div class="para-head">${head}</div>${renderDiff(original, accepted ? corrected : null, slot.rule)}${notes}${ruleInfo}${llmErr}</div>`;
+  }).join('');
+  const u = job.result.usage || {};
+  const tokens = (u.prompt_tokens || 0) + (u.completion_tokens || 0);
+  $('usageInfo').textContent = tokens ? `本次消耗：${u.prompt_tokens || 0} 输入 + ${u.completion_tokens || 0} 输出 = ${tokens} tokens（计入你的门户额度）` : '';
+}
+function togglePara(idx, accepted) {
+  job.paragraphs[idx].accepted = accepted;
+  renderResults();
+}
+function setAll(v) {
+  if (!job) return;
+  job.paragraphs.forEach((p) => { p.accepted = v; });
+  renderResults();
+}
+function copyText(t) { doCopy(t); }
+function copyFinal() {
+  if (!job) return;
+  const parts = (job.result.paragraphs || []).map((slot, idx) => (job.paragraphs[idx].accepted ? paraFinal(slot, idx) : slot.original));
+  doCopy(parts.join('\n'));
+}
+
+/* ================= 初始化 ================= */
+(async function init() {
+  try {
+    settings = await api('/settings');
+    if (!settings.identified) {
+      $('idnNotice').textContent = '未获取到门户用户身份（应用上传时未开启 passUser？）：当前配置与历史将与其他访客共用 shared 空间。';
+      $('idnNotice').classList.remove('hidden');
+    }
+  } catch (e) { /* 设置加载失败不阻塞主流程 */ }
+})();
+</script>
+</body>
+</html>
