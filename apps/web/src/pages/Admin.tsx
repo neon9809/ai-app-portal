@@ -489,6 +489,19 @@ function OverviewTab({ onShowRail, onGoTab }: { onShowRail: () => void; onGoTab:
 
 // ---------- 应用管理（应用列表 + 网关限流配置） ----------
 
+interface PkgPreview {
+  id: string;
+  displayName: string;
+  version: string;
+  type: string;
+  runtime: string | null;
+  capabilities: string[];
+  network: string[];
+  signature: string;
+  exists: boolean;
+  existingKind: string | null;
+}
+
 function AppsTab(): ReactNode {
   const qc = useQueryClient();
   const [form] = Form.useForm();
@@ -497,7 +510,8 @@ function AppsTab(): ReactNode {
   const [testResult, setTestResult] = useState<Record<string, string>>({});
   const [visMode, setVisMode] = useState<string>('login');
   const [pkgFile, setPkgFile] = useState<{ name: string; dataBase64: string } | null>(null);
-  const [pkgInfo, setPkgInfo] = useState<Record<string, unknown> | null>(null);
+  const [pkgPreview, setPkgPreview] = useState<PkgPreview | null>(null);
+  const [previewing, setPreviewing] = useState(false);
 
   const groupsQ = useQuery({ queryKey: ['admin-groups'], queryFn: () => api<{ groups: GroupRow[] }>('/api/admin/groups') });
   const usersQ = useQuery({ queryKey: ['admin-users'], queryFn: () => api<{ users: PublicUser[] }>('/api/admin/users') });
@@ -564,8 +578,14 @@ function AppsTab(): ReactNode {
           urlSecret: acl.urlSecret || undefined,
         },
       });
-      setPkgInfo(r.app);
-      message.success(r.llmProvisioned ? '包校验通过并已接入；已自动签发 LLM 网关凭据' : '包校验通过并已接入');
+      setPkgPreview(null);
+      setCreating(null);
+      form.resetFields();
+      message.success(
+        `已接入：${String(r.app.displayName)} v${String(r.app.version)}（${String(r.app.type)}）` +
+          (r.llmProvisioned ? '；已自动签发 LLM 网关凭据' : ''),
+        6,
+      );
       void qc.invalidateQueries({ queryKey: ['admin-apps'] });
       void qc.invalidateQueries({ queryKey: ['apps'] });
       void qc.invalidateQueries({ queryKey: ['llm-tokens'] });
@@ -625,9 +645,9 @@ function AppsTab(): ReactNode {
         title="应用列表"
         extra={
           <Space size="small">
-            <Button type="primary" onClick={() => { form.resetFields(); setVisMode('login'); setPkgFile(null); setPkgInfo(null); setEditing(null); setCreating('upstream'); }}>接入上游应用</Button>
+            <Button type="primary" onClick={() => { form.resetFields(); setVisMode('login'); setPkgFile(null); setPkgPreview(null); setEditing(null); setCreating('upstream'); }}>接入上游应用</Button>
             <Button onClick={() => { form.resetFields(); setVisMode('restricted'); setEditing(null); setCreating('html'); }}>接入 HTML 页</Button>
-            <Button onClick={() => { form.resetFields(); setVisMode('private'); setPkgFile(null); setPkgInfo(null); setEditing(null); setCreating('package'); }}>上传 .neon-aap</Button>
+            <Button onClick={() => { form.resetFields(); setVisMode('private'); setPkgFile(null); setPkgPreview(null); setEditing(null); setCreating('package'); }}>上传 .neon-aap</Button>
           </Space>
         }
       >
@@ -709,20 +729,21 @@ function AppsTab(): ReactNode {
         destroyOnClose
       >
         <Form form={form} layout="vertical" onFinish={creating === 'package' ? uploadPackage : editing ? saveEdit : saveApp}>
-          {!editing ? (
+          {!editing && creating !== 'package' ? (
             <Form.Item
               name="id"
               label="应用 ID（URL 前缀）"
-              rules={[{ required: creating !== 'package', message: '必填' }, { pattern: /^[a-z0-9][a-z0-9-]*$/, message: '小写字母/数字/连字符' }]}
-              extra={creating === 'package' ? '留空：自动取包内 manifest.name' : '访问地址为 https://你的域名/app/<ID>/'}
+              rules={[{ required: true, message: '必填' }, { pattern: /^[a-z0-9][a-z0-9-]*$/, message: '小写字母/数字/连字符' }]}
+              extra="访问地址为 https://你的域名/app/<ID>/"
             >
-              <Input disabled={Boolean(editing) || creating === 'package'} placeholder="my-app" />
+              <Input disabled={Boolean(editing)} placeholder="my-app" />
             </Form.Item>
           ) : null}
-          <Form.Item name="name" label="应用名称" rules={[{ required: creating !== 'package', message: '必填' }]}
-            extra={creating === 'package' ? '留空：自动取包内 display_name' : undefined}>
-            <Input placeholder="应用名" disabled={creating === 'package'} />
-          </Form.Item>
+          {creating !== 'package' ? (
+            <Form.Item name="name" label="应用名称" rules={[{ required: true, message: '必填' }]}>
+              <Input placeholder="应用名" />
+            </Form.Item>
+          ) : null}
           <Form.Item name="description" label="描述" extra="显示在门户卡片上">
             <Input placeholder="一句话介绍" />
           </Form.Item>
@@ -736,11 +757,46 @@ function AppsTab(): ReactNode {
                   const f = e.target.files?.[0];
                   if (!f) return;
                   const reader = new FileReader();
-                  reader.onload = () => setPkgFile({ name: f.name, dataBase64: String(reader.result).split(',')[1] ?? '' });
+                  reader.onload = () => {
+                    const dataBase64 = String(reader.result).split(',')[1] ?? '';
+                    setPkgFile({ name: f.name, dataBase64 });
+                    setPkgPreview(null);
+                    setPreviewing(true);
+                    void api<PkgPreview>('/api/admin/apps/package/preview', { method: 'POST', json: { filename: f.name, dataBase64 } })
+                      .then((res) => setPkgPreview(res))
+                      .catch((err) => {
+                        setPkgFile(null);
+                        message.error(err instanceof Error ? err.message : '包预解析失败');
+                      })
+                      .finally(() => setPreviewing(false));
+                  };
                   reader.readAsDataURL(f);
                 }}
               />
-              {pkgFile ? <div style={{ fontSize: 12, color: 'var(--aap-text-secondary)' }}>已选择：{pkgFile.name}</div> : null}
+              {pkgFile ? (
+                <div style={{ fontSize: 12, color: 'var(--aap-text-secondary)' }}>
+                  已选择：{pkgFile.name}
+                  {previewing ? ' · 解析中…' : ''}
+                </div>
+              ) : null}
+              {pkgPreview ? (
+                <Alert
+                  type={pkgPreview.signature === 'invalid' ? 'error' : 'info'}
+                  showIcon
+                  style={{ marginTop: 8 }}
+                  message={`解析成功：${pkgPreview.displayName}（ID: ${pkgPreview.id}）v${pkgPreview.version} · ${pkgPreview.type === 'html' ? 'HTML 包' : `Python ${pkgPreview.runtime === 'persistent' ? '持久服务' : '按调用'}`}`}
+                  description={
+                    <div style={{ fontSize: 12 }}>
+                      <div>能力：{pkgPreview.capabilities.length ? pkgPreview.capabilities.join('、') : '无'}；出网白名单：{pkgPreview.network.length ? pkgPreview.network.join('、') : '无'}</div>
+                      <div>
+                        签名：
+                        {({ verified: '可信签名（免审接入）', untrusted: '未信任签名（走审核）', unsigned: '未签名（走审核）', invalid: '签名无效（接入将被拒）' } as Record<string, string>)[pkgPreview.signature] ?? pkgPreview.signature}
+                      </div>
+                      {pkgPreview.exists ? <div>同名应用已存在：接入将作为版本更新（仅归属者/管理员可提交）。</div> : null}
+                    </div>
+                  }
+                />
+              ) : null}
             </Form.Item>
           ) : null}
 
@@ -786,24 +842,13 @@ function AppsTab(): ReactNode {
           ) : null}
 
           {creating === 'package' ? (
-            <Button type="primary" htmlType="submit" block>校验并接入</Button>
+            <Button type="primary" htmlType="submit" block disabled={!pkgFile || previewing || pkgPreview?.signature === 'invalid'}>
+              校验并接入
+            </Button>
           ) : (
             <Button type="primary" htmlType="submit" block>{editing ? '保存（即时生效）' : '接入'}</Button>
           )}
         </Form>
-        {pkgInfo ? (
-          <Alert type="success" showIcon style={{ marginTop: 10 }}
-            message={`已接入：${String(pkgInfo.displayName)} v${String(pkgInfo.version)}（${String(pkgInfo.type)}）`}
-            description={
-              pkgInfo.llmProvisioned
-                ? pkgInfo.pendingRuntime
-                  ? '已自动签发 LLM 网关凭据（运行时启动时自动注入）。python 运行时将在 M4 启用。'
-                  : '已自动签发 LLM 网关凭据。HTML 包已托管生效。'
-                : pkgInfo.pendingRuntime
-                  ? 'python 包已保存，等待 M4 运行时启用。'
-                  : 'HTML 包已托管生效。'
-            } />
-        ) : null}
       </Modal>
     </Space>
   );

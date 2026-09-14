@@ -20,7 +20,7 @@
 | `apps/web` | 前端：React 18 + Vite + TS + Ant Design 5（门户 / 用户中心 / 管理后台三合一 SPA） |
 | `packages/shared` | 前后端共享类型与 API 契约 |
 | `packages/aap-sdk` | Python：`aap` 运行时存根 + `aap-dev` 本地调试沙箱（M4 实装） |
-| `examples/demo-app` | 演示上游应用（体验反代 / WS / SSE / passUser 身份注入） |
+| `examples/hk-toast-recipe` | .neon-aap 包示例（纯前端 HTML 应用：manifest.json + index.html，可直接上传门户安装） |
 | `deploy/` | Docker / FPK 分发形态 |
 | `docs/DEVELOPMENT.md` | 开发者文档（架构 / 配置 / LLM 网关接入 / 通知通道 / 订阅计费） |
 | `ai-app-portal-docs/` | 产品需求与规范（PRD / app-develop 技能） |

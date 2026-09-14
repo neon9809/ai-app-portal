@@ -299,6 +299,48 @@ adminAppsRouter.post(
 
 // ---------- .neon-aap 包上传（校验完整性 + manifest 提取；python 运行时 M4） ----------
 
+/** 上传前预解析：仅校验与提取 manifest/签名信息，不落正式目录、不建应用。
+ *  供管理端选包后即时展示解析结果（临时目录用后即删）。 */
+adminAppsRouter.post(
+  '/admin/apps/package/preview',
+  express.json({ limit: '15mb' }),
+  h(async (req: express.Request, res: express.Response) => {
+    const body = (req.body ?? {}) as { filename?: string; dataBase64?: string };
+    if (!body.dataBase64) throw new HttpError(400, 'INVALID_PACKAGE', '缺少包文件内容');
+    let zipBuf: Buffer;
+    try {
+      zipBuf = Buffer.from(body.dataBase64, 'base64');
+    } catch {
+      throw new HttpError(400, 'INVALID_PACKAGE', '包内容不是合法的 base64');
+    }
+    const tmpDir = `preview_tmp_${randomBytes(8).toString('hex')}`;
+    try {
+      const r = storePackageFiles(tmpDir, zipBuf);
+      const manifest = validateManifest(r.manifest);
+      const sig = checkPackageSignature(r.entries, r.signature as SignatureObj | null);
+      const existing = findApp(manifest.name);
+      res.json({
+        id: manifest.name,
+        displayName: manifest.displayName,
+        version: manifest.version,
+        type: manifest.type,
+        runtime: manifest.type === 'python' ? manifest.runtime : null,
+        capabilities: manifest.capabilities,
+        network: manifest.network,
+        signature: sig.status,
+        /** 同名应用已存在：接入将作为版本更新（需归属者或管理员） */
+        exists: Boolean(existing),
+        existingKind: existing?.kind ?? null,
+      });
+    } catch (err) {
+      if (err instanceof HttpError) throw err;
+      throw new HttpError(400, 'PACKAGE_INVALID', err instanceof Error ? err.message : '包校验失败');
+    } finally {
+      fs.rmSync(appSiteDir(tmpDir), { recursive: true, force: true });
+    }
+  }),
+);
+
 adminAppsRouter.post(
   '/admin/apps/package',
   express.json({ limit: '15mb' }),

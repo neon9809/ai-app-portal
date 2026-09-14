@@ -551,6 +551,38 @@ describe('HTML 页面内容编辑（编辑弹窗数据面）', () => {
   });
 });
 
+describe('.neon-aap 包预解析（上传前预览）', () => {
+  function preview(dataBase64: string): Promise<{ status: number; body: Record<string, unknown> }> {
+    return fetch(`${base}/api/admin/apps/package/preview`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: base, cookie: adminCookie },
+      body: JSON.stringify({ filename: 'pkg.neon-aap', dataBase64 }),
+    }).then(async (r) => ({ status: r.status, body: (await r.json()) as Record<string, unknown> }));
+  }
+
+  it('返回 manifest 解析结果与签名状态，不创建应用、不落正式目录', async () => {
+    const res = await preview(
+      zipPkg({
+        'manifest.json': JSON.stringify({ name: 'preview-pkg', display_name: '预览包', type: 'html', version: '1.0.0', capabilities: ['llm'], network: ['example.com'] }),
+        'index.html': '<h1>hi</h1>',
+      }).toString('base64'),
+    );
+    expect(res.status).toBe(200);
+    expect(res.body.id).toBe('preview-pkg');
+    expect(res.body.displayName).toBe('预览包');
+    expect(res.body.signature).toBe('unsigned');
+    expect(res.body.exists).toBe(false);
+    expect(getDb().select().from(apps).where(eq(apps.id, 'preview-pkg')).get()).toBeUndefined();
+    const dataRoot = path.dirname(appSiteDir('x'));
+    expect(fs.readdirSync(dataRoot).filter((n) => n.startsWith('preview_tmp_'))).toHaveLength(0);
+  });
+
+  it('坏包 → 400', async () => {
+    const res = await preview(Buffer.from('not a zip').toString('base64'));
+    expect(res.status).toBe(400);
+  });
+});
+
 describe('托管应用健康探测（批：html/package 无 upstream 不再恒「异常」）', () => {
   it('html 应用探测记 ok；persistent 未拉起记 unknown；测试按钮对托管应用返回 ok', async () => {
     getDb().insert(apps).values({

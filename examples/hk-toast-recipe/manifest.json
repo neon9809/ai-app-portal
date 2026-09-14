@@ -1,0 +1,11 @@
+{
+  "name": "hk-toast-recipe",
+  "display_name": "超级无敌港式吐司配方",
+  "version": "1.0.0",
+  "type": "html",
+  "entry": "index.html",
+  "description": "港式吐司四步制作教程：和面、一次发酵、二次发酵、开烤，带步骤进度打勾与动画演示，纯前端无需联网。",
+  "author": "Neon",
+  "capabilities": [],
+  "network": []
+}

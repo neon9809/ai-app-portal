@@ -1,0 +1,1169 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>超级无敌港式吐司配方</title>
+    <style>
+        :root {
+  --color-white: rgba(255, 255, 255, 1);
+  --color-black: rgba(0, 0, 0, 1);
+  --color-cream-50: rgba(252, 252, 249, 1);
+  --color-cream-100: rgba(255, 255, 253, 1);
+  --color-gray-200: rgba(245, 245, 245, 1);
+  --color-gray-300: rgba(167, 169, 169, 1);
+  --color-gray-400: rgba(119, 124, 124, 1);
+  --color-slate-500: rgba(98, 108, 113, 1);
+  --color-brown-600: rgba(94, 82, 64, 1);
+  --color-charcoal-700: rgba(31, 33, 33, 1);
+  --color-charcoal-800: rgba(38, 40, 40, 1);
+  --color-slate-900: rgba(19, 52, 59, 1);
+  --color-teal-300: rgba(50, 184, 198, 1);
+  --color-teal-400: rgba(45, 166, 178, 1);
+  --color-teal-500: rgba(33, 128, 141, 1);
+  --color-teal-600: rgba(29, 116, 128, 1);
+  --color-teal-700: rgba(26, 104, 115, 1);
+  --color-teal-800: rgba(41, 150, 161, 1);
+  --color-red-400: rgba(255, 84, 89, 1);
+  --color-red-500: rgba(192, 21, 47, 1);
+  --color-orange-400: rgba(230, 129, 97, 1);
+  --color-orange-500: rgba(168, 75, 47, 1);
+
+  --color-brown-600-rgb: 94, 82, 64;
+  --color-teal-500-rgb: 33, 128, 141;
+  --color-slate-900-rgb: 19, 52, 59;
+  --color-slate-500-rgb: 98, 108, 113;
+  --color-red-500-rgb: 192, 21, 47;
+  --color-red-400-rgb: 255, 84, 89;
+  --color-orange-500-rgb: 168, 75, 47;
+  --color-orange-400-rgb: 230, 129, 97;
+
+  --color-bg-1: rgba(59, 130, 246, 0.08);
+  --color-bg-2: rgba(245, 158, 11, 0.08);
+  --color-bg-3: rgba(34, 197, 94, 0.08);
+  --color-bg-4: rgba(239, 68, 68, 0.08);
+  --color-bg-5: rgba(147, 51, 234, 0.08);
+  --color-bg-6: rgba(249, 115, 22, 0.08);
+  --color-bg-7: rgba(236, 72, 153, 0.08);
+  --color-bg-8: rgba(6, 182, 212, 0.08);
+
+  --color-background: var(--color-cream-50);
+  --color-surface: var(--color-cream-100);
+  --color-text: var(--color-slate-900);
+  --color-text-secondary: var(--color-slate-500);
+  --color-primary: var(--color-teal-500);
+  --color-primary-hover: var(--color-teal-600);
+  --color-primary-active: var(--color-teal-700);
+  --color-secondary: rgba(var(--color-brown-600-rgb), 0.12);
+  --color-secondary-hover: rgba(var(--color-brown-600-rgb), 0.2);
+  --color-secondary-active: rgba(var(--color-brown-600-rgb), 0.25);
+  --color-border: rgba(var(--color-brown-600-rgb), 0.2);
+  --color-btn-primary-text: var(--color-cream-50);
+  --color-card-border: rgba(var(--color-brown-600-rgb), 0.12);
+  --color-card-border-inner: rgba(var(--color-brown-600-rgb), 0.12);
+  --color-error: var(--color-red-500);
+  --color-success: var(--color-teal-500);
+  --color-warning: var(--color-orange-500);
+  --color-info: var(--color-slate-500);
+  --color-focus-ring: rgba(var(--color-teal-500-rgb), 0.4);
+  --color-select-caret: rgba(var(--color-slate-900-rgb), 0.8);
+
+  --focus-ring: 0 0 0 3px var(--color-focus-ring);
+  --focus-outline: 2px solid var(--color-primary);
+  --status-bg-opacity: 0.15;
+  --status-border-opacity: 0.25;
+
+  --font-family-base: "FKGroteskNeue", "Geist", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-family-mono: "Berkeley Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --font-size-xs: 11px;
+  --font-size-sm: 12px;
+  --font-size-base: 14px;
+  --font-size-md: 14px;
+  --font-size-lg: 16px;
+  --font-size-xl: 18px;
+  --font-size-2xl: 20px;
+  --font-size-3xl: 24px;
+  --font-size-4xl: 30px;
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 550;
+  --font-weight-bold: 600;
+  --line-height-tight: 1.2;
+  --line-height-normal: 1.5;
+  --letter-spacing-tight: -0.01em;
+
+  --space-0: 0;
+  --space-1: 1px;
+  --space-2: 2px;
+  --space-4: 4px;
+  --space-6: 6px;
+  --space-8: 8px;
+  --space-10: 10px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-20: 20px;
+  --space-24: 24px;
+  --space-32: 32px;
+
+  --radius-sm: 6px;
+  --radius-base: 8px;
+  --radius-md: 10px;
+  --radius-lg: 12px;
+  --radius-full: 9999px;
+
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.02);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.02);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.04), 0 2px 4px -1px rgba(0, 0, 0, 0.02);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.04), 0 4px 6px -2px rgba(0, 0, 0, 0.02);
+  --shadow-inset-sm: inset 0 1px 0 rgba(255, 255, 255, 0.15), inset 0 -1px 0 rgba(0, 0, 0, 0.03);
+
+  --duration-fast: 150ms;
+  --duration-normal: 250ms;
+  --ease-standard: cubic-bezier(0.16, 1, 0.3, 1);
+
+  --container-sm: 640px;
+  --container-md: 768px;
+  --container-lg: 1024px;
+  --container-xl: 1280px;
+
+  --toast-golden: #f4a259;
+  --toast-brown: #8b6f47;
+  --toast-light: #fef3e2;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-gray-400-rgb: 119, 124, 124;
+    --color-teal-300-rgb: 50, 184, 198;
+    --color-gray-300-rgb: 167, 169, 169;
+    --color-gray-200-rgb: 245, 245, 245;
+
+    --color-bg-1: rgba(29, 78, 216, 0.15);
+    --color-bg-2: rgba(180, 83, 9, 0.15);
+    --color-bg-3: rgba(21, 128, 61, 0.15);
+    --color-bg-4: rgba(185, 28, 28, 0.15);
+    --color-bg-5: rgba(107, 33, 168, 0.15);
+    --color-bg-6: rgba(194, 65, 12, 0.15);
+    --color-bg-7: rgba(190, 24, 93, 0.15);
+    --color-bg-8: rgba(8, 145, 178, 0.15);
+
+    --color-background: var(--color-charcoal-700);
+    --color-surface: var(--color-charcoal-800);
+    --color-text: var(--color-gray-200);
+    --color-text-secondary: rgba(var(--color-gray-300-rgb), 0.7);
+    --color-primary: var(--color-teal-300);
+    --color-primary-hover: var(--color-teal-400);
+    --color-primary-active: var(--color-teal-800);
+    --color-secondary: rgba(var(--color-gray-400-rgb), 0.15);
+    --color-secondary-hover: rgba(var(--color-gray-400-rgb), 0.25);
+    --color-secondary-active: rgba(var(--color-gray-400-rgb), 0.3);
+    --color-border: rgba(var(--color-gray-400-rgb), 0.3);
+    --color-error: var(--color-red-400);
+    --color-success: var(--color-teal-300);
+    --color-warning: var(--color-orange-400);
+    --color-info: var(--color-gray-300);
+    --color-focus-ring: rgba(var(--color-teal-300-rgb), 0.4);
+    --color-btn-primary-text: var(--color-slate-900);
+    --color-card-border: rgba(var(--color-gray-400-rgb), 0.2);
+    --color-card-border-inner: rgba(var(--color-gray-400-rgb), 0.15);
+    --shadow-inset-sm: inset 0 1px 0 rgba(255, 255, 255, 0.1), inset 0 -1px 0 rgba(0, 0, 0, 0.15);
+    --color-select-caret: rgba(var(--color-gray-200-rgb), 0.8);
+  }
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: var(--font-family-base);
+  background-color: var(--color-background);
+  color: var(--color-text);
+  line-height: var(--line-height-normal);
+  -webkit-font-smoothing: antialiased;
+}
+
+.container {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: var(--space-32) var(--space-16);
+}
+
+/* Header */
+.header {
+  text-align: center;
+  padding: var(--space-32) var(--space-16);
+  background: linear-gradient(135deg, var(--toast-golden) 0%, var(--toast-brown) 100%);
+  border-radius: var(--radius-lg);
+  margin-bottom: var(--space-32);
+  box-shadow: var(--shadow-lg);
+  position: relative;
+  overflow: hidden;
+}
+
+.header::before {
+  content: '';
+  position: absolute;
+  top: -50%;
+  right: -50%;
+  width: 200%;
+  height: 200%;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.1) 0%, transparent 70%);
+  animation: headerGlow 8s ease-in-out infinite;
+}
+
+@keyframes headerGlow {
+  0%, 100% { transform: translate(0, 0); }
+  50% { transform: translate(-20%, -20%); }
+}
+
+.header h1 {
+  font-size: var(--font-size-4xl);
+  font-weight: var(--font-weight-bold);
+  color: white;
+  margin-bottom: var(--space-8);
+  position: relative;
+  z-index: 1;
+  text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.header p {
+  font-size: var(--font-size-lg);
+  color: rgba(255, 255, 255, 0.95);
+  position: relative;
+  z-index: 1;
+}
+
+/* Progress Bar */
+.progress-container {
+  margin-bottom: var(--space-32);
+  background: var(--color-surface);
+  padding: var(--space-20);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  border: 1px solid var(--color-card-border);
+}
+
+.progress-bar {
+  display: flex;
+  justify-content: space-between;
+  position: relative;
+  margin-top: var(--space-16);
+}
+
+.progress-bar::before {
+  content: '';
+  position: absolute;
+  top: 20px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--color-border);
+  z-index: 0;
+}
+
+.progress-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-8);
+  position: relative;
+  z-index: 1;
+  flex: 1;
+}
+
+.progress-circle {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--color-surface);
+  border: 2px solid var(--color-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: var(--font-weight-bold);
+  transition: all var(--duration-normal) var(--ease-standard);
+  cursor: pointer;
+}
+
+.progress-circle:hover {
+  transform: scale(1.1);
+  box-shadow: var(--shadow-md);
+}
+
+.progress-circle.completed {
+  background: var(--color-primary);
+  color: white;
+  border-color: var(--color-primary);
+}
+
+.progress-label {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  text-align: center;
+}
+
+.progress-step.completed .progress-label {
+  color: var(--color-primary);
+  font-weight: var(--font-weight-medium);
+}
+
+/* Step Card */
+.step-card {
+  background: var(--color-surface);
+  border-radius: var(--radius-lg);
+  padding: var(--space-32);
+  margin-bottom: var(--space-24);
+  box-shadow: var(--shadow-md);
+  border: 1px solid var(--color-card-border);
+  transition: all var(--duration-normal) var(--ease-standard);
+  opacity: 0;
+  transform: translateY(20px);
+  animation: fadeInUp 0.6s ease-out forwards;
+}
+
+.step-card:nth-child(1) { animation-delay: 0.1s; }
+.step-card:nth-child(2) { animation-delay: 0.2s; }
+.step-card:nth-child(3) { animation-delay: 0.3s; }
+.step-card:nth-child(4) { animation-delay: 0.4s; }
+
+@keyframes fadeInUp {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.step-card:hover {
+  box-shadow: var(--shadow-lg);
+  transform: translateY(-2px);
+}
+
+.step-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-16);
+  margin-bottom: var(--space-24);
+}
+
+.step-number {
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--font-size-2xl);
+  font-weight: var(--font-weight-bold);
+  flex-shrink: 0;
+}
+
+.step-title-group {
+  flex: 1;
+}
+
+.step-title {
+  font-size: var(--font-size-3xl);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+  margin-bottom: var(--space-4);
+}
+
+.step-subtitle {
+  font-size: var(--font-size-base);
+  color: var(--color-text-secondary);
+  font-style: italic;
+}
+
+.step-checkbox {
+  width: 24px;
+  height: 24px;
+  cursor: pointer;
+  accent-color: var(--color-primary);
+}
+
+.step-content {
+  display: flex;
+  gap: var(--space-32);
+  flex-wrap: wrap;
+}
+
+.step-animation {
+  flex: 1;
+  min-width: 280px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-24);
+  background: var(--toast-light);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-card-border-inner);
+}
+
+.step-details {
+  flex: 1;
+  min-width: 280px;
+}
+
+/* Subsections */
+.subsection {
+  margin-bottom: var(--space-24);
+}
+
+.subsection-title {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+  margin-bottom: var(--space-12);
+  padding-bottom: var(--space-8);
+  border-bottom: 2px solid var(--color-primary);
+}
+
+.ingredient-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--space-12);
+  margin-bottom: var(--space-12);
+}
+
+.ingredient-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--space-12);
+  background: var(--color-bg-2);
+  border-radius: var(--radius-base);
+  border: 1px solid var(--color-card-border-inner);
+  transition: all var(--duration-fast) var(--ease-standard);
+}
+
+.ingredient-item:hover {
+  transform: translateX(4px);
+  box-shadow: var(--shadow-sm);
+}
+
+.ingredient-name {
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text);
+}
+
+.ingredient-amount {
+  font-size: var(--font-size-sm);
+  color: var(--color-primary);
+  font-weight: var(--font-weight-semibold);
+  background: white;
+  padding: var(--space-4) var(--space-8);
+  border-radius: var(--radius-sm);
+}
+
+.instruction {
+  padding: var(--space-12) var(--space-16);
+  background: var(--color-bg-6);
+  border-left: 3px solid var(--toast-golden);
+  border-radius: var(--radius-sm);
+  font-style: italic;
+  color: var(--color-text);
+  margin-top: var(--space-12);
+}
+
+/* Details list */
+.details-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+}
+
+.detail-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  padding: var(--space-12) var(--space-16);
+  background: var(--color-bg-2);
+  border-radius: var(--radius-base);
+  border: 1px solid var(--color-card-border-inner);
+}
+
+.detail-icon {
+  width: 24px;
+  height: 24px;
+  color: var(--color-primary);
+}
+
+.detail-text {
+  flex: 1;
+  font-size: var(--font-size-base);
+  color: var(--color-text);
+}
+
+/* Substeps */
+.substeps-list {
+  counter-reset: substep;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+}
+
+.substep-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-12);
+  padding: var(--space-12);
+  background: var(--color-bg-3);
+  border-radius: var(--radius-base);
+  border: 1px solid var(--color-card-border-inner);
+  position: relative;
+  padding-left: var(--space-32);
+}
+
+.substep-item::before {
+  counter-increment: substep;
+  content: counter(substep);
+  position: absolute;
+  left: var(--space-12);
+  top: var(--space-12);
+  width: 20px;
+  height: 20px;
+  background: var(--color-primary);
+  color: white;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-bold);
+}
+
+.substep-text {
+  flex: 1;
+  color: var(--color-text);
+}
+
+/* Instructions list */
+.instructions-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+  margin-top: var(--space-16);
+}
+
+.instruction-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-12);
+  padding: var(--space-12) var(--space-16);
+  background: var(--color-bg-7);
+  border-radius: var(--radius-base);
+  border-left: 3px solid var(--color-warning);
+}
+
+.instruction-icon {
+  width: 20px;
+  height: 20px;
+  color: var(--color-warning);
+  flex-shrink: 0;
+}
+
+.instruction-text {
+  flex: 1;
+  color: var(--color-text);
+}
+
+/* SVG Animations */
+svg {
+  width: 100%;
+  height: 100%;
+  max-width: 280px;
+  max-height: 280px;
+}
+
+/* Mixing Bowl Animation */
+@keyframes rotate {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes bounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+/* Rising Animation */
+@keyframes expand {
+  0% { transform: scale(0.5); opacity: 0.8; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+/* Oven Heat Animation */
+@keyframes wave {
+  0%, 100% { transform: translateY(0) scaleY(1); }
+  50% { transform: translateY(-5px) scaleY(0.95); }
+}
+
+@keyframes colorChange {
+  0% { fill: #f4e4c1; }
+  100% { fill: var(--toast-golden); }
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .header h1 {
+    font-size: var(--font-size-3xl);
+  }
+  
+  .step-content {
+    flex-direction: column;
+  }
+  
+  .step-animation {
+    min-width: 100%;
+  }
+  
+  .progress-bar {
+    flex-wrap: wrap;
+    gap: var(--space-16);
+  }
+  
+  .progress-step {
+    min-width: 45%;
+  }
+  
+  .ingredient-list {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Checkmark animation */
+@keyframes checkmark {
+  0% { stroke-dashoffset: 50; }
+  100% { stroke-dashoffset: 0; }
+}
+
+.checkmark {
+  stroke-dasharray: 50;
+  stroke-dashoffset: 50;
+}
+
+.progress-circle.completed .checkmark {
+  animation: checkmark 0.5s ease-out forwards;
+}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>超级无敌港式吐司配方</h1>
+            <p>跟着步骤，做出完美的港式吐司</p>
+        </div>
+
+        <!-- Progress Bar -->
+        <div class="progress-container">
+            <h3 style="margin-bottom: var(--space-16); color: var(--color-text);">制作进度</h3>
+            <div class="progress-bar">
+                <div class="progress-step" data-step="1">
+                    <div class="progress-circle">
+                        <span class="step-num">1</span>
+                    </div>
+                    <span class="progress-label">和面</span>
+                </div>
+                <div class="progress-step" data-step="2">
+                    <div class="progress-circle">
+                        <span class="step-num">2</span>
+                    </div>
+                    <span class="progress-label">一次发酵</span>
+                </div>
+                <div class="progress-step" data-step="3">
+                    <div class="progress-circle">
+                        <span class="step-num">3</span>
+                    </div>
+                    <span class="progress-label">二次发酵</span>
+                </div>
+                <div class="progress-step" data-step="4">
+                    <div class="progress-circle">
+                        <span class="step-num">4</span>
+                    </div>
+                    <span class="progress-label">开烤</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step 1: Mixing -->
+        <div class="step-card" data-step="1">
+            <div class="step-header">
+                <div class="step-number">1</div>
+                <div class="step-title-group">
+                    <h2 class="step-title">和面</h2>
+                    <p class="step-subtitle">Mixing Dough</p>
+                </div>
+                <input type="checkbox" class="step-checkbox" data-step="1">
+            </div>
+            <div class="step-content">
+                <div class="step-animation">
+                    <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+                        <!-- Bowl -->
+                        <ellipse cx="100" cy="140" rx="70" ry="15" fill="#e8dcc4" stroke="#8b6f47" stroke-width="2"/>
+                        <path d="M 30 140 Q 30 180 100 190 Q 170 180 170 140" fill="#f5e6d3" stroke="#8b6f47" stroke-width="2"/>
+                        
+                        <!-- Dough in bowl -->
+                        <ellipse cx="100" cy="135" rx="50" ry="12" fill="#f4e4c1">
+                            <animate attributeName="ry" values="12;15;12" dur="2s" repeatCount="indefinite"/>
+                        </ellipse>
+                        
+                        <!-- Spoon/Mixer -->
+                        <g style="transform-origin: 100px 135px; animation: rotate 3s linear infinite;">
+                            <line x1="100" y1="80" x2="100" y2="130" stroke="#8b6f47" stroke-width="3" stroke-linecap="round"/>
+                            <ellipse cx="100" cy="132" rx="15" ry="8" fill="#a08060" stroke="#8b6f47" stroke-width="2"/>
+                        </g>
+                        
+                        <!-- Flour particles -->
+                        <circle cx="70" cy="90" r="3" fill="#fff" opacity="0.8">
+                            <animate attributeName="cy" values="90;130;130" dur="2s" repeatCount="indefinite"/>
+                            <animate attributeName="opacity" values="0.8;0;0" dur="2s" repeatCount="indefinite"/>
+                        </circle>
+                        <circle cx="130" cy="95" r="2.5" fill="#fff" opacity="0.8">
+                            <animate attributeName="cy" values="95;130;130" dur="2.3s" repeatCount="indefinite"/>
+                            <animate attributeName="opacity" values="0.8;0;0" dur="2.3s" repeatCount="indefinite"/>
+                        </circle>
+                        <circle cx="85" cy="85" r="2" fill="#fff" opacity="0.8">
+                            <animate attributeName="cy" values="85;130;130" dur="1.8s" repeatCount="indefinite"/>
+                            <animate attributeName="opacity" values="0.8;0;0" dur="1.8s" repeatCount="indefinite"/>
+                        </circle>
+                        <circle cx="115" cy="88" r="3" fill="#fff" opacity="0.8">
+                            <animate attributeName="cy" values="88;130;130" dur="2.1s" repeatCount="indefinite"/>
+                            <animate attributeName="opacity" values="0.8;0;0" dur="2.1s" repeatCount="indefinite"/>
+                        </circle>
+                    </svg>
+                </div>
+                <div class="step-details">
+                    <div class="subsection">
+                        <h3 class="subsection-title">干原料</h3>
+                        <div class="ingredient-list">
+                            <div class="ingredient-item">
+                                <span class="ingredient-name">面粉</span>
+                                <span class="ingredient-amount">250克</span>
+                            </div>
+                            <div class="ingredient-item">
+                                <span class="ingredient-name">糖</span>
+                                <span class="ingredient-amount">50克</span>
+                            </div>
+                            <div class="ingredient-item">
+                                <span class="ingredient-name">酵母</span>
+                                <span class="ingredient-amount">6克</span>
+                            </div>
+                            <div class="ingredient-item">
+                                <span class="ingredient-name">奶粉</span>
+                                <span class="ingredient-amount">14克</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="subsection">
+                        <h3 class="subsection-title">湿原料</h3>
+                        <div class="ingredient-list">
+                            <div class="ingredient-item">
+                                <span class="ingredient-name">鸡蛋</span>
+                                <span class="ingredient-amount">1个</span>
+                            </div>
+                            <div class="ingredient-item">
+                                <span class="ingredient-name">牛奶</span>
+                                <span class="ingredient-amount">135克</span>
+                            </div>
+                        </div>
+                        <div class="instruction">揉到拉膜，然后加入</div>
+                    </div>
+                    
+                    <div class="subsection">
+                        <h3 class="subsection-title">面团调节</h3>
+                        <div class="ingredient-list">
+                            <div class="ingredient-item">
+                                <span class="ingredient-name">黄油</span>
+                                <span class="ingredient-amount">25克</span>
+                            </div>
+                            <div class="ingredient-item">
+                                <span class="ingredient-name">盐</span>
+                                <span class="ingredient-amount">2克</span>
+                            </div>
+                        </div>
+                        <div class="instruction">继续揉，揉均匀</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step 2: First Fermentation -->
+        <div class="step-card" data-step="2">
+            <div class="step-header">
+                <div class="step-number">2</div>
+                <div class="step-title-group">
+                    <h2 class="step-title">一次发酵</h2>
+                    <p class="step-subtitle">First Fermentation</p>
+                </div>
+                <input type="checkbox" class="step-checkbox" data-step="2">
+            </div>
+            <div class="step-content">
+                <div class="step-animation">
+                    <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+                        <!-- Container -->
+                        <rect x="40" y="60" width="120" height="100" rx="5" fill="none" stroke="#8b6f47" stroke-width="2" opacity="0.3"/>
+                        
+                        <!-- Small dough -->
+                        <circle cx="100" cy="130" r="25" fill="#f4e4c1" stroke="#c9b896" stroke-width="2">
+                            <animate attributeName="r" values="25;50;25" dur="4s" repeatCount="indefinite"/>
+                            <animate attributeName="cy" values="130;110;130" dur="4s" repeatCount="indefinite"/>
+                        </circle>
+                        
+                        <!-- Large dough outline (2x size) -->
+                        <circle cx="100" cy="110" r="50" fill="none" stroke="#f4a259" stroke-width="2" stroke-dasharray="5,5" opacity="0.5"/>
+                        
+                        <!-- Fermentation bubbles -->
+                        <circle cx="90" cy="120" r="3" fill="#fff" opacity="0.6">
+                            <animate attributeName="r" values="0;3;0" dur="3s" repeatCount="indefinite"/>
+                            <animate attributeName="opacity" values="0;0.6;0" dur="3s" repeatCount="indefinite"/>
+                        </circle>
+                        <circle cx="110" cy="115" r="2.5" fill="#fff" opacity="0.6">
+                            <animate attributeName="r" values="0;2.5;0" dur="3.5s" repeatCount="indefinite"/>
+                            <animate attributeName="opacity" values="0;0.6;0" dur="3.5s" repeatCount="indefinite"/>
+                        </circle>
+                        <circle cx="95" cy="135" r="2" fill="#fff" opacity="0.6">
+                            <animate attributeName="r" values="0;2;0" dur="2.8s" repeatCount="indefinite"/>
+                            <animate attributeName="opacity" values="0;0.6;0" dur="2.8s" repeatCount="indefinite"/>
+                        </circle>
+                        
+                        <!-- Temperature indicator -->
+                        <g transform="translate(145, 70)">
+                            <rect x="0" y="0" width="12" height="40" rx="6" fill="#ff6b6b" opacity="0.3"/>
+                            <rect x="2" y="25" width="8" height="13" rx="4" fill="#ff6b6b"/>
+                            <circle cx="6" cy="42" r="6" fill="#ff6b6b"/>
+                            <text x="20" y="30" font-size="10" fill="var(--color-text)">40°C</text>
+                        </g>
+                        
+                        <!-- Time indicator -->
+                        <g transform="translate(30, 30)">
+                            <circle cx="0" cy="0" r="12" fill="none" stroke="var(--color-primary)" stroke-width="2"/>
+                            <line x1="0" y1="0" x2="0" y2="-6" stroke="var(--color-primary)" stroke-width="2" stroke-linecap="round">
+                                <animateTransform attributeName="transform" type="rotate" from="0 0 0" to="360 0 0" dur="4s" repeatCount="indefinite"/>
+                            </line>
+                            <line x1="0" y1="0" x2="4" y2="0" stroke="var(--color-primary)" stroke-width="2" stroke-linecap="round"/>
+                            <text x="-10" y="25" font-size="10" fill="var(--color-text)">40分钟</text>
+                        </g>
+                    </svg>
+                </div>
+                <div class="step-details">
+                    <div class="details-list">
+                        <div class="detail-item">
+                            <svg class="detail-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"></path>
+                            </svg>
+                            <span class="detail-text">温暖的环境（40度左右）</span>
+                        </div>
+                        <div class="detail-item">
+                            <svg class="detail-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                            </svg>
+                            <span class="detail-text">约40分钟</span>
+                        </div>
+                        <div class="detail-item">
+                            <svg class="detail-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 11l5-5m0 0l5 5m-5-5v12"></path>
+                            </svg>
+                            <span class="detail-text">发酵到两倍大</span>
+                        </div>
+                    </div>
+                    <div class="instruction" style="margin-top: var(--space-16);">然后揉，赶出气泡</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step 3: Second Fermentation -->
+        <div class="step-card" data-step="3">
+            <div class="step-header">
+                <div class="step-number">3</div>
+                <div class="step-title-group">
+                    <h2 class="step-title">二次发酵</h2>
+                    <p class="step-subtitle">Second Fermentation</p>
+                </div>
+                <input type="checkbox" class="step-checkbox" data-step="3">
+            </div>
+            <div class="step-content">
+                <div class="step-animation">
+                    <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+                        <!-- Bread pan -->
+                        <rect x="50" y="120" width="100" height="60" rx="3" fill="#d4c5a9" stroke="#8b6f47" stroke-width="2"/>
+                        <rect x="52" y="122" width="96" height="5" fill="#8b6f47" opacity="0.3"/>
+                        
+                        <!-- Three dough rolls -->
+                        <g>
+                            <!-- Roll 1 -->
+                            <ellipse cx="75" cy="155" rx="18" ry="12" fill="#f4e4c1" stroke="#c9b896" stroke-width="1.5">
+                                <animate attributeName="ry" values="12;18;12" dur="4s" repeatCount="indefinite"/>
+                                <animate attributeName="cy" values="155;145;155" dur="4s" repeatCount="indefinite"/>
+                            </ellipse>
+                            
+                            <!-- Roll 2 -->
+                            <ellipse cx="100" cy="155" rx="18" ry="12" fill="#f4e4c1" stroke="#c9b896" stroke-width="1.5">
+                                <animate attributeName="ry" values="12;18;12" dur="4s" begin="0.3s" repeatCount="indefinite"/>
+                                <animate attributeName="cy" values="155;145;155" dur="4s" begin="0.3s" repeatCount="indefinite"/>
+                            </ellipse>
+                            
+                            <!-- Roll 3 -->
+                            <ellipse cx="125" cy="155" rx="18" ry="12" fill="#f4e4c1" stroke="#c9b896" stroke-width="1.5">
+                                <animate attributeName="ry" values="12;18;12" dur="4s" begin="0.6s" repeatCount="indefinite"/>
+                                <animate attributeName="cy" values="155;145;155" dur="4s" begin="0.6s" repeatCount="indefinite"/>
+                            </ellipse>
+                        </g>
+                        
+                        <!-- Shaping process visualization (top) -->
+                        <g transform="translate(0, -20)">
+                            <!-- Original dough -->
+                            <circle cx="50" cy="50" r="15" fill="#f4e4c1" opacity="0.5"/>
+                            <text x="47" y="75" font-size="8" fill="var(--color-text)">分三</text>
+                            
+                            <text x="68" y="52" font-size="14" fill="var(--color-text)">→</text>
+                            
+                            <!-- Three pieces -->
+                            <ellipse cx="95" cy="50" rx="12" ry="8" fill="#f4e4c1" opacity="0.5"/>
+                            <ellipse cx="112" cy="50" rx="12" ry="8" fill="#f4e4c1" opacity="0.5"/>
+                            <ellipse cx="129" cy="50" rx="12" ry="8" fill="#f4e4c1" opacity="0.5"/>
+                            
+                            <text x="143" y="52" font-size="14" fill="var(--color-text)">→</text>
+                            
+                            <!-- Rolled -->
+                            <rect x="158" y="45" width="20" height="10" rx="5" fill="#f4e4c1" opacity="0.5"/>
+                            <text x="163" y="75" font-size="8" fill="var(--color-text)">卷起</text>
+                        </g>
+                    </svg>
+                </div>
+                <div class="step-details">
+                    <div class="subsection">
+                        <h3 class="subsection-title">整形步骤</h3>
+                        <div class="substeps-list">
+                            <div class="substep-item">
+                                <span class="substep-text">面团一分为三</span>
+                            </div>
+                            <div class="substep-item">
+                                <span class="substep-text">擀成三个椭圆</span>
+                            </div>
+                            <div class="substep-item">
+                                <span class="substep-text">放十分钟松弛</span>
+                            </div>
+                            <div class="substep-item">
+                                <span class="substep-text">然后卷成三个卷</span>
+                            </div>
+                            <div class="substep-item">
+                                <span class="substep-text">三个卷放进模具</span>
+                            </div>
+                            <div class="substep-item">
+                                <span class="substep-text">连模具一起二次发酵</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="subsection" style="margin-top: var(--space-16);">
+                        <h3 class="subsection-title">发酵条件</h3>
+                        <div class="details-list">
+                            <div class="detail-item">
+                                <svg class="detail-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"></path>
+                                </svg>
+                                <span class="detail-text">温暖的环境（40度左右）</span>
+                            </div>
+                            <div class="detail-item">
+                                <svg class="detail-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                </svg>
+                                <span class="detail-text">约40分钟</span>
+                            </div>
+                            <div class="detail-item">
+                                <svg class="detail-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 11l5-5m0 0l5 5m-5-5v12"></path>
+                                </svg>
+                                <span class="detail-text">发酵到模具九成满</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step 4: Baking -->
+        <div class="step-card" data-step="4">
+            <div class="step-header">
+                <div class="step-number">4</div>
+                <div class="step-title-group">
+                    <h2 class="step-title">开烤</h2>
+                    <p class="step-subtitle">Baking</p>
+                </div>
+                <input type="checkbox" class="step-checkbox" data-step="4">
+            </div>
+            <div class="step-content">
+                <div class="step-animation">
+                    <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+                        <!-- Oven -->
+                        <rect x="40" y="60" width="120" height="100" rx="8" fill="#555" stroke="#333" stroke-width="3"/>
+                        <rect x="50" y="70" width="100" height="80" rx="4" fill="#2a2a2a" stroke="#444" stroke-width="2"/>
+                        
+                        <!-- Oven window -->
+                        <rect x="60" y="80" width="80" height="40" rx="3" fill="#1a1a1a" stroke="#666" stroke-width="2"/>
+                        
+                        <!-- Toast inside (color changing) -->
+                        <rect x="75" y="95" width="50" height="15" rx="3" fill="#f4e4c1" stroke="#c9b896" stroke-width="1">
+                            <animate attributeName="fill" values="#f4e4c1;#f4d7a1;#f4a259;#e89145;#f4a259" dur="8s" repeatCount="indefinite"/>
+                        </rect>
+                        
+                        <!-- Heat waves -->
+                        <path d="M 65 100 Q 70 95 75 100" stroke="#ff6b6b" stroke-width="2" fill="none" opacity="0.6">
+                            <animate attributeName="d" values="M 65 100 Q 70 95 75 100;M 65 100 Q 70 105 75 100;M 65 100 Q 70 95 75 100" dur="1s" repeatCount="indefinite"/>
+                            <animate attributeName="opacity" values="0.6;0.3;0.6" dur="1s" repeatCount="indefinite"/>
+                        </path>
+                        <path d="M 90 98 Q 95 93 100 98" stroke="#ff6b6b" stroke-width="2" fill="none" opacity="0.6">
+                            <animate attributeName="d" values="M 90 98 Q 95 93 100 98;M 90 98 Q 95 103 100 98;M 90 98 Q 95 93 100 98" dur="1.2s" repeatCount="indefinite"/>
+                            <animate attributeName="opacity" values="0.6;0.3;0.6" dur="1.2s" repeatCount="indefinite"/>
+                        </path>
+                        <path d="M 110 100 Q 115 95 120 100" stroke="#ff6b6b" stroke-width="2" fill="none" opacity="0.6">
+                            <animate attributeName="d" values="M 110 100 Q 115 95 120 100;M 110 100 Q 115 105 120 100;M 110 100 Q 115 95 120 100" dur="0.9s" repeatCount="indefinite"/>
+                            <animate attributeName="opacity" values="0.6;0.3;0.6" dur="0.9s" repeatCount="indefinite"/>
+                        </path>
+                        
+                        <!-- Lower heat element -->
+                        <path d="M 65 135 L 65 140 L 135 140 L 135 135" stroke="#ff4444" stroke-width="3" fill="none">
+                            <animate attributeName="stroke" values="#ff4444;#ff8844;#ff4444" dur="1.5s" repeatCount="indefinite"/>
+                        </path>
+                        
+                        <!-- Upper heat element -->
+                        <path d="M 65 85 L 65 80 L 135 80 L 135 85" stroke="#ff4444" stroke-width="3" fill="none">
+                            <animate attributeName="stroke" values="#ff4444;#ff8844;#ff4444" dur="1.5s" repeatCount="indefinite"/>
+                        </path>
+                        
+                        <!-- Control knobs -->
+                        <circle cx="150" cy="75" r="5" fill="#333" stroke="#666" stroke-width="1"/>
+                        <circle cx="150" cy="95" r="5" fill="#333" stroke="#666" stroke-width="1"/>
+                        
+                        <!-- Temperature display -->
+                        <text x="45" y="175" font-size="12" fill="#ff6b6b" font-weight="bold">180°C</text>
+                        <text x="115" y="175" font-size="12" fill="var(--color-primary)" font-weight="bold">40分钟</text>
+                    </svg>
+                </div>
+                <div class="step-details">
+                    <div class="subsection">
+                        <h3 class="subsection-title">烘烤参数</h3>
+                        <div class="details-list">
+                            <div class="detail-item">
+                                <svg class="detail-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"></path>
+                                </svg>
+                                <span class="detail-text">上下180度</span>
+                            </div>
+                            <div class="detail-item">
+                                <svg class="detail-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                </svg>
+                                <span class="detail-text">40分钟</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="subsection" style="margin-top: var(--space-16);">
+                        <h3 class="subsection-title">完成步骤</h3>
+                        <div class="instructions-list">
+                            <div class="instruction-item">
+                                <svg class="instruction-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                                </svg>
+                                <span class="instruction-text">出烤箱把吐司倒出来晾凉</span>
+                            </div>
+                            <div class="instruction-item">
+                                <svg class="instruction-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                                </svg>
+                                <span class="instruction-text">可以趁热切片</span>
+                            </div>
+                            <div class="instruction-item">
+                                <svg class="instruction-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                                </svg>
+                                <span class="instruction-text">厚切薄切皆可</span>
+                            </div>
+                            <div class="instruction-item">
+                                <svg class="instruction-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                                </svg>
+                                <span class="instruction-text">晾凉后装袋保存（10-20度，3天）</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        // Progress tracking using JavaScript variables (no localStorage)
+        const completedSteps = {};
+
+        // Get all checkboxes
+        const checkboxes = document.querySelectorAll('.step-checkbox');
+        
+        // Add event listeners to checkboxes
+        checkboxes.forEach(checkbox => {
+            checkbox.addEventListener('change', function() {
+                const stepNum = this.getAttribute('data-step');
+                const progressStep = document.querySelector(`.progress-step[data-step="${stepNum}"]`);
+                const progressCircle = progressStep.querySelector('.progress-circle');
+                const stepNum2 = progressCircle.querySelector('.step-num');
+                
+                if (this.checked) {
+                    completedSteps[stepNum] = true;
+                    progressCircle.classList.add('completed');
+                    // Add checkmark
+                    stepNum2.innerHTML = '<svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="white" stroke-width="2"><path class="checkmark" d="M5 10 L8 13 L15 6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+                } else {
+                    delete completedSteps[stepNum];
+                    progressCircle.classList.remove('completed');
+                    stepNum2.textContent = stepNum;
+                }
+            });
+        });
+
+        // Click on progress circles to scroll to step
+        const progressSteps = document.querySelectorAll('.progress-step');
+        progressSteps.forEach(step => {
+            step.addEventListener('click', function() {
+                const stepNum = this.getAttribute('data-step');
+                const stepCard = document.querySelector(`.step-card[data-step="${stepNum}"]`);
+                stepCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            });
+        });
+
+        // Animate elements on scroll
+        const observerOptions = {
+            threshold: 0.1,
+            rootMargin: '0px 0px -100px 0px'
+        };
+
+        const observer = new IntersectionObserver(function(entries) {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    entry.target.style.opacity = '1';
+                    entry.target.style.transform = 'translateY(0)';
+                }
+            });
+        }, observerOptions);
+
+        // Observe all step cards
+        const stepCards = document.querySelectorAll('.step-card');
+        stepCards.forEach(card => {
+            observer.observe(card);
+        });
+    </script>
+</body>
+</html>
