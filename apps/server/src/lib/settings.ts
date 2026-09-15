@@ -254,9 +254,18 @@ export const SETTING_DEFS: Record<string, SettingDef> = {
   SANDBOX_MAX_CONCURRENT_RUNS: {
     label: '沙箱并发执行上限',
     group: '应用网关', type: 'int', desc: '.neon-aap invoked 执行的全局并发进程数上限（超出排队，防进程炸弹）', initial: () => '8', defaultsWork: true, advanced: true },
+  SANDBOX_IDLE_RECYCLE_SECONDS: {
+    label: 'persistent 空闲回收（秒）',
+    group: '应用网关', type: 'int', desc: '持久服务进程无访问多久后回收（下次访问重新拉起；任务型应用的状态应落 aap.db 不受影响）。最小 30', initial: () => '300', defaultsWork: true },
   LLM_STREAM_IDLE_TIMEOUT: {
     label: 'LLM 流式闲置超时（秒）',
     group: '应用网关', type: 'int', desc: '流式转发中连续无新字节的容忍时长，超时断开（防上游挂起占满连接）', initial: () => '60', defaultsWork: true, advanced: true },
+  LLM_TTFB_TIMEOUT_SECONDS: {
+    label: 'LLM 首字节超时（秒）',
+    group: '应用网关', type: 'int', desc: '流式请求等待上游首字节的时长，超时切换下一候选（推理型模型首字节较慢时可调大）。最小 3', initial: () => '15', defaultsWork: true, advanced: true },
+  LLM_TOTAL_TIMEOUT_SECONDS: {
+    label: 'LLM 整体超时（秒）',
+    group: '应用网关', type: 'int', desc: '非流式请求的整体时长上限。最小 10', initial: () => '120', defaultsWork: true, advanced: true },
   EGRESS_INTRANET_ALLOWLIST: {
     label: '内网出站白名单',
     group: '应用网关', type: 'string',

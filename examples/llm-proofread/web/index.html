@@ -123,16 +123,16 @@
   <h3>校对设置 <button class="ghost tiny" onclick="closeSettings()">关闭</button></h3>
   <div id="setNotice" class="notice hidden"></div>
   <section>
-    <h4>校对提示词（每段一次；留空用内置默认）</h4>
+    <h4>校对提示词（每段一次）<span class="muted" id="pSrc" style="font-weight:400"></span></h4>
     <textarea id="pPrompt"></textarea>
   </section>
   <section>
-    <h4>一致性提示词（全文一次；留空用内置默认）</h4>
+    <h4>一致性提示词（全文一次）<span class="muted" id="cSrc" style="font-weight:400"></span></h4>
     <textarea id="cPrompt"></textarea>
     <div class="row" style="margin-top:8px">
       <button onclick="savePrompts()">保存提示词</button>
-      <button class="ghost" onclick="resetPrompts()">恢复内置默认</button>
-      <span class="muted">提示词整体替换默认 system，输出须为严格 JSON</span>
+      <button class="ghost" onclick="resetPrompts()">清除我的自定义</button>
+      <span class="muted">提示词整体替换默认 system，输出须为严格 JSON；清空保存 = 回到默认（归属者配置的应用级提示词或内置）</span>
     </div>
   </section>
   <section>
@@ -208,6 +208,9 @@ async function openSettings() {
   } else n.classList.add('hidden');
   $('pPrompt').value = settings.proofread_prompt || '';
   $('cPrompt').value = settings.coherence_prompt || '';
+  // 来源标注：所见即所用（textarea 里就是当前生效的提示词）
+  $('pSrc').textContent = settings.proofread_prompt_custom ? '（当前：我的自定义）' : '（当前：默认）';
+  $('cSrc').textContent = settings.coherence_prompt_custom ? '（当前：我的自定义）' : '（当前：默认）';
   renderChips();
   $('settingsMask').style.display = 'block';
   $('settings').style.display = 'block';
@@ -219,13 +222,23 @@ function closeSettings() {
 async function savePrompts() {
   try {
     await api('/settings', { method: 'PUT', body: { proofread_prompt: $('pPrompt').value, coherence_prompt: $('cPrompt').value } });
+    settings.proofread_prompt_custom = !!$('pPrompt').value.trim();
+    settings.coherence_prompt_custom = !!$('cPrompt').value.trim();
+    $('pSrc').textContent = settings.proofread_prompt_custom ? '（当前：我的自定义）' : '（当前：默认）';
+    $('cSrc').textContent = settings.coherence_prompt_custom ? '（当前：我的自定义）' : '（当前：默认）';
     toast('提示词已保存');
   } catch (e) { toast(e.message); }
 }
 async function resetPrompts() {
   $('pPrompt').value = ''; $('cPrompt').value = '';
   await savePrompts();
-  toast('已恢复内置默认');
+  // 清空后重新拉取：textarea 回填当前生效值（归属者配置的应用级默认或内置）
+  settings = await api('/settings');
+  $('pPrompt').value = settings.proofread_prompt || '';
+  $('cPrompt').value = settings.coherence_prompt || '';
+  $('pSrc').textContent = '（当前：默认）';
+  $('cSrc').textContent = '（当前：默认）';
+  toast('已清除个人自定义');
 }
 function renderChips() {
   $('wordChips').innerHTML = (settings.banned_words || []).map((w) =>

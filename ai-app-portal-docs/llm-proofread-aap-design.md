@@ -1,8 +1,13 @@
 # llm-proofread（文语校对）· AAP 重构设计
 
-> **状态（2026-09-15）**：MVP 已实现（`examples/llm-proofread/`，v0.1.0）——段落切分、规则引擎、
+> **状态（2026-09-15）**：MVP 已实现（`examples/llm-proofread/`，v0.1.2）——段落切分、规则引擎、
 > 逐段 LLM（并发 3）、一致性检查、Inline Diff、逐段接受/忽略、每用户提示词与词库（aap.db）、
-> 任务落库跨重启。二期：固定表述参考库、校对历史页、用量统计；三期：开放 API（等平台）。
+> 任务落库跨重启。**应用级默认提示词已实装**：manifest.env 声明 `PROOFREAD_PROMPT` /
+> `COHERENCE_PROMPT`（归属者在门户「环境变量」配置，对所有未自定义用户生效）；
+> 提示词优先级 = 用户自定义（aap.db）> 应用级 env 默认 > 包内置。
+> 生成 max_tokens 不在包内设限：由平台 `LLM_SANDBOX_MAX_TOKENS`（0=不限制）统一治理——
+> 推理型模型（deepseek-v4-flash reasoning_tokens 247 起）包内硬编码会把 JSON 截半截（实测教训）。
+> 二期：固定表述参考库、校对历史页、用量统计；三期：开放 API（等平台）。
 >
 > 结论先行：文语校对是「长文本 + LLM + 每用户自有配置」形态的应用，与 AAP 平台能力**天然契合**——
 > 原项目里最重的四块（用户系统、LLM 多上游接入、密钥保管、MySQL/审计）在 AAP 上**全部不用写**，

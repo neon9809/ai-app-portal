@@ -141,6 +141,16 @@ def get_setting(user_key: str, name: str, default: str) -> str:
     return rows[0]["value"] if rows and rows[0]["value"] else default
 
 
+def effective_prompt(user_key: str, name: str, env_var: str, builtin: str) -> tuple[str, bool]:
+    """提示词优先级：用户个性化（aap.db）> 应用级默认（manifest.env 注入，归属者在门户
+    「环境变量」里配置，对所有未自定义的用户生效）> 包内置默认。
+    返回 (生效提示词, 是否用户自定义)。"""
+    personal = get_setting(user_key, name, "")
+    if personal:
+        return personal, True
+    return os.environ.get(env_var, "").strip() or builtin, False
+
+
 def put_setting(user_key: str, name: str, value: str) -> None:
     db_exec(
         "INSERT INTO settings (user_key, name, value) VALUES (?, ?, ?) "
@@ -244,7 +254,7 @@ def proofread_job(job_id: str, user_key: str, identity, text: str, opts: dict) -
 
         # 段落 LLM 校对（并发）
         if opts.get("use_llm"):
-            proofread_prompt = get_setting(user_key, "proofread_prompt", DEFAULT_PROOFREAD_PROMPT)
+            proofread_prompt, _custom = effective_prompt(user_key, "proofread_prompt", "PROOFREAD_PROMPT", DEFAULT_PROOFREAD_PROMPT)
             para_results: dict = {}
 
             def one(i: int, para: str) -> tuple[int, dict, dict]:
@@ -275,7 +285,7 @@ def proofread_job(job_id: str, user_key: str, identity, text: str, opts: dict) -
 
         # 全文一致性检查（单次，与段落校对串行收尾——并行已在段落池内体现）
         if opts.get("use_coherence"):
-            coherence_prompt = get_setting(user_key, "coherence_prompt", DEFAULT_COHERENCE_PROMPT)
+            coherence_prompt, _custom = effective_prompt(user_key, "coherence_prompt", "COHERENCE_PROMPT", DEFAULT_COHERENCE_PROMPT)
             full = text if len(text) <= MAX_COHERENCE_CHARS else text[:MAX_COHERENCE_CHARS] + "…[超长截断]"
             r = llm_json(coherence_prompt, f"通读校验以下全文：\n{full}", identity)
             usage_add(usage_total, r.get("usage") or {})
@@ -366,11 +376,17 @@ def job_result(job_id):
 @app.route("/settings")
 def read_settings():
     user_key = get_user_key()
+    # 返回「生效值」（用户自定义 > 应用级 env 默认 > 包内置）+ 是否自定义，
+    # 前端 textarea 预填生效值，所见即所用
+    pp, pp_custom = effective_prompt(user_key, "proofread_prompt", "PROOFREAD_PROMPT", DEFAULT_PROOFREAD_PROMPT)
+    cp, cp_custom = effective_prompt(user_key, "coherence_prompt", "COHERENCE_PROMPT", DEFAULT_COHERENCE_PROMPT)
     return jsonify({
         "name": current_name(),
         "identified": user_key != "shared",
-        "proofread_prompt": get_setting(user_key, "proofread_prompt", ""),
-        "coherence_prompt": get_setting(user_key, "coherence_prompt", ""),
+        "proofread_prompt": pp,
+        "proofread_prompt_custom": pp_custom,
+        "coherence_prompt": cp,
+        "coherence_prompt_custom": cp_custom,
         "banned_words": [r["word"] for r in db_query("SELECT word FROM banned_words WHERE user_key = ? ORDER BY created_at DESC", (user_key,))],
         "replace_rules": [{"k": r["k"], "v": r["v"]} for r in db_query("SELECT k, v FROM replace_rules WHERE user_key = ? ORDER BY created_at DESC", (user_key,))],
     })

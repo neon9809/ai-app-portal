@@ -277,6 +277,43 @@ describe('沙箱默认模型（LLM_DEFAULT_MODEL，规范 §3.1「不填用平�
   });
 });
 
+describe('LLM 网关超时设置（LLM_TTFB_TIMEOUT_SECONDS，即时生效）', () => {
+  it('首字节超时按设置生效：小于上游延迟则切候选失败，调大后成功', async () => {
+    const TUID = 520;
+    grantTokens(TUID, 100_000, 'ttfb', 1);
+    const slow = await upServer((_q, res) => {
+      setTimeout(() => {
+        res.writeHead(200, { 'content-type': 'text/event-stream' });
+        res.write('data: {"choices":[{"delta":{"content":"ok"}}]}\n\n');
+        res.write('data: [DONE]\n\n');
+        res.end();
+      }, 4000);
+    });
+    okUpstreams.push(slow.server);
+    const slowId = createUpstream('慢上游', slow.baseUrl, 'sk-slow');
+    createRoute({ model: 'slow-model', upstreamId: slowId, upstreamModel: 'slow-up' });
+
+    setSetting('LLM_TTFB_TIMEOUT_SECONDS', '2');
+    const fast = await fetch(`http://127.0.0.1:${gwPort}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...AUTH, ...identityHeaders(TUID) },
+      body: JSON.stringify({ model: 'slow-model', messages: [{ role: 'user', content: 'hi' }], stream: true }),
+    });
+    await fast.text();
+    expect(fast.status).toBe(502); // 2s < 上游 4s 首字节 → 超时且无候选可切
+
+    setSetting('LLM_TTFB_TIMEOUT_SECONDS', '6');
+    const ok = await fetch(`http://127.0.0.1:${gwPort}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...AUTH, ...identityHeaders(TUID) },
+      body: JSON.stringify({ model: 'slow-model', messages: [{ role: 'user', content: 'hi' }], stream: true }),
+    });
+    expect(ok.status).toBe(200);
+    await ok.text();
+    setSetting('LLM_TTFB_TIMEOUT_SECONDS', '');
+  }, 20_000);
+});
+
 describe('aap 代理：沙箱 max_tokens 注入策略（LLM_SANDBOX_MAX_TOKENS，0=不限制）', () => {
   // aap 代理回环调用网关用 config.port（生产=真实监听端口），所以这里起一个
   // 固定端口的独立实例（其他测试文件均 listen(0)，不冲突）

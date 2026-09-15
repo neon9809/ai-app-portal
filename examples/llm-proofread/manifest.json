@@ -1,7 +1,7 @@
 {
   "name": "llm-proofread",
   "display_name": "文语校对",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "python",
   "entry": "mod.py",
   "runtime": "persistent",
@@ -12,5 +12,17 @@
     "llm",
     "db"
   ],
-  "network": []
+  "network": [],
+  "env": {
+    "PROOFREAD_PROMPT": {
+      "required": false,
+      "description": "应用级默认校对提示词：对所有未在页面中自定义提示词的用户生效（留空用包内置默认）。输出须为严格 JSON {corrected, notes}",
+      "default": ""
+    },
+    "COHERENCE_PROMPT": {
+      "required": false,
+      "description": "应用级默认一致性检查提示词（同上）。输出须为严格 JSON {score, issues, suggestion}",
+      "default": ""
+    }
+  }
 }

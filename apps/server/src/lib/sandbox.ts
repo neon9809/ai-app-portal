@@ -276,7 +276,11 @@ interface PersistentProc {
 }
 
 const persistent = new Map<string, PersistentProc>();
-const IDLE_RECYCLE_MS = 5 * 60_000;
+/** 空闲回收阈值：SANDBOX_IDLE_RECYCLE_SECONDS 设置（最小 30s，默认 300s）。
+ *  进程被回收后下次访问重新拉起（任务型应用状态应落 aap.db 不受影响）。 */
+function idleRecycleMs(): number {
+  return Math.max(30, getSettingInt('SANDBOX_IDLE_RECYCLE_SECONDS', 300)) * 1000;
+}
 const MAX_RESTARTS = 3;
 
 function freePort(): Promise<number> {
@@ -394,11 +398,12 @@ export function stopPersistentFor(appId: string): void {
   }
 }
 
-// 空闲回收
+// 空闲回收（每分钟巡检；阈值即时读设置，管理端改完即生效）
 setInterval(() => {
   const now = Date.now();
+  const limit = idleRecycleMs();
   for (const [appId, p] of persistent) {
-    if (now - p.lastUsed > IDLE_RECYCLE_MS) {
+    if (now - p.lastUsed > limit) {
       p.proc.kill('SIGTERM');
       persistent.delete(appId);
       console.log(`[sandbox] persistent 空闲回收: ${appId}`);

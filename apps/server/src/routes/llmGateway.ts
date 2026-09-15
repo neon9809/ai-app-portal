@@ -28,8 +28,14 @@ import { verifyIdentity } from '../gateway/identity.js';
 
 export const llmGatewayRouter = Router();
 
-const TTFB_TIMEOUT_MS = 15_000; // 流式：首字节超时（超时切候选；建立后不断流）
-const FULL_TIMEOUT_MS = 120_000; // 非流式：整体超时
+// 超时即时读设置（LLM_TTFB_TIMEOUT_SECONDS / LLM_TOTAL_TIMEOUT_SECONDS，管理端改完即生效）：
+// 流式首字节超时（超时切候选；建立后不断流）；非流式整体超时
+function ttfbTimeoutMs(): number {
+  return Math.max(3, getSettingInt('LLM_TTFB_TIMEOUT_SECONDS', 15)) * 1000;
+}
+function fullTimeoutMs(): number {
+  return Math.max(10, getSettingInt('LLM_TOTAL_TIMEOUT_SECONDS', 120)) * 1000;
+}
 const DEFAULT_TOKEN_PER_MIN = 60;
 
 function openaiError(status: number, code: string, message: string): { status: number; body: { error: { message: string; type: string; code: string } } } {
@@ -158,7 +164,7 @@ llmGatewayRouter.post(
     for (const candidate of candidates) {
       const url = candidate.upstreamBaseUrl.replace(/\/+$/, '') + '/chat/completions';
       const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), stream ? TTFB_TIMEOUT_MS : FULL_TIMEOUT_MS);
+      const timer = setTimeout(() => ctrl.abort(), stream ? ttfbTimeoutMs() : fullTimeoutMs());
       try {
         const up = await fetch(url, {
           method: 'POST',
