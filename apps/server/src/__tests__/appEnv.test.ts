@@ -270,6 +270,14 @@ AAP_VISIBLE = aap is not None
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
+        if self.path == '/page':
+            body = b'<html><body><h1>persist page</h1></body></html>'
+            self.send_response(200)
+            self.send_header('content-type', 'text/html; charset=utf-8')
+            self.send_header('content-length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         body = json.dumps({
             "hello": "persistent",
             "aap_top": AAP_VISIBLE,
@@ -321,6 +329,15 @@ HTTPServer(("127.0.0.1", int(os.environ["PORT"])), Handler).serve_forever()
     const res2 = await fetch(`${base}/app/persistenv`, { headers: { cookie: adminCookie } });
     const parsed2 = (await res2.json()) as { path: string };
     expect(parsed2.path).toBe('/');
+
+    // HTML 响应注入门户 chrome（W0/§9.3）：JSON 响应不注入
+    const page = await fetch(`${base}/app/persistenv/page`, { headers: { cookie: adminCookie } });
+    const pageBody = await page.text();
+    expect(page.status).toBe(200);
+    expect(pageBody).toContain('portal-chrome.js');
+    const meta = await fetch(`${base}/app/persistenv/meta`, { headers: { cookie: adminCookie } });
+    const metaBody = await meta.text();
+    expect(metaBody).not.toContain('portal-chrome.js');
   });
 
   it('egress：自定义请求头经平台代理转发（逐跳头剥除，管理员内网白名单放行本地桩）', async () => {

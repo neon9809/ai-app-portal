@@ -251,7 +251,7 @@ gatewayRouter.all('/app/:id/*', async (req: Request, res: Response) => {
       if (!port) return htmlError(res, 503, '应用启动中', '请稍后重试');
       // passUser：为沙箱逐请求签名注入身份头（persistent 内 LLM 调用按浏览用户归因计费）
       const identity = app.passUser && user ? signIdentity(user, app.id) : null;
-      return proxyToSandbox(req, res, port, inRaw ? stripRawPrefix(sub0) : sub0, identity, app.id);
+      return proxyToSandbox(req, res, port, inRaw ? stripRawPrefix(sub0) : sub0, identity, app.id, inRaw);
     }
     const sub = inRaw ? stripRawPrefix(sub0) : sub0;
     return serveHtmlApp(req, res, app, sub, inRaw);
@@ -394,6 +394,7 @@ function proxyToSandbox(
   sub: string,
   identity: { payload: string; sig: string } | null,
   appId: string,
+  inRaw = false,
 ): void {
   touchPersistentByPort(port);
   // 沙箱跑的是用户上传代码（不可信）：与 upstream 反代同一张剥离表，
@@ -404,6 +405,7 @@ function proxyToSandbox(
     if (REQ_SKIP.has(k.toLowerCase())) continue;
     headers[k] = Array.isArray(v) ? v.join(', ') : (v ?? '');
   }
+  delete headers['accept-encoding']; // HTML 注入需要明文响应，不接受上游压缩
   if (identity) {
     headers['x-aap-identity'] = identity.payload;
     headers['x-aap-identity-sig'] = identity.sig;
@@ -437,6 +439,28 @@ function proxyToSandbox(
         }
         if (Array.isArray(value)) res.setHeader(key, value);
         else res.setHeader(key, value);
+      }
+      // 统一页面元素（W0/§9.3）：persistent 直连通道的 HTML 响应注入门户 chrome
+      // （沙箱外壳的 raw 通道除外——外壳层已挂 chrome，勿重复）。与 serveHtmlApp
+      // 的 injectChrome 同一幂等策略；仅缓冲小体积 HTML，超限即原样透传
+      const isHtml = String(upRes.headers['content-type'] ?? '').includes('text/html');
+      if (isHtml && !inRaw && req.method === 'GET') {
+        const chunks: Buffer[] = [];
+        let size = 0;
+        let overflow = false;
+        upRes.on('data', (c: Buffer) => {
+          size += c.length;
+          if (size > 2 * 1024 * 1024) overflow = true;
+          if (!overflow) chunks.push(c);
+        });
+        upRes.on('end', () => {
+          const html = Buffer.concat(chunks).toString('utf8');
+          const injected = overflow ? html : injectChrome(html, appId);
+          res.setHeader('content-length', String(Buffer.byteLength(injected)));
+          res.end(injected);
+        });
+        upRes.on('error', () => res.end());
+        return;
       }
       upRes.pipe(res);
     },
