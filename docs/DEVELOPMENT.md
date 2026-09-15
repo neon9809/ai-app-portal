@@ -52,7 +52,7 @@ pnpm db:generate    # drizzle-kit 生成迁移（schema 变更后必跑）
 - 应用注册在 `apps` 表（管理后台 → 应用管理），三种形态 `kind`：
   - `upstream`：反代到内网上游（HTML 改写 + `<base>` + fetch/XHR/script 猴补丁 + 路径穿越双查 + `duplex:'half'` + SSE 零缓冲）
   - `html`：门户托管静态页（`DATA_DIR/appsites/<id>/`），支持简单 HTML 粘贴接入与 .neon-aap html 包
-  - `package`：.neon-aap Python 包。`invoked` 经「统一执行入口」`POST /api/apps/:id/run` 拉起一次性进程运行；`persistent` 首次访问 `/app/<id>/` 时由平台拉起长驻进程并反代（HTTP 与 WebSocket 同通道，同一套门禁/限流；空闲 5 分钟回收、崩溃自动重启、并发执行上限 `SANDBOX_MAX_CONCURRENT_RUNS`）
+  - `package`：.neon-aap Python 包。`invoked` 经「统一执行入口」`POST /api/apps/:id/run` 拉起一次性进程运行；`persistent` 首次访问 `/app/<id>/` 时由平台拉起长驻进程并反代（HTTP 与 WebSocket 同通道，同一套门禁/限流；空闲回收 `SANDBOX_IDLE_RECYCLE_SECONDS` 默认 300s 可调、崩溃自动重启上限 3 次、并发执行上限 `SANDBOX_MAX_CONCURRENT_RUNS`）。反代转发前剥 `/app/<id>` 前缀（包路由挂根），前缀经 `x-forwarded-prefix` 下发、站内相对 `Location` 镜像回写；门户卡片直跳 `/app/<id>/`（`/open/<id>` 保留为兼容重定向页）
 - **用户包 iframe 沙箱（PRD G1 落地）**：归属者非管理员的 html/package 应用，入口渲染为门户外壳页 + `<iframe sandbox="allow-scripts …">`（**无 allow-same-origin**）加载 `/app/<id>/raw/…`；包内容运行在 opaque origin——读 `/api` 受 CORS 拦、写 `/api` 受 CSRF（Origin: null）拦，无同源 cookie 面；统一页面元素挂在外壳层（包代码不可触碰）；管理员自建应用保持既往直出行为
 - **审核门禁（G3 落地）**：`canAccess` 对 `reviewStatus` 为 pending/rejected 的应用仅放行归属者与管理员；非私有应用推未审新版先置 `enabled=false` 下线，审核通过恢复（「已公开应用推新版即时生效」的绕过路径已封堵）
 - WebSocket：HTTP 与 HTTPS server 均挂 `upgrade` → 路径匹配 → 会话鉴权 → 三态门禁 → TCP 管道；`persistent` 沙箱应用的 WS 经同一门禁透传到沙箱端口（与 HTTP 反代同路径语义；沙箱外壳 raw 通道同理剥除）。
@@ -64,7 +64,7 @@ pnpm db:generate    # drizzle-kit 生成迁移（schema 变更后必跑）
   - `restricted` 登录 + 命中 `app_acl`（分组或账号）任一；ACL 为空 = 全部登录用户；归属者与管理员恒可见
   - `private` 仅归属者（用户自建应用默认；门户对非归属者隐藏卡片）
 - passUser 身份注入：`X-AAP-Identity`（base64url JSON：uid/kind/subject/aud/jti/iat/exp）+ `X-AAP-Identity-Sig`（HMAC-SHA256，密钥 `AAP_SIGN_SECRET`）。应用侧验签参考 `gateway/identity.ts` 的 `verifyIdentity`（aud 与 (kind,uid) 契约必查）。客户端自带的身份头在代理入口一律剥除（HTTP/WS/沙箱反代同一张剥离表），仅网关签名注入的可信。
-- 统一页面元素：HTML 响应自动注入 `/portal-chrome.js`（应用门户 / 个人中心 / 退出登录，带会话态显示与回跳）；幂等、失败静默。包作者须预留右上角空间且不得自建登录。
+- 统一页面元素：HTML 响应自动注入 `/portal-chrome.js`（应用门户 / 个人中心 / 退出登录，带会话态显示与回跳）；幂等、失败静默。覆盖三条通道：HTML 托管直出、persistent 反代直连（HTML 缓冲注入，2MB 上限）、沙箱外壳层（包代码不可触碰，raw 通道不重复注入）。包作者须预留右上角空间且不得自建登录。
 
 ## 5. LLM 网关（/v1/*，M2）
 
@@ -83,7 +83,7 @@ client = OpenAI(base_url="http://<host>:8080/v1", api_key="aapk_…")
 - **预检（C6）**：请求前按 `max_tokens×倍率` 原子递减 `llm_balance_cache`，不足 → `402 INSUFFICIENT_BALANCE`；响应后按实际用量校正；**全候选失败/上游 4xx/流式中断等无用量路径即时全额退回预估扣减**；结算循环每分钟对账（重算近期活跃用户，吸收崩溃漂移），**对账重算补减进程内在途预估**（防预检扣减被周期性抹除）。流式转发有闲置超时（`LLM_STREAM_IDLE_TIMEOUT`，默认 60s 无新字节即断开并按已收 usage 结算），防上游挂起占满连接。
 - **无归因调用默认拒绝**：`/v1/chat/completions` 未携带可验签身份头时默认 `403 ATTRIBUTION_REQUIRED`（否则任何持 app token 者可绕过全部余额闸门免费调用，线上实锤项）；可信内网应用可由管理员将计费设置 `LLM_UNATTRIBUTED_POLICY` 切为 `allow`（仅计量不计费）。
 - **用户归因**：应用把门户注入的身份头原样转发给网关即可。客户端自带的 `x-aap-identity*` 请求头在网关侧一律剥除（HTTP 与 WS 同语义），只认可信注入的签名头。
-- **沙箱默认模型**：`aap.llm.chat` 不指定 model 时按规范 §3.1 取 `LLM_DEFAULT_MODEL` 设置（计费组），未设置取模型目录排序第一个；目录为空返回可读 400。管理设置「沙箱默认模型」（计费组）可显式指定。
+- **沙箱默认模型与生成上限**：`aap.llm.chat` 不指定 model 时按规范 §3.1 取 `LLM_DEFAULT_MODEL` 设置（计费组），未设置取模型目录排序第一个；目录为空返回可读 400。生成上限 `LLM_SANDBOX_MAX_TOKENS`（计费组）：包未显式指定 max_tokens 时注入，**0 = 不限制**（默认，模型自然收尾；推理型模型思考消耗大，包内硬编码上限会把 JSON 截半截——llm-proofread 实测）。
 - **上游连通性测试**：`POST /api/admin/llm/upstreams/:id/test` 用该上游第一条启用路由的真实模型发 1-token chat ping（比 /models 列表更能暴露 key 失效、http/https 边缘拦截、模型名映射错误）；管理后台「LLM 网关 → 上游」每行有「测试」按钮。实测教训：DeepSeek 填 `http://api.deepseek.com` 会被边缘 401（Authentication Fails governor），必须 https。
 
 ## 6. 账号与通知通道
@@ -106,6 +106,7 @@ client = OpenAI(base_url="http://<host>:8080/v1", api_key="aapk_…")
 - Docker：`deploy/docker/Dockerfile`（两阶段，含 web 构建与文档资产），`docker-compose.yml`；`DATA_DIR=/data` 卷。
 - FPK：`deploy/fpk/build-fpk.sh`（fpk-root 模板 + `__VERSION__` 占位替换）。上架前待确认清单见 `deploy/fpk/README.md`。
 - CI：`.github/workflows/docker-publish.yml` —— push main / tag `v*`：多架构镜像 → ghcr.io（冒烟 `/api/health`）→ 自动打包 FPK 附 Release；tag 必须与根 `package.json.version` 一致。
+- 测试机快速部署：`./deploy/fast-deploy.sh`（本地构建产物 + rsync + **docker cp** 灌入容器重启，零服务器下载——轻量机带宽小，服务器上构建曾两次整机饿死）；仅依赖变更（lockfile）才需服务器 `compose build`（Dockerfile 已 manifest 先行 COPY + pnpm store BuildKit 缓存挂载，源码变更不再触发全量拉包）。
 
 ## 9. 约束与纪律
 
@@ -114,11 +115,11 @@ client = OpenAI(base_url="http://<host>:8080/v1", api_key="aapk_…")
 - 契约变更：`packages/shared` 为单一来源；`.neon-aap` 接口面变更必须升版 `app-develop.skill` 并同步 internal skill。
 - 审计：账号/应用/网关/计费的关键动作全部落 `audit_logs`（保留期可配，分批清理）。
 - **沙箱隔离现状**：`.neon-aap` Python 进程的受控出网通道是平台 egress 代理（manifest 白名单 + IP 黑名单**逐跳**校验，`routes/aap.ts`）；runner 内置 **Python 层出站守卫**（`connect` 仅放行 `AAP_PLATFORM`，直连其余地址/Unix socket 报错，`AAP_NET_GUARD=0` 关闭）；子进程环境变量走白名单（`lib/sandbox.ts` 的 `SANDBOX_ENV_KEYS`）；invoked 执行有全局并发上限（`SANDBOX_MAX_CONCURRENT_RUNS`，默认 8，超出排队防进程炸弹）；**persistent 空闲回收时长可配**（`SANDBOX_IDLE_RECYCLE_SECONDS`，默认 300s，最小 30s，管理端改完即时生效）；容器内可设 `SANDBOX_UID`/`SANDBOX_GID` 让沙箱以预建的 aap 用户（10001）降权运行。**进程级禁网、CPU/内存限额与 ns/cgroups 硬隔离仍未实装**（Python 层守卫属纵深防御，非硬保证），第三方包必须先经审核流（G3）再放开可见性。
-- **应用环境变量 / 机密（G6）**：包在 manifest `env` 声明变量（required/secret/pattern/default，保留名黑名单防劫持 `AAP_*`/`PORT`/代理变量等平台注入面，`parseEnvSpec`），归属者/管理员经 `GET/PUT /api/apps/:id/env` 填值（`app_env_vars` 表 AES-256-GCM 加密落盘，secret 只写不读仅回尾 4 位 hint，审计只记名不记值）；`baseEnv()` 在 invoked/persistent 沙箱启动时注入（未配置非机密变量回退声明 default）；必填缺配在执行（400 ENV_MISSING）/拉起（503 错误页）时明确拦截；persistent 配置变更后自动重启进程。入口：管理后台·应用管理与用户中心·我的应用的「环境变量」弹窗。规范见 `ai-app-portal-docs/app-develop.skill-v0.2.md` §1.1。
+- **应用环境变量 / 机密（G6）**：包在 manifest `env` 声明变量（required/secret/pattern/default，保留名黑名单防劫持 `AAP_*`/`PORT`/代理变量等平台注入面，`parseEnvSpec`），归属者/管理员经 `GET/PUT /api/apps/:id/env` 填值（`app_env_vars` 表 AES-256-GCM 加密落盘，secret 只写不读仅回尾 4 位 hint，审计只记名不记值）。除机密外，env 亦是**应用级默认配置**的承载（如 llm-proofread 的 `PROOFREAD_PROMPT`/`COHERENCE_PROMPT`：归属者配置对所有用户生效，用户个人设置可覆盖）；`baseEnv()` 在 invoked/persistent 沙箱启动时注入（未配置非机密变量回退声明 default）；必填缺配在执行（400 ENV_MISSING）/拉起（503 错误页）时明确拦截；persistent 配置变更后自动重启进程。入口：管理后台·应用管理与用户中心·我的应用的「环境变量」弹窗。规范见 `ai-app-portal-docs/app-develop.skill-v0.2.md` §1.1。
 - 包上传安全语义：用户提交（`POST /api/apps/submit`）与执行（`/api/apps/:id/run`）均要求登录；正式目录的写入/删除一律在归属校验与同名查重之后（admin 上传 409 不触碰既有站点目录）；临时目录按请求唯一命名；15MB 包体 JSON 在鉴权之后解析（匿名大包 DoS 面收敛）。
 - **egress 出站代理（P0-3 修复）**：白名单域名经 `dns.lookup` 解析后对全部 A/AAAA 复核私网/保留段黑名单（环回/RFC1918/169.254 链路本地/CGNAT/ULA 等，防 `*.nip.io` 类 DNS 绕过，线上实锤项）；IP 字面量与 localhost/.local/.internal 仍一律拒绝；出站失败详情只进服务端日志不回传调用者（防内网探测 oracle）。残留风险：解析与请求间存在理论 TOCTOU 窗口，容器形态网络隔离补齐后消除。 **内网部署例外**：管理员可在「应用网关 → 内网出站白名单」（`EGRESS_INTRANET_ALLOWLIST`）配置域名/IP/IPv4 CIDR，命中即完全放行（管理员权威高于包声明，无需包 manifest 重复声明；CIDR 区间无法逐 IP 声明）；169.254 链路本地无条件拒绝。未命中时包 manifest 照常生效、内网目标照常拒绝。**自定义请求头转发**：`aap.http.fetch(url, timeout, headers)` 支持包传自定义头（第三方 API 鉴权场景，密钥经门户环境变量注入）；≤16 个、值 ≤4KB，Host/Connection/Content-Length/Proxy-* 等逐跳与托管头剥除；响应 `{"status": 上游状态码, "body": 文本≤500KB}`。
 - **敏感配置加密**：settings 的 secret 型配置（`AAP_SIGN_SECRET`/`SMTP_PASS`/`RESEND_API_KEY`/`OIDC_CLIENT_SECRET`）落盘前 AES-256-GCM 加密（`enc:` 前缀自描述；存量明文读取兼容，后台再次保存即转密文）。
-- **传输与跳转**：HTTPS 实际启用时全站挂 HSTS（2 年，主域）；HTTP→HTTPS 跳转目标只认 `ACME_DOMAIN`（不反射请求 Host，防直达源 IP 场景的钓鱼/缓存投毒组件）。
+- **传输与跳转**：HTTPS 实际启用时全站挂 HSTS（2 年，主域）；HTTP→HTTPS 跳转目标只认 `ACME_DOMAIN`（不反射请求 Host，防直达源 IP 场景的钓鱼/缓存投毒组件）；**loopback Host（127.0.0.1/localhost/::1）豁免跳转**——沙箱 runner 与 FPK 统一网关的平台内部 POST 调用若被 302 到公网域名，跟随重定向会降级为 GET 打断全部沙箱出站（llm-proofread 实测）。
 - **信息泄露收敛**：匿名 `/api/health` 仅回 ok（version/uptime 移入管理员总览）；登录 401 不再回 failures/banned；`/api/dev/guide` 需登录。
 - **身份头（X-AAP-Identity）**：验签强制 exp 存在且未过期；jti 一次性（TTL 窗口内防重放；平台内部归因 `allowReplay` 豁免）。`/api/admin/redeem/*` 显式挂 `requireAdmin`（不再依赖挂载顺序偶然保护）。`AAP_PLATFORM`/沙箱平台地址一律取服务端真实监听地址（`req.socket.localPort`），绝不信客户端 Host。
 - 包签名信任链（G4，Ed25519）：包内可选 `signature.json`；上传时四态判定（`verified`/`untrusted`/`unsigned`/`invalid`，invalid 硬拒），状态落 `apps.signature_status`。**信任公钥命中 → 免审**（上传即 approved、submit-review 自动通过）。信任列表管理：`/api/admin/signing-keys` CRUD + 内置官方公钥（环境变量 `AAP_OFFICIAL_SIGN_PUBKEY`）。签名工具 `packages/aap-sdk/sign-aap.mjs`（keygen/sign/verify），机制详见 `packages/aap-sdk/SIGNING.md`。

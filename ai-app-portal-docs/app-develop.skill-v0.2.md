@@ -114,7 +114,7 @@ description: "当用户要求开发、打包或重构 .neon-aap 应用（AI应�
   - 你的应用挂在 `/app/<route>/` 之下，不是根路径
   - 页面里所有静态资源用**相对路径**（`./static/x.css`），不要写 `/static/x.css`
   - 支持 `X-Forwarded-Prefix` 请求头：用它拼绝对路径更稳
-  - Cookie 需设置 `Path=/app/<route>/`
+  - **不要依赖 Cookie**：门户剥离沙箱响应的 Set-Cookie（防 cookie tossing），会话态走 `aap.db` + 身份头（§五.8）
 - 监听端口由平台通过环境变量注入（`PORT`），bind 到 `127.0.0.1`，**不要自己挑端口**
 - 进程无外网，出站走平台代理（见下文网络）
 
@@ -143,6 +143,7 @@ print(resp["usage"])         # {"prompt_tokens":..., "completion_tokens":...}
 - 走平台 LLM 网关（OpenAI 兼容），**token 计入发起调用的用户**的额度池——你不用管 key、计费、限流
 - 模型名以门户管理员的模型目录为准；写错会返回明确错误
 - 支持流式：`stream=True` 时返回迭代器，逐段 yield 增量文本
+- 不传 `max_tokens` 时的生成上限由平台设置 `LLM_SANDBOX_MAX_TOKENS` 统一治理（0 = 不限制）；显式指定可精确控制预检额度预估
 
 ### 3.2 `aap.db` — 数据库（每包独立 SQLite，支持 SQL）
 
@@ -427,6 +428,7 @@ localStorage 清除、任务状态落 `aap.db`。
 | persistent 进程内存放任务/结果 | 空闲回收（默认约 5 分钟）后「任务不存在」 | 状态落 `aap.db`（§二 状态纪律） |
 | `socket` / 直连网络 | 平台网络守卫报错，且违反规范 | `aap.http.fetch`（headers 带鉴权头，§3.4） |
 | 忽略 `resp["status"]` | 上游 401/429 被当成功处理 | fetch 返回上游状态码，逐分支处理 |
+| persistent 响应 Set-Cookie | 被门户剥离（防 cookie tossing），浏览器拿不到 | 会话态落 `aap.db` + 身份头，不依赖 Cookie |
 | `print()` 调试 | invoked 下污染 JSON 出参协议；日志丢失 | `logging`（"aap.*" logger）/ `aap.log`（§3.5） |
 
 ---

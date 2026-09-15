@@ -124,7 +124,7 @@ office-tool 后台丑且交互差是已知痛点；新面板七条要求：① �
 - **persistent 应用**：平台对其 HTML 响应**自动注入**统一悬浮按钮（复用 B1 反代 HTML 注入机制；注入失败静默、不阻断业务）。约定注入点为响应末尾 `</body>` 前的 `<script src="/portal-chrome.js">` + 浮层容器，按钮指向门户 `/account` 与登出端点（登出后回跳当前应用）。
 - **HTML 工具**：嵌在门户 shell iframe 内，顶部 chrome 由门户天然提供，无需注入。
 - 包作者侧约定（不得遮挡/右上留白/禁止自建登出）在 app-develop 规范 §3.6，审核抽查项。
-- 注入实现放 B 域反代的 HTML 改写管线（G2 persistent 路由纳管后同样生效），**不要**在沙箱 SDK 里做注入（保持 SDK 纯粹、失败语义一致）。
+- 注入实现放 B 域反代（**已实装**：`proxyToSandbox` 对 persistent 通道 text/html GET 缓冲注入 + 2MB 上限，raw 通道归外壳层不重复注入——此前裸管道转发致 persistent 页面无悬浮条），**不要**在沙箱 SDK 里做注入（保持 SDK 纯粹、失败语义一致）。
 
 ### 9.4 `aap` 接口冻结
 
