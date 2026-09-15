@@ -159,4 +159,4 @@ M1–M4 核心已交付；测试数与实装明细以 `docs/DEVELOPMENT.md` 为�
 - **关键新增配置**：RATE_LLM_PER_MIN / TOPUP_TOKENS_PER_FEN / SHOW_TOPUP_PANEL / MFA_STEPUP_TTL / CODE_SEND_DAILY_LIMIT / DELETION_COOLDOWN_DAYS / APP_ALLOW_PUBLIC_UPSTREAM / ACME_* / HTTPS_REDIRECT / MAIL_PROVIDER / RESEND_*
 - **M4 已交付（G2–G5 核心）**：Python 沙箱运行时（runner + aap 对象 llm/db/storage/http/log；invoked stdin/stdout JSON + 30s 强杀；persistent 拉起+空闲 5 分钟回收+崩溃重启≤3 次+反代纳管）；出站唯一通道 = `/api/aap/egress`（manifest 白名单逐请求核验，IP/内网直连拒绝）；`/api/aap/llm/chat` 平台代理（签名归因到运行用户 + 能力声明校验）；审核流（用户上传默认私有→提交审核→管理员通过/驳回带理由，版本更新=重新审核）；运行记录 `app_runs` + 审计
 - **M4 剩余**：aap-dev 完整版（serve 子命令 / real LLM / --submit 回传）、容器 ns/cgroups 硬隔离叠加（persistent WS upgrade 透传与 ed25519 签名免审均已实装，见上）
-- **ACME 已真实环境验证 ✅**：test.xext.top 生产签发 → 8443 热启动 → HTTPS 受信；续期循环运行中。**待办（环境）**：OIDC 真实 IdP 联调；FPK 真机；E2 真人走查
+- **ACME 已真实环境验证 ✅**：真实域名生产签发 → 8443 热启动 → HTTPS 受信；续期循环运行中。**待办（环境）**：OIDC 真实 IdP 联调；FPK 真机；E2 真人走查

@@ -40,3 +40,8 @@ e2e/.run/
 office-tool/
 apps/server/assets/
 *.tsbuildinfo
+
+# 本地运维/会话产物与安全评估报告（不入公开仓库）
+.zcode/
+ai-app-portal-docs/pentest-report-*.md
+ai-app-portal-docs/code-review-production-*.md

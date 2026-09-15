@@ -17,12 +17,12 @@
 #     （Dockerfile 已做 manifest 先行 + pnpm store 缓存挂载，构建不再全量拉包）
 #
 # 用法：
-#   ./deploy/fast-deploy.sh                       # 默认 root@47.82.98.164
-#   AAP_DEPLOY_HOST=user@other-host ./deploy/fast-deploy.sh
+#   AAP_DEPLOY_HOST=user@your-host ./deploy/fast-deploy.sh
+#   （部署目标必填，不内置任何真实主机；可选 AAP_DEPLOY_KEY 指定私钥路径）
 # ============================================================================
 set -euo pipefail
 
-HOST="${AAP_DEPLOY_HOST:-root@47.82.98.164}"
+HOST="${AAP_DEPLOY_HOST:?'必须通过环境变量指定部署目标：AAP_DEPLOY_HOST=user@host ./deploy/fast-deploy.sh'}"
 KEY="${AAP_DEPLOY_KEY:-$HOME/.ssh/aap_portal_test}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 REMOTE_DIR="/opt/ai-app-portal"

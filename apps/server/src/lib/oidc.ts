@@ -28,7 +28,7 @@ async function getClient(req: Request): Promise<Client> {
   const discovered = await Issuer.discover(issuerUrl);
   // 兼容「声明 RFC 9207（iss 参数）但实际授权响应不回传 iss」的 IdP：
   // openid-client v5 对声明为 true 的 issuer 硬性要求响应带 iss，缺失即抛
-  // RPError 'iss missing from the response' 终止登录（实测 auth.xext.top 即此情况）。
+  // RPError 'iss missing from the response' 终止登录（实测真实 IdP 即此情况）。
   // issuer 实例的元数据属性是 getter-only，无法事后覆盖，故以剔除该声明的
   // 副本重建 issuer。单 IdP 自托管场景 mix-up 防护由 state 一次性校验承担。
   const issuer = new Issuer({ ...discovered.metadata, authorization_response_iss_parameter_supported: false });
