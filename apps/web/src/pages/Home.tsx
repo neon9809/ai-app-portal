@@ -91,11 +91,13 @@ function AppTile({ app }: { app: AppCard }) {
   );
 
   const isTool = app.kind === 'package' && app.runtimeMode === 'invoked';
-  const target = isTool ? `/run/${app.id}` : `/open/${app.id}`;
+  // 直接跳应用本体：门户导航由注入的 chrome 悬浮条承载（W0），无需 /open 包装页。
+  // /app/* 是服务端网关路由，必须整页跳转而非 SPA Link
+  const target = isTool ? `/run/${app.id}` : `/app/${encodeURIComponent(app.id)}/`;
   return app.accessible ? (
-    <Link to={target} style={{ textDecoration: 'none' }}>
+    <a href={target} style={{ textDecoration: 'none', color: 'inherit' }}>
       {inner}
-    </Link>
+    </a>
   ) : (
     <Link to="/login">{inner}</Link>
   );
