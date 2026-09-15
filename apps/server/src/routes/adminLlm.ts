@@ -3,12 +3,13 @@
  * 全部 requireAdmin；上游真实 key 只写不读（回显 hasKey）。
  */
 import { Router } from 'express';
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { getDb } from '../db/index.js';
 import { llmAppTokens, llmLedger, llmRoutes, llmUpstreams, users } from '../db/schema.js';
 import { HttpError, h } from '../lib/httpError.js';
 import { requireAdmin } from '../lib/auth.js';
 import { audit } from '../lib/audit.js';
+import { decryptSecret } from '../lib/cryptoSecrets.js';
 import {
   createAppToken,
   createRoute,
@@ -58,6 +59,48 @@ adminLlmRouter.put(
     updateUpstream(id, body);
     audit(`${req.user!.kind}:${req.user!.id}`, req.clientIp ?? null, 'llm.upstream.update', { id });
     res.json({ ok: true });
+  }),
+);
+
+adminLlmRouter.post(
+  '/admin/llm/upstreams/:id/test',
+  h(async (req, res) => {
+    const id = Number(req.params.id);
+    const up = getDb().select().from(llmUpstreams).where(eq(llmUpstreams.id, id)).get();
+    if (!up) throw new HttpError(404, 'NOT_FOUND', '上游不存在');
+    // 用该上游第一条启用路由的真实模型做 1-token chat ping——比 /models 列表更能
+    // 暴露真实问题（key 无效、http/https 边缘拦截、模型名映射错误，均实测踩过）
+    const route = getDb()
+      .select({ m: llmRoutes.upstreamModel })
+      .from(llmRoutes)
+      .where(and(eq(llmRoutes.upstreamId, id), eq(llmRoutes.enabled, true)))
+      .orderBy(llmRoutes.priority)
+      .get();
+    const model = String((req.body ?? {}).model ?? route?.m ?? '').trim();
+    const base = up.baseUrl.replace(/\/+$/, '');
+    const started = Date.now();
+    let httpStatus = 0;
+    let ok = false;
+    let detail = '';
+    if (!model) {
+      detail = '该上游没有启用的模型路由——请先在「模型路由」中为它添加一条路由再测试';
+    } else {
+      try {
+        const r = await fetch(`${base}/chat/completions`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: `Bearer ${decryptSecret(up.apiKeyEnc)}` },
+          body: JSON.stringify({ model, messages: [{ role: 'user', content: 'ping' }], max_tokens: 1 }),
+          signal: AbortSignal.timeout(15_000),
+        });
+        httpStatus = r.status;
+        ok = r.ok;
+        detail = ok ? '连通正常' : (await r.text()).slice(0, 240);
+      } catch (err) {
+        detail = `网络错误：${err instanceof Error ? err.message : String(err)}`.slice(0, 240);
+      }
+    }
+    audit(`${req.user!.kind}:${req.user!.id}`, req.clientIp ?? null, 'llm.upstream.test', { id, ok, status: httpStatus });
+    res.json({ ok, status: httpStatus, latencyMs: Date.now() - started, model: model || null, detail });
   }),
 );
 

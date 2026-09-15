@@ -1,7 +1,14 @@
+---
+name: neon-aap-develop
+description: "当用户要求开发、打包或重构 .neon-aap 应用（AI应用门户扩展包）时使用：manifest 契约、aap.* 能力接口、沙箱纪律与交付自检。"
+---
+
 # app-develop.skill.md
 
 > AI应用门户（ai-app-portal）应用开发规范 · 供开发 Agent 使用
-> 版本 v0.2.3（2026-09）· 配套平台 PRD v0.3+
+> 版本 v0.2.4（2026-09）· 配套平台 PRD v0.3+
+>
+> **v0.2.4 变更**：补 skill frontmatter（可安装自动触发）；原 §五硬性约束与 §七自检清单**合并为单一清单**（同一规则不再多处复述）；原 §八 aap-dev 按当前实装收窄（run + mock；serve/--llm real/--submit 随平台 M4 提供，勿当作已可用）；坑清单精简为带症状增量的条目；全文重编号（原§八→§七、原§九→§八）。
 >
 > **v0.2.3 变更**：新增 §3.7 沙箱前端纪律（禁 localStorage/密钥收集、剪贴板降级等）；§二 persistent 增加**状态纪律**（进程会被空闲回收/重启，跨请求状态一律落 aap.db）；新增 §九 实战案例与坑清单（ip-analyzer 移植 / llm-proofread 重构设计）。§五、§七 同步。
 >
@@ -102,7 +109,7 @@
 
 - 对外地址：`https://<门户域名>/app/<route>/`（路径模式，注意前缀！）
 - 平台替你管：HTTPS、限流、审计、健康检查、崩溃重启、空闲回收
-- **状态纪律（重要，v0.2.3）**：上面这些管理手段意味着**进程随时会消失重来**——空闲回收（默认约 5 分钟无访问）、崩溃重启、平台重新部署。任务、结果、草稿等跨请求状态**一律落 `aap.db`**（任务表 + 进度列 + 结果 JSON 列 + 前端轮询，模式见 §九）；进程内存只放「正在处理中」的瞬时上下文。实测教训：任务放内存字典 → 用户中场休息 5 分钟 → 进程被回收 → 「任务不存在」
+- **状态纪律（重要，v0.2.3）**：上面这些管理手段意味着**进程随时会消失重来**——空闲回收（默认约 5 分钟无访问）、崩溃重启、平台重新部署。任务、结果、草稿等跨请求状态**一律落 `aap.db`**（任务表 + 进度列 + 结果 JSON 列 + 前端轮询，模式见 §八）；进程内存只放「正在处理中」的瞬时上下文。实测教训：任务放内存字典 → 用户中场休息 5 分钟 → 进程被回收 → 「任务不存在」
 - **路径前缀注意事项**（重要，最容易踩的坑）：
   - 你的应用挂在 `/app/<route>/` 之下，不是根路径
   - 页面里所有静态资源用**相对路径**（`./static/x.css`），不要写 `/static/x.css`
@@ -167,7 +174,7 @@ rows = aap.db.query(
 - **边界**：SQL 只作用于你包自己的库；平台业务表与其他包的数据**物理隔离、不可访问**，也没有跨库 join
 - 参数一律用 `?` 占位符传入，不要拼接字符串（防注入是包作者自己的责任）
 - 有容量限额（平台配置），超限报错；批量写入建议包在事务语义里（平台自动 commit）
-- 典型用法：**任务/结果表**（persistent 状态纪律，§二）、**按门户用户隔离的数据**（行键带 user_key，见 §五.8；persistent 下用户身份从 `x-aap-identity` 头解码）
+- 典型用法：**任务/结果表**（persistent 状态纪律，§二）、**按门户用户隔离的数据**（行键带 user_key，见 §五；persistent 下用户身份从 `x-aap-identity` 头解码）
 
 ### 3.3 `aap.storage` — 文件存储（每包独立配额）
 
@@ -310,26 +317,45 @@ if __name__ == "__main__":
 
 ---
 
-## 五、硬性约束（违反 = 审核不过或运行报错）
+## 五、硬性约束与交付自检（违反 = 审核不过或运行报错；交付前逐条勾）
 
-1. **单文件**：Python 包只有一个 `mod.py`（外加 persistent 可选的静态资源目录）。
-2. **依赖白名单**：只能用 Python 标准库 + 平台预置框架（标准库全量、flask 等 Web 框架）。**不能 pip install**。
-3. **无网络通道**（除 `aap.http.fetch` + 白名单）：没有 socket、没有 os.system、没有子进程。
-4. **JSON 进出**：invoked 的入参出参必须是可 JSON 序列化结构；不要返回二进制（存 storage 给链接）。
-5. **无状态纪律**（invoked）：进程即抛，跨请求状态一律落 `aap.db` / `aap.storage`。
-6. **路径前缀纪律**（persistent）：相对路径 / `X-Forwarded-Prefix`，见第二节。
-7. **密钥零持有**：LLM/DB/存储全部平台托管，**任何情况下不要在代码/manifest 里写 API key**——平台自动剥除并标红审核。
-8. **用户数据边界**：`db`/`storage` 按包隔离；如需按「门户用户」隔离数据，键名自行带用户标识（persistent 下平台注入请求头含用户身份，invoked 下 input 里有调用者字段）。
-9. **日志纪律**（v0.2）：只用 `aap.log`/标准 logging，**禁 `print()`**；级别语义按 §3.5；脱敏与限量是硬要求，审核会抽查运行记录。
-10. **统一元素纪律**（v0.2）：persistent 应用不得遮挡门户注入的「返回个人中心/退出登录」按钮，不得自建登录/登出入口（§3.6）。
-11. **配置纪律**（v0.2.2）：外部配置（第三方 API key、阈值等）一律走 manifest `env` 声明 + 门户「环境变量」填值注入（§1.1）；不得硬编码密钥（见第 7 条），不得绕过平台向使用者索要密钥，不得声明平台保留变量名。
-12. **状态纪律**（v0.2.3）：persistent 的跨请求状态（任务、结果、草稿、每用户配置）一律落 `aap.db`（§二）；进程内存任务表会在空闲回收/崩溃重启后「任务不存在」。
-13. **前端沙箱纪律**（v0.2.3）：§3.7 全部条款——尤其禁 localStorage/cookie、禁前端收集密钥、剪贴板必须带降级。
+**manifest 与能力声明**
+
+- [ ] manifest 各字段齐备；`capabilities` / `network` / `runtime` / `env` 与代码实际行为**严格一致**（审批照单，改白名单 = 重新提审；宁少勿多，不声明的能力调用直接报错）
+- [ ] 外部配置项已声明 manifest `env`（§1.1）：必填/可选、secret、pattern 划分正确，代码经 `os.environ` 读取，未声明平台保留变量名
+- [ ] 没有硬编码任何密钥/令牌；没有绕过平台向使用者索要密钥（前端输入框收 key = 设计错误）
+
+**代码边界**
+
+- [ ] Python 包单文件 `mod.py`（persistent 可带静态资源目录）；只用标准库 + 平台预置框架，无 pip 依赖
+- [ ] 无自建网络出口（无 socket / os.system / 子进程）：出站只经 `aap.http.fetch`，域名全部在 manifest `network` 里，上游状态码 `resp["status"]` 逐分支处理
+- [ ] invoked 出入参可 JSON 序列化（二进制存 storage 给链接）；长任务拆分或加进度说明（invoked 有超时）
+- [ ] 错误路径友好：失败返回 `{"error": "人类可读的中文说明"}`
+
+**运行时状态**
+
+- [ ] invoked 无状态：跨请求状态一律落 `aap.db` / `aap.storage`
+- [ ] persistent 状态纪律：任务/结果/草稿/每用户配置落 `aap.db`，不依赖进程内存（空闲回收约 5 分钟，§二）
+- [ ] persistent：`PORT` 环境变量 + `127.0.0.1` 监听 + 相对路径 / `X-Forwarded-Prefix`（§二）
+- [ ] 按门户用户隔离数据时行键自带 user_key（persistent 从 `x-aap-identity` 头解码；invoked 看 input 调用者字段）
+
+**日志（§3.5）**
+
+- [ ] 只用 `aap.log` / 标准 logging，没有 `print()`；级别语义正确、敏感信息脱敏、高频循环聚合不逐条 DEBUG；环境变量值不打进日志
+
+**前端（HTML 工具与 persistent 页面通用，§3.7）**
+
+- [ ] 无 localStorage / sessionStorage / cookie 依赖；无密钥收集；剪贴板带 `execCommand('copy')` 降级；资源与接口全部相对路径
+- [ ] persistent：右上角留白（建议 220×48px）不遮挡门户按钮；没有自建登录/登出入口（§3.6）
+
+**交付**
+
+- [ ] 已在本地 aap-dev 跑通（当前支持 invoked：`run` + mock LLM，见 §七；persistent 待 serve 上线，先以上传后试运行验证）
 
 ## 六、交付与上架流程
 
 ```
-本地调试沙箱自测（§八 aap-dev：跑通 invoked/persistent、看详细日志）
+本地调试沙箱自测（§七 aap-dev：跑通 invoked、看详细日志）
    ↓  打包 ZIP（manifest.json + mod.py[/index.html]）
    ↓  上传门户 → 自动校验（manifest 完整性 / 语法检查）
    ↓  默认「私有」：上传者自己可见可用 ←— 上传后先试运行！运行记录里看日志
@@ -340,38 +366,17 @@ if __name__ == "__main__":
 
 给用户交付时：提供 ZIP 包 + 一段「如何自测」说明（本地 aap-dev 自测 → 上传 → 私有可见 → 试运行 → 提审）。
 
-## 七、开发 Agent 自检清单（交付前逐条过）
-
-- [ ] manifest 各字段齐备，capabilities/network/runtime 与代码实际行为**严格一致**
-- [ ] invoked：`handle(input, aap)` 签名正确，出入可 JSON 序列化
-- [ ] persistent：`PORT` 环境变量 + `127.0.0.1` 监听 + 相对路径/前缀处理
-- [ ] 只用了标准库 + 预置框架；没有任何 pip 依赖
-- [ ] 没有自建网络出口；fetch 的域名全部在 manifest `network` 里
-- [ ] 没有硬编码任何密钥/令牌
-- [ ] **需要外部配置的项已声明在 manifest `env`（§1.1）：必填/可选、是否密钥、格式校验划分正确；代码经 `os.environ` 读取；没有把值打进日志**
-- [ ] persistent：跨请求状态（任务/结果/草稿/每用户配置）落 `aap.db`，不依赖进程内存（§二 状态纪律）
-- [ ] 前端：无 localStorage/cookie 依赖、无密钥收集、剪贴板有降级、全部相对路径（§3.7）
-- [ ] **日志全部走 `aap.log`/logging，没有 `print()`；级别使用符合 §3.5 语义；敏感信息已脱敏；高频循环没有逐条 DEBUG**
-- [ ] **persistent：右上角已留白，未遮挡门户统一按钮；没有自建登录/登出入口**
-- [ ] 长任务拆分或加进度说明（invoked 有超时）
-- [ ] 错误路径友好：失败返回 `{"error": "人类可读的中文说明"}`
-- [ ] 已在本地调试沙箱（aap-dev）完整跑通并核对详细日志
-
-## 八、本地调试沙箱（aap-dev，v0.2 新增）
+## 七、本地调试沙箱（aap-dev，v0.2 新增）
 
 Python 代码需要调试。平台提供**本地调试沙箱**：它与你上传后的线上运行**共用同一套 SDK 与执行器**，行为完全一致；唯一差异是调试模式下详细日志全开。**先在本地跑通，再上传。**
 
 ```bash
-# invoked：本地执行一次 handle()
-aap-dev run mod.py --manifest manifest.json --input input.json
+# 当前实装（invoked：本地执行一次 handle()）
+aap-dev run mod.py --input input.json     # --input 缺省读 stdin；--llm 默认 mock（本地回声+夹具）
+aap-dev run mod.py --reset                # 顺带清空本地 db/storage（.aap-dev/ 目录）
 
-# persistent：本地起服务（同样注入 PORT、AAP_DEBUG，默认 127.0.0.1:8080）
-aap-dev serve mod.py --manifest manifest.json
-
-# 常用参数
-#   --reset                 清空本地 db/storage（.aap-dev/ 目录）
-#   --llm mock|real         LLM 走本地 mock（默认，回声+夹具）或真实网关（需 --llm-endpoint/--llm-token）
-#   --submit                把本次调试日志回传门户运行记录（可选，需已配置门户地址与凭据）
+# 随平台 M4 完整版提供（当前未实装，勿依赖、勿写进交付说明）：
+#   serve 子命令（persistent 本地起服务）、--llm real（经平台网关）、--submit（调试日志回传门户运行记录）
 ```
 
 调试模式（`AAP_DEBUG=1`）下全量打印：
@@ -391,9 +396,9 @@ aap-dev serve mod.py --manifest manifest.json
 
 ---
 
-## 九、实战案例与坑清单（v0.2.3）
+## 八、实战案例与坑清单
 
-### 9.1 把现有 Web 项目重构为 .neon-aap 的方法论
+### 8.1 把现有 Web 项目重构为 .neon-aap 的方法论
 
 移植/重构的实质是**逐项替换自建设施为平台能力**，业务逻辑保留：
 
@@ -412,18 +417,15 @@ localStorage 清除、任务状态落 `aap.db`。
 
 **案例 B · llm-proofread**（React19+Express+tRPC+MySQL → 全新 persistent 包）：
 自建用户系统、LLM 多上游接入、密钥保管、审计日志**整体删除**；包内只剩校对编排、
-规则引擎、diff 呈现、每用户提示词/词库（aap.db）。完整设计：
-`ai-app-portal-docs/llm-proofread-aap-design.md`。
+规则引擎、diff 呈现、每用户提示词/词库（aap.db）。完整设计见仓库内
+`ai-app-portal-docs/llm-proofread-aap-design.md`（平台仓库参考，门户用户可忽略）。
 
-### 9.2 坑清单（全部实测踩过）
+### 8.2 坑清单（全部实测踩过；只列带独立诊断症状的条目，规则本体见 §二 / §3.x / §五）
 
 | 坑 | 症状 | 正确做法 |
 |---|---|---|
 | persistent 进程内存放任务/结果 | 空闲回收（默认约 5 分钟）后「任务不存在」 | 状态落 `aap.db`（§二 状态纪律） |
-| 前端用 localStorage | 沙箱 opaque origin 下抛 SecurityError，脚本段整段崩 | 数据交后端落库；页面状态用内存变量 |
-| 前端输入框收集 API Key | 密钥经浏览器，泄露面大且与平台计费脱节 | `env` 声明 + 门户填值（§1.1） |
 | `socket` / 直连网络 | 平台网络守卫报错，且违反规范 | `aap.http.fetch`（headers 带鉴权头，§3.4） |
-| 根绝对路径 `/api/x` | 门户挂在 `/app/<id>/` 下，404 | 相对路径 `./api/x`；绝对路径经 `X-Forwarded-Prefix` 拼 |
 | 忽略 `resp["status"]` | 上游 401/429 被当成功处理 | fetch 返回上游状态码，逐分支处理 |
 | `print()` 调试 | invoked 下污染 JSON 出参协议；日志丢失 | `logging`（"aap.*" logger）/ `aap.log`（§3.5） |
 

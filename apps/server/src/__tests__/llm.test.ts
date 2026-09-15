@@ -20,6 +20,7 @@ import {
   grantTokens,
   cachedBalance,
   recomputeBalance,
+  resolveDefaultModel,
 } from '../lib/llm.js';
 import { signIdentity } from '../gateway/identity.js';
 import { getSetting } from '../lib/settings.js';
@@ -260,5 +261,18 @@ describe('M2 LLM 网关（C1–C6）', () => {
     expect(withId.status).toBe(200);
     expect(balanceOf(uid)).toBeLessThan(before2);
     void setSetting;
+  });
+});
+
+describe('沙箱默认模型（LLM_DEFAULT_MODEL，规范 §3.1「不填用平台默认」）', () => {
+  it('显式设置优先；未设置取模型目录排序第一个；目录空返回 null', () => {
+    setSetting('LLM_DEFAULT_MODEL', '');
+    // 目录含 dead-model / failover-model / stream-model / test-model，排序后 dead-model 第一
+    expect(resolveDefaultModel()).toBe('dead-model');
+    setSetting('LLM_DEFAULT_MODEL', 'test-model');
+    expect(resolveDefaultModel()).toBe('test-model');
+    setSetting('LLM_DEFAULT_MODEL', '  ');
+    expect(resolveDefaultModel()).toBe('dead-model');
+    setSetting('LLM_DEFAULT_MODEL', '');
   });
 });

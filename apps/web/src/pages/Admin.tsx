@@ -1454,6 +1454,25 @@ function LlmTab(): ReactNode {
 
   const [upForm] = Form.useForm();
   const [routeForm] = Form.useForm();
+  const [upTest, setUpTest] = useState<Record<number, { loading?: boolean; ok?: boolean; text?: string }>>({});
+
+  async function testUpstream(id: number): Promise<void> {
+    setUpTest((p) => ({ ...p, [id]: { loading: true } }));
+    try {
+      const r = await api<{ ok: boolean; status: number; latencyMs: number; model: string | null; detail: string }>(
+        `/api/admin/llm/upstreams/${id}/test`,
+        { method: 'POST' },
+      );
+      setUpTest((p) => ({
+        ...p,
+        [id]: r.ok
+          ? { ok: true, text: `✓ 连通正常（${r.model ?? ''}，${r.latencyMs}ms）` }
+          : { ok: false, text: `✗ ${r.status || '网络'}：${r.detail}` },
+      }));
+    } catch (err) {
+      setUpTest((p) => ({ ...p, [id]: { ok: false, text: `✗ ${err instanceof Error ? err.message : '测试失败'}` } }));
+    }
+  }
 
   function invalidate(): void {
     for (const k of ['llm-upstreams', 'llm-routes', 'llm-tokens', 'llm-usage']) void qc.invalidateQueries({ queryKey: [k] });
@@ -1500,6 +1519,9 @@ function LlmTab(): ReactNode {
               width: 150,
               render: (_, r) => (
                 <Space size="small">
+                  <Button size="small" onClick={() => void testUpstream(r.id)} loading={upTest[r.id]?.loading}>
+                    测试
+                  </Button>
                   <Button
                     size="small"
                     onClick={async () => {
@@ -1520,6 +1542,11 @@ function LlmTab(): ReactNode {
             },
           ]}
         />
+        {upstreamsQ.data?.upstreams?.filter((u) => upTest[u.id]?.text).map((u) => (
+          <div key={u.id} style={{ fontSize: 12, marginTop: 2, color: upTest[u.id]?.ok ? 'var(--ins, #16a34a)' : 'var(--del, #dc2626)' }}>
+            {u.name}：{upTest[u.id]?.text}
+          </div>
+        ))}
         <Form form={upForm} layout="inline" style={{ marginTop: 10, rowGap: 8 }}>
           <Form.Item name="name" rules={[{ required: true, message: '必填' }]}>
             <Input placeholder="名称（如 智谱）" style={{ width: 140 }} />

@@ -24,6 +24,7 @@
 | `examples/ip-analyzer` | .neon-aap Python 包示例（persistent 沙箱 + manifest.env 机密注入 + egress 白名单出站，移植自 neon9809/ip-analyzer） |
 | `examples/llm-proofread` | .neon-aap Python 包示例（文语校对：规则引擎 + 逐段 LLM + 全文一致性，每用户提示词/词库落 aap.db，LLM 走统一网关按账号归因计费） |
 | `deploy/` | Docker / FPK 分发形态 |
+| `AGENTS.md` | AI 开发代理常驻约定（硬纪律 / 按需加载 / 交互约定） |
 | `docs/DEVELOPMENT.md` | 开发者文档（架构 / 配置 / LLM 网关接入 / 通知通道 / 订阅计费） |
 | `ai-app-portal-docs/` | 产品需求与规范（PRD / app-develop 技能） |
 
@@ -32,31 +33,12 @@
 ```bash
 pnpm install
 pnpm dev          # server: http://localhost:8080 · web: http://localhost:5173
-pnpm test          # 单元/集成测试（服务端 110 个）
+pnpm test          # 单元/集成测试（服务端 14 个文件 125 用例）
 pnpm test:e2e     # Playwright 端到端（自动起真实服务 + mock 上游）
 pnpm typecheck    # 全部类型检查
 ```
 
 要求 Node ≥ 22。
-
-## M1 当前进度（工作包）
-
-| 工作包 | 状态 |
-|---|---|
-| W0 契约文档（app-develop v0.2 / internal v2.1） | ✅ |
-| W1 monorepo 骨架 + 主题系统 | ✅ |
-| W2 安全内核（scrypt/会话/PoW/封禁/审计/CSRF） | ✅ |
-| W3 账号与注册 A2（两步注册/验证码/邀请码） | ✅ |
-| W4 MFA A3（TOTP/Passkey/状态机/步升） | ✅ |
-| W5 应用网关 B1/B2/B4（路径反代/WS/三态门禁/限流） | ✅ |
-| W6 自动 HTTPS B3（PEM 热替换/ACME/续期） | ✅ |
-| W7 门户 UI A1（卡片墙/品牌/6 主题/备案） | ✅ |
-| W8 用户中心 A4（资料/会话/注销冷静期） | ✅ |
-| W9 管理后台 E1/E2（向导/仪表卡/防呆） | ✅ |
-| W10 分发 F1/F2（Dockerfile/compose/FPK 脚手架） | ✅（镜像构建待有 Docker Hub 网络时验证） |
-| W11 集成验收（E2E 主链路 ×3） | ✅（ACME staging 与真人走查待办） |
-| **M2 LLM 网关（C1–C6）+ A5 OIDC** | ✅（OpenAI 兼容端点+流式、多上游 failover、凭据、账本与预检 402、OIDC SSO；真实 IdP/上游联调待办） |
-| M3 计费闭环 | ⬜（账本/余额缓存/调额已预埋，充值与结算引擎待做） |
 
 ## 发布（CI）
 

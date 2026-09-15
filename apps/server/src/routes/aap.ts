@@ -12,7 +12,7 @@ import { eq } from 'drizzle-orm';
 import { getDb } from '../db/index.js';
 import { apps, users } from '../db/schema.js';
 import { HttpError, h } from '../lib/httpError.js';
-import { resolveAppToken, type AppTokenRow } from '../lib/llm.js';
+import { resolveAppToken, resolveDefaultModel, type AppTokenRow } from '../lib/llm.js';
 import { signIdentity, verifyIdentity } from '../gateway/identity.js';
 import { config } from '../config/index.js';
 import { getSetting } from '../lib/settings.js';
@@ -76,6 +76,14 @@ aapRouter.post(
     if (!caps.includes('llm')) {
       throw new HttpError(403, 'CAPABILITY_NOT_DECLARED', '该应用 manifest 未声明 llm 能力');
     }
+    // 规范 §3.1「不填用平台默认模型」：缺省取 LLM_DEFAULT_MODEL 设置，未设置取目录第一个
+    let model = typeof body.model === 'string' ? body.model.trim() : '';
+    if (!model) {
+      model = resolveDefaultModel() ?? '';
+      if (!model) {
+        throw new HttpError(400, 'INVALID_INPUT', '未指定 model，且网关模型目录为空——请管理员先在「LLM 网关」配置模型路由（或在设置中指定沙箱默认模型）');
+      }
+    }
     // 归因：SDK 透传运行身份头（invoked=运行用户；persistent=门户代理注入的请求身份），验签 aud=appId
     let userId: number | null = null;
     const idPayload = req.headers['x-aap-identity'];
@@ -131,7 +139,7 @@ aapRouter.post(
       headers,
       body: JSON.stringify({
         messages: body.messages,
-        ...(body.model ? { model: body.model } : {}),
+        model,
         ...(body.max_tokens ? { max_tokens: body.max_tokens } : {}),
         ...(body.temperature !== undefined ? { temperature: body.temperature } : {}),
       }),

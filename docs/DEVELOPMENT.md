@@ -24,7 +24,7 @@
 pnpm install
 pnpm dev            # server:8080（tsx watch）+ web:5173（Vite，代理 /api 与 /app）
 pnpm build          # shared → server → web（生产产物 apps/web/dist）
-pnpm test           # 服务端测试（vitest，13 个文件 110 用例）
+pnpm test           # 服务端测试（vitest，14 个文件 125 用例）
 pnpm test:e2e       # Playwright 端到端（自动拉起真实服务 + mock 上游）
 pnpm typecheck      # 全仓类型检查
 pnpm db:generate    # drizzle-kit 生成迁移（schema 变更后必跑）
@@ -82,6 +82,8 @@ client = OpenAI(base_url="http://<host>:8080/v1", api_key="aapk_…")
 - **预检（C6）**：请求前按 `max_tokens×倍率` 原子递减 `llm_balance_cache`，不足 → `402 INSUFFICIENT_BALANCE`；响应后按实际用量校正；**全候选失败/上游 4xx/流式中断等无用量路径即时全额退回预估扣减**；结算循环每分钟对账（重算近期活跃用户，吸收崩溃漂移），**对账重算补减进程内在途预估**（防预检扣减被周期性抹除）。流式转发有闲置超时（`LLM_STREAM_IDLE_TIMEOUT`，默认 60s 无新字节即断开并按已收 usage 结算），防上游挂起占满连接。
 - **无归因调用默认拒绝**：`/v1/chat/completions` 未携带可验签身份头时默认 `403 ATTRIBUTION_REQUIRED`（否则任何持 app token 者可绕过全部余额闸门免费调用，线上实锤项）；可信内网应用可由管理员将计费设置 `LLM_UNATTRIBUTED_POLICY` 切为 `allow`（仅计量不计费）。
 - **用户归因**：应用把门户注入的身份头原样转发给网关即可。客户端自带的 `x-aap-identity*` 请求头在网关侧一律剥除（HTTP 与 WS 同语义），只认可信注入的签名头。
+- **沙箱默认模型**：`aap.llm.chat` 不指定 model 时按规范 §3.1 取 `LLM_DEFAULT_MODEL` 设置（计费组），未设置取模型目录排序第一个；目录为空返回可读 400。管理设置「沙箱默认模型」（计费组）可显式指定。
+- **上游连通性测试**：`POST /api/admin/llm/upstreams/:id/test` 用该上游第一条启用路由的真实模型发 1-token chat ping（比 /models 列表更能暴露 key 失效、http/https 边缘拦截、模型名映射错误）；管理后台「LLM 网关 → 上游」每行有「测试」按钮。实测教训：DeepSeek 填 `http://api.deepseek.com` 会被边缘 401（Authentication Fails governor），必须 https。
 
 ## 6. 账号与通知通道
 

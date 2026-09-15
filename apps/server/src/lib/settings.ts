@@ -227,6 +227,11 @@ export const SETTING_DEFS: Record<string, SettingDef> = {
     choiceLabels: { reject: '拒绝（推荐）', allow: '放行（仅计量不计费）' },
     desc: '网关收到未携带用户身份归因（X-AAP-Identity）的调用时：拒绝（推荐，杜绝绕过余额闸门）或放行（可信内网应用的应用级调用）',
     initial: () => 'reject', defaultsWork: true },
+  LLM_DEFAULT_MODEL: {
+    label: '沙箱默认模型',
+    group: '计费', type: 'string',
+    desc: '沙箱包 aap.llm.chat 不指定 model 时使用的模型（须为「LLM 网关」里已配置的模型路由公开名）。留空 = 自动取模型目录中排序第一个',
+    initial: () => '', defaultsWork: true },
   TOPUP_TOKENS_PER_FEN: {
     label: '充值单价（token/分）',
     group: '计费', type: 'int',

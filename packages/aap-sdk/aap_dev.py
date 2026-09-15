@@ -1,10 +1,11 @@
-"""aap-dev — 本地调试沙箱 CLI（app-develop.skill v0.2 §八）。
+"""aap-dev — 本地调试沙箱 CLI（app-develop.skill v0.2 §七）。
 
 与生产共用同一 SDK 执行器；差异仅为：mock LLM / 本地资源映射 / 详细日志。
 
 用法：
-  python3 aap_dev.py run mod.py --input input.json
-  python3 aap_dev.py run mod.py --input input.json --llm mock|real --llm-endpoint URL --llm-token TOKEN
+  python3 aap_dev.py run mod.py --input input.json   # --input 缺省读 stdin
+  python3 aap_dev.py run mod.py --reset              # 清空本地 db/storage
+（serve / --llm real / --submit 随平台 M4 完整版提供，当前未实装）
 """
 import argparse
 import json

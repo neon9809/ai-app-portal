@@ -375,7 +375,7 @@ gatewayRouter.all('/app/:id/*', async (req: Request, res: Response) => {
 });
 
 
-// ---------- persistent 沙箱反代（HTTP；WS 由 upgrade 通道类似处理，M4 后续补齐） ----------
+// ---------- persistent 沙箱反代（HTTP；WS 透传见 gateway/wsproxy.ts，同门禁同语义） ----------
 
 export function manifestEntry(app: { manifestJson: string | null }): string {
   if (!app.manifestJson) return 'mod.py';

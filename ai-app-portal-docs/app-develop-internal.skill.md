@@ -1,18 +1,20 @@
 ---
-name: app-develop
-description: "开发 ai-app-portal（AI应用门户）时用：架构决策与路径反代经验。"
-version: 2.3.1
+name: app-develop-internal
+description: "涉及网关 / LLM 网关 / 沙箱 / 计费 / 账号安全的架构设计或 ADR 复核，或 .neon-aap 接口面（manifest / aap.*）契约变更时用。常规 bug 修复、UI/文案/测试改动不需要。"
+version: 2.3.2
 ---
 
 # ai-app-portal（AI应用门户）开发指南
 
+> v2.3.2 变更：触发描述收窄并更名 app-develop-internal（避免与包作者规范同名）；PRD 指针修正为仓库真实路径；§9.5 压缩为实现要点（细节归 docs/DEVELOPMENT.md §9 单一来源）；§十 状态快照校正（ed25519 免审、persistent WS 透传均已实装；易过期的测试计数移除）。
+>
 > v2.3.1 变更：§二 补两条实测经验——persistent 沙箱反代剥 /app/<id> 前缀（下发 x-forwarded-prefix、Location 镜像回写）；HTTPS_REDIRECT 按 loopback Host 豁免（沙箱内部 POST 曾被 302→GET 打断全部出站）。
 > v2.3.0 变更：新增 §9.5「应用环境变量 / 机密（G6）」——manifest.env 声明 + 加密存储 + 沙箱启动注入；与 app-develop 规范 v0.2.2 §1.1 配套。
 > v2.2.0 变更：新增 §十「实现状态快照（M1–M3 交付）」；§三 身份头更名 X-AAP-* 并写明密钥来源。
 > v2.1.0 变更：新增 §九「沙箱日志收口与调试沙箱」，与 app-develop 规范 v0.2（§3.5 日志 / §3.6 统一元素 / §八 aap-dev）配套。
 
 Neon 的 OSS 项目：自托管 AI 应用网关 + 门户，中文名「AI应用门户」，仓库名 `ai-app-portal`。
-- **PRD**：`workspace/ai-app-portal-PRD.md`（v0.3+，功能按 A–G 功能域组织：A 门户与身份 / B 应用网关 / C LLM 网关 / D 计费 / E 管理后台 / F 分发与运行 / G 生态；里程碑 M1–M4 只在第 7 节，与功能域编号解耦）
+- **PRD**：`ai-app-portal-docs/ai-app-portal-PRD-v0.3.1.md`（v0.3+，功能按 A–G 功能域组织：A 门户与身份 / B 应用网关 / C LLM 网关 / D 计费 / E 管理后台 / F 分发与运行 / G 生态；里程碑 M1–M4 只在第 7 节，与功能域编号解耦）
 - **参考实现** = 他的私有项目 office-tool（Node/Express，CUGB 办公门户）。**私有代码可借鉴思路与代码，但任何单位指纹（校名/校色/校徽/内置业务工具）不得进入 OSS 版。**
 
 ## 一、硬决策（ADR，勿再反复讨论）
@@ -87,7 +89,7 @@ PoW 登录 proof-of-work、登录失败计数、IP 封禁（累犯时长倍增�
 - Python 包：**沙箱子进程**（CPU/内存受限；进程自身无网络）。invoked = 每请求新进程跑完即毁；persistent = 长驻进程声明路由前缀提供网页/HTTP API，**被 B 域反代纳管**（限流/审计/健康检查/崩溃重启/空闲回收照常），常驻内存上限更严
 - **网络出口 = 平台出站代理**：逐请求核对 manifest 域名白名单放行——**白名单执行点在代理不在沙箱**（防 DNS rebinding/直连 IP 绕过）
 - **SDK 存根三件套**：`llm.chat()`（走 LLM 网关，计入调用者 token 池）；`db.*`（**每包独立 SQLite，支持包内完整 SQL**——execute/query + ? 占位参数；平台业务表与其他包物理隔离不可访问，容量限额）；`storage.*`（每包独立配额空间）
-- 生命周期：上传→校验→私有可用；公开须审核；版本更新=重新审核；ed25519 签名预留（官方包免审）；举报/下架/全事件审计
+- 生命周期：上传→校验→私有可用；公开须审核；版本更新=重新审核；ed25519 签名已实装（信任公钥命中免审，G4，工具 `packages/aap-sdk/sign-aap.mjs`）；举报/下架/全事件审计
 - 第一版刻意收窄：不做任意 pip 依赖、跨包调用、任意 SQL。先跑通「造工具→自用→审核上架」循环
 
 ## 七、管理面板体验（P0 验收硬指标）
@@ -99,7 +101,7 @@ office-tool 后台丑且交互差是已知痛点；新面板七条要求：① �
 
 统一网关（gatewayPrefix `/app/{appname}` + gatewaySocket Unix socket，NAS 登录态校验后转发附用户 Header，支持 WS）；依赖声明 `install_dep_apps`（database/cache/redis/minio，右到左安装）；运行时包 python312/nodejs_v22/java-21（`/var/apps/<rt>/target/bin` 加 PATH）；TRIM_* 环境变量族（TRIM_APPDEST/TRIM_PKGVAR 等）；Docker 类 FPK = `app/docker/docker-compose.yaml` 模板。
 
-## 九、沙箱日志收口与调试沙箱（平台侧约定，v2.1 新增；与 app-develop 规范 v0.2 §3.5/§3.6/§八 配套）
+## 九、沙箱日志收口与调试沙箱（平台侧约定，v2.1 新增；与 app-develop 规范 v0.2 §3.5/§3.6/§七 配套）
 
 ### 9.1 日志管线（G2/G5 配套，开发日志与运行日志统一收口 portal）
 
@@ -114,7 +116,7 @@ office-tool 后台丑且交互差是已知痛点；新面板七条要求：① �
 - `packages/aap-sdk` 与平台沙箱运行时**共享同一实现代码路径**（同一镜像、同一执行器；invoked/persistent 双模式同路径）。**本地调试 = 同一执行器 + `AAP_DEBUG=1` 开详细日志 + 本地资源映射**（SQLite 文件 / 目录存储 / mock LLM）。
 - **禁止另写并行模拟器**——行为漂移比没有调试工具更糟。mock 实现与生产实现必须对照**同一测试集**验证行为一致（白名单拒绝、未声明能力报错、超时、JSON 校验、进程即毁）。
 - 调试模式下全量详细日志：每次 `aap.*` 调用（入参脱敏后/出参摘要/耗时）、SQL 与参数、storage 操作与配额水位、HTTP 代理逐请求（URL/**白名单判定**/状态/耗时）、LLM usage、进程生命周期（启动/超时/退出码）。
-- `aap-dev` CLI：`run`（invoked 一次）/ `serve`（persistent 本地起）/ `--reset` / `--llm mock|real` / `--submit`（调试日志可选回传 portal 运行记录）。
+- `aap-dev` CLI（**当前实装**：`run` + `--reset` + mock LLM；`serve` / `--llm real` / `--submit` 随 M4 完整版提供，勿在文档中当作已可用）。
 - **与线上一致的边界刻意保留**：白名单在本地照常强制、未声明能力照常报错、超时/JSON 校验/进程即毁语义相同。
 
 ### 9.3 统一 chrome 注入（「返回个人中心 / 退出登录」）
@@ -131,22 +133,19 @@ office-tool 后台丑且交互差是已知痛点；新面板七条要求：① �
 
 ### 9.5 应用环境变量 / 机密（G6，v2.3 新增；与 app-develop 规范 v0.2.2 §1.1 配套）
 
-包需要外部配置（第三方 API key 等）时的平台侧机制，**密钥零落地进包**：
+包需要外部配置（第三方 API key 等）时的平台侧机制，**密钥零落地进包**。设计要点：
 
-- **声明**：manifest `env`（`parseEnvSpec`，`gateway/staticApp.ts`）：变量名 → `{required(默认 true), secret, pattern, default, description}`；支持「"名": "描述"」速记。保留名黑名单（`AAP_*` 前缀、`PORT`、`PATH`、`HTTP_PROXY` 族、`PYTHON*`、`SSL_CERT_*`、`SANDBOX_*`、`NODE_OPTIONS`）——防劫持平台注入面（AAP_TOKEN 身份归因 / egress 代理 / Python 运行时）；上限 16 个；非法声明 = 上传失败。
-- **存储**：`app_env_vars` 表（appId+name 主键，FK cascade），值一律 `encryptSecret()`（AES-256-GCM + data/master.key，复用 urlSecret 管线）落盘。**secret 永不回明文**：GET 只回 `configured` + 尾 4 位 hint；非 secret 回明文便于编辑。
-- **配置 API**（`routes/appsRun.ts`，归属者或管理员；`GET/PUT /api/apps/:id/env`）：PUT 逐变量语义——`""` = 清除，pattern 保存时校验；审计 `app.env.set` 只记变量名不记值。
-- **注入**：`lib/sandbox.ts` 的 `baseEnv()` 统一注入（invoked/persistent 同路径），包声明值放在平台键之后（保留名已禁声明，无覆盖面）；未配置的非机密变量注入声明 `default`。`lib/appEnv.ts` 出 `envValues` / `missingRequiredEnv`。
-- **必填强校验**：invoked 执行前（`/api/apps/:id/run` → 400 ENV_MISSING 列缺谁）；persistent 拉起前（`gateway/proxy.ts` → 503 错误页指引配置）。
-- **配置变更生效**：invoked 天然下次生效；persistent 在 PUT 成功后 `stopPersistentFor()` 杀进程，下次访问以新环境重拉。
-- **入口**：管理后台·应用管理（每包应用「环境变量」按钮）与用户中心·我的应用（同款弹窗 `components/AppEnvModal.tsx` 共用）；上传预解析 `package/preview` 回 `env` 摘要提示待配密钥。
-- **配套 egress 扩展（与 §3.4 接口面变更同步）**：`/api/aap/egress` 接受 `headers`（≤16 个、名 `^[A-Za-z0-9-]{1,64}$`、值 ≤4KB；Host/Connection/Content-Length/Proxy-* 等逐跳与托管头剥除——鉴权头可转发，流控/代理语义不可改写）；runner `aap.http.fetch(url, timeout, headers)` 回 `{"status": 上游状态码, "body": 文本}`。
-- **runner serve 注入修复**：persistent 的 mod.py 顶层阻塞在 `app.run()`，原「执行后 inject」永不执行 → 路由内 NameError；已改为执行前挂 `builtins.aap`（回归测试：appEnv.test.ts persistent 用例，模块顶层即引用 aap）。
+- **声明**：manifest `env`（`parseEnvSpec`），变量名 → `{required(默认 true), secret, pattern, default, description}`，支持「"名": "描述"」速记；保留名黑名单（`AAP_*`、`PORT`、`PATH`、`HTTP_PROXY` 族、`PYTHON*`、`SSL_CERT_*`、`SANDBOX_*`、`NODE_OPTIONS`）防劫持平台注入面；上限 16 个，非法声明上传失败。
+- **存储与保密**：值一律 AES-256-GCM 加密落盘（`app_env_vars` 表），secret 只写不读（仅回尾 4 位 hint）；审计只记变量名不记值。
+- **注入与拦截**：`baseEnv()` 在 invoked/persistent 沙箱启动时统一注入（persistent 须在 mod.py 执行前挂 `builtins.aap`——顶层阻塞在 `app.run()` 后注入永不生效）；必填缺配 invoked 执行 400 ENV_MISSING / persistent 拉起 503。
+- **配套 egress**：`aap.http.fetch(url, timeout, headers)` 支持自定义请求头（逐跳与托管头剥除、上游状态码透传），与规范 §3.4 接口面同步。
+
+表结构 / 配置 API / 管理入口 / egress 实现细节见 `docs/DEVELOPMENT.md` §9（单一来源，勿在此重复维护）。
 
 
 ## 十、实现状态快照（v2.2，2026-09）
 
-M1–M3 已交付（服务端 66 测试 + Playwright E2E ×3）。M4 生态未启动。
+M1–M4 核心已交付；测试数与实装明细以 `docs/DEVELOPMENT.md` 为准（本节只记里程碑快照，不放易过期的用例计数）。
 
 - **已实装**：路径反代全套（§二）、WS 双通道、passUser 自动签发/注入、自动 HTTPS（PEM 热替换 + ACME HTTP-01 + 续期）、本地账号+注册（验证码 SMTP/Resend/日志兜底 + 邀请码 + Turnstile 接口）、MFA（TOTP/Passkey/恢复码/步升/状态机）、用户中心四区、管理后台（总览/站点设置/应用管理/用户与注册/安全/通知通道/证书/LLM 网关/运营 九个功能域选项卡 + 左侧竖向首配向导）、Docker/FPK/CI(ghcr 多架构+FPK Release)、OIDC SSO（PKCE）
 - **M2 LLM 网关**：`/v1/chat/completions`（流式透传+末帧 usage 捕获）、`/v1/models` 聚合；凭据 `aapk_*`（SHA-256 存储、可吊销、按凭据限流）；路由 priority+加权 failover；`llm_ledger` append-only 账本 + `llm_balance_cache` 预检（402）+ 事后校正；结算循环每分钟对账；manifest 声明 llm 的包上传即自动签发凭据（tokenEnc 加密保管，`getAppLlmProvision` 供 M4 运行时注入）
@@ -159,5 +158,5 @@ M1–M3 已交付（服务端 66 测试 + Playwright E2E ×3）。M4 生态未�
 - **更名记录**：X-Office-*→X-AAP-*；WEBUI_SIGN_SECRET→AAP_SIGN_SECRET（settings 表，首启随机/env 初值，管理端高级项可查看需审计）；邮件通道→通知通道；会员→功能订阅
 - **关键新增配置**：RATE_LLM_PER_MIN / TOPUP_TOKENS_PER_FEN / SHOW_TOPUP_PANEL / MFA_STEPUP_TTL / CODE_SEND_DAILY_LIMIT / DELETION_COOLDOWN_DAYS / APP_ALLOW_PUBLIC_UPSTREAM / ACME_* / HTTPS_REDIRECT / MAIL_PROVIDER / RESEND_*
 - **M4 已交付（G2–G5 核心）**：Python 沙箱运行时（runner + aap 对象 llm/db/storage/http/log；invoked stdin/stdout JSON + 30s 强杀；persistent 拉起+空闲 5 分钟回收+崩溃重启≤3 次+反代纳管）；出站唯一通道 = `/api/aap/egress`（manifest 白名单逐请求核验，IP/内网直连拒绝）；`/api/aap/llm/chat` 平台代理（签名归因到运行用户 + 能力声明校验）；审核流（用户上传默认私有→提交审核→管理员通过/驳回带理由，版本更新=重新审核）；运行记录 `app_runs` + 审计
-- **M4 剩余**：persistent WS upgrade 透传、ed25519 官方包签名免审、aap-dev 完整版（real LLM/远端回传）、容器 ns/cgroups 叠加
+- **M4 剩余**：aap-dev 完整版（serve 子命令 / real LLM / --submit 回传）、容器 ns/cgroups 硬隔离叠加（persistent WS upgrade 透传与 ed25519 签名免审均已实装，见上）
 - **ACME 已真实环境验证 ✅**：test.xext.top 生产签发 → 8443 热启动 → HTTPS 受信；续期循环运行中。**待办（环境）**：OIDC 真实 IdP 联调；FPK 真机；E2 真人走查

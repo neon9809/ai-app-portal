@@ -3,7 +3,9 @@
  *  - GET /api/dev/guide   登录可见：应用开发规范（app-develop skill.md），供一键复制
  *    （skill.md 含沙箱模型/能力声明/审核流程等侦察材料，不再对匿名开放——P2-12）
  *  - GET /api/dev/docs    仅管理员：平台使用说明（README / 内部实现约定）
- * 文件查找顺序：包内 assets（Docker 镜像）→ 仓库 ai-app-portal-docs（开发态）。
+ * 文件查找顺序：包内 assets（仅 Docker 镜像内存在，构建时由 Dockerfile 从
+ * ai-app-portal-docs 拷入）→ 仓库 ai-app-portal-docs（开发态）。
+ * 单一来源 = ai-app-portal-docs；仓库不维护 assets 副本，防止双份漂移。
  */
 import fs from 'node:fs';
 import path from 'node:path';

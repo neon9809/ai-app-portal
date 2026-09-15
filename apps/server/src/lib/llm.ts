@@ -193,6 +193,14 @@ export function deleteRoute(id: number): void {
   getDb().delete(llmRoutes).where(eq(llmRoutes.id, id)).run();
 }
 
+/** aap.llm.chat 的平台默认模型（规范 §3.1「不填用平台默认」）：
+ *  显式设置 LLM_DEFAULT_MODEL 优先，否则模型目录排序第一个；目录为空返回 null */
+export function resolveDefaultModel(): string | null {
+  const configured = (getSetting('LLM_DEFAULT_MODEL') ?? '').trim();
+  if (configured) return configured;
+  return modelCatalog()[0] ?? null;
+}
+
 /** 聚合模型目录（C1 /v1/models 数据源） */
 export function modelCatalog(): string[] {
   return [
