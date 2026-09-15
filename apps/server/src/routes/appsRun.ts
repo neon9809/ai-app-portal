@@ -8,7 +8,7 @@
  *  - GET  /api/apps/mine               我的应用（requireAuth，含审核状态）
  *  - 管理端：GET /api/admin/review/pending、approve / reject（驳回带理由）
  */
-import fs from 'node:fs';
+import fs, { statfsSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import express, { Router } from 'express';
 import { and, eq, sql } from 'drizzle-orm';
@@ -27,7 +27,28 @@ import { audit } from '../lib/audit.js';
 import { encryptSecret, decryptSecret } from '../lib/cryptoSecrets.js';
 import { missingRequiredEnv } from '../lib/appEnv.js';
 import { stopPersistentFor } from '../lib/sandbox.js';
+import { getSettingInt } from '../lib/settings.js';
 import { appEnvVars } from '../db/schema.js';
+
+// ---------- 上传限频（每用户每日；内存计数，重启归零，软防护） ----------
+
+const uploadHits = new Map<number, { day: number; n: number }>();
+
+function uploadAllowed(uid: number): boolean {
+  const max = getSettingInt('UPLOAD_PER_USER_PER_DAY', 20);
+  if (max <= 0) return true;
+  const day = Math.floor(Date.now() / 86_400_000);
+  const rec = uploadHits.get(uid);
+  if (!rec || rec.day !== day) {
+    uploadHits.set(uid, { day, n: 1 });
+    if (uploadHits.size > 10_000) {
+      for (const [k, v] of uploadHits) if (v.day !== day) uploadHits.delete(k);
+    }
+    return true;
+  }
+  rec.n += 1;
+  return rec.n <= max;
+}
 
 export const appsRunRouter = Router();
 
@@ -274,6 +295,24 @@ appsRunRouter.post(
   // 大包体解析在鉴权之后（匿名 15MB JSON 解析 DoS 面收敛）
   express.json({ limit: '15mb' }),
   h(async (req, res) => {
+    // 每用户每日上传上限（内存计数，重启归零——软防护，防脚本化刷包写满数据卷；
+    // admin 上传路径不设限，管理员可信）
+    if (!uploadAllowed(req.user!.id)) {
+      throw new HttpError(429, 'UPLOAD_RATE_LIMITED', `今日上传次数已达上限（${getSettingInt('UPLOAD_PER_USER_PER_DAY', 20)}），请明日再试`);
+    }
+    // 磁盘水位：托管数据卷剩余空间不足时拒绝新包（防解压写满盘拖垮整站）
+    try {
+      const st = statfsSync(config.dataDir);
+      const freeMb = (Number(st.bavail) * Number(st.bsize)) / (1024 * 1024);
+      const minFreeMb = getSettingInt('UPLOAD_MIN_FREE_MB', 512);
+      if (minFreeMb > 0 && freeMb < minFreeMb) {
+        throw new HttpError(503, 'DISK_ALMOST_FULL', '存储空间不足，请联系管理员扩容后再试');
+      }
+    } catch (err) {
+      if (err instanceof HttpError) throw err;
+      // statfs 不可用（异常挂载）时不阻断上传——包体上限与限频仍在
+    }
+
     const body = (req.body ?? {}) as { filename?: string; dataBase64?: string };
     if (!body.dataBase64) throw new HttpError(400, 'INVALID_PACKAGE', '缺少包文件内容');
     let zipBuf: Buffer;

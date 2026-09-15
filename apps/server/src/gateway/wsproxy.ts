@@ -74,6 +74,21 @@ async function upgrade(req: IncomingMessage, socket: Duplex, head: Buffer): Prom
   const url = new URL(req.url ?? '/', 'http://internal.invalid');
   const m = url.pathname.match(/^\/app\/([a-z0-9][a-z0-9-]*)(\/.*)?$/);
   if (!m) return reject(socket, 404, 'Not Found');
+
+  // CSWSH 防护：同站/同父域页面发起的跨源 WS 握手会携带 SameSite=Lax cookie，
+  // 且 WS 响应读取不受 SOP 限制——与 /api CSRF 同语义校验 Origin：
+  // 缺失（非浏览器客户端，SDK/CLI）放行；存在则必须与 Host 精确相等。
+  const origin = req.headers.origin;
+  if (origin) {
+    let originHost = '';
+    try {
+      originHost = new URL(origin).host;
+    } catch {
+      /* 非法 Origin → 落到 403 */
+    }
+    if (!originHost || originHost !== req.headers.host) return reject(socket, 403, 'Forbidden');
+  }
+
   const id = m[1]!;
   const sub = (m[2] ?? '/').replace(/^\/+/, '');
 

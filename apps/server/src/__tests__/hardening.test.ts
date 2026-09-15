@@ -26,6 +26,8 @@ import { loadConfig } from '../config/index.js';
 import { appSiteDir, storePackageFiles, validateManifest, writeHtmlApp } from '../gateway/staticApp.js';
 import { egressHostGate, ipInAllowCidr, isPrivateIp, parseIntranetAllowlist } from '../routes/aap.js';
 import { identityEnv, loopbackPlatformPort, packageEntryPath } from '../lib/sandbox.js';
+import { handleUpgrade } from '../gateway/wsproxy.js';
+import { issueCode, verifyCode } from '../lib/verification.js';
 import { signIdentity, verifyIdentity } from '../gateway/identity.js';
 import { hasLeadingZeroBits } from '../lib/pow.js';
 import { appendLedger, cachedBalance, createAppToken, grantTokens, precheck, recomputeBalance, settleEstimate } from '../lib/llm.js';
@@ -70,6 +72,7 @@ beforeAll(async () => {
 
   const cfg = { ...loadConfig({}), webDist: null };
   server = http.createServer(createApp(cfg));
+  server.on('upgrade', handleUpgrade);
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   const port = (server.address() as AddressInfo).port;
   base = `http://127.0.0.1:${port}`;
@@ -793,5 +796,136 @@ describe('账号维度登录节流（批三⑤）', () => {
     });
     expect(res.status).toBe(403);
     expect(((await res.json()) as { error?: { code?: string } }).error?.code).toBe('POW_REQUIRED');
+  });
+});
+
+describe('WS 握手 Origin 校验（生产评审 6.1① CSWSH）', () => {
+  function upgrade(origin?: string): Promise<{ status?: number; upgraded: boolean }> {
+    return new Promise((resolve, reject) => {
+      const u = new URL(base);
+      const req = http.request({
+        host: u.hostname,
+        port: u.port,
+        path: '/app/wsapp-origin/ws',
+        headers: {
+          Connection: 'Upgrade',
+          Upgrade: 'websocket',
+          'Sec-WebSocket-Key': 'dGhlIHNhbXBsZSBub25jZQ==',
+          'Sec-WebSocket-Version': '13',
+          ...(origin ? { Origin: origin } : {}),
+        },
+      });
+      req.on('upgrade', (res, socket) => {
+        socket.destroy();
+        resolve({ status: res.statusCode, upgraded: true });
+      });
+      req.on('response', (res) => {
+        res.resume();
+        resolve({ status: res.statusCode, upgraded: false });
+      });
+      req.on('error', reject);
+      req.end();
+    });
+  }
+
+  it('跨站 Origin 403；同源/无 Origin（非浏览器）放行到后续门禁', async () => {
+    writeHtmlApp('wsapp-origin', '<h1>ws</h1>');
+    getDb().insert(apps).values({
+      id: 'wsapp-origin', name: 'WsApp', visibility: 'public', kind: 'html', upstream: '',
+      ownerUserId: ownerId, createdAt: Date.now(), updatedAt: Date.now(),
+    }).run();
+    const evil = await upgrade('https://evil.example.com');
+    expect(evil.upgraded).toBe(false);
+    expect(evil.status).toBe(403);
+    // 通过 Origin 关后走到应用形态判断：html 应用不支持 WS → 404
+    const sameOrigin = await upgrade(new URL(base).origin);
+    expect(sameOrigin.status).toBe(404);
+    const noOrigin = await upgrade();
+    expect(noOrigin.status).toBe(404);
+  });
+});
+
+describe('zip 解压上限（生产评审 6.1② zip 炸弹）', () => {
+  it('条目数超 2000 整包拒绝且目录清理', () => {
+    const zip = new AdmZip();
+    for (let i = 0; i < 2001; i++) zip.addFile(`d/${i}.txt`, Buffer.from('x'));
+    expect(() => storePackageFiles('ziplim-entries', zip.toBuffer())).toThrow(/条目数超过上限/);
+    expect(fs.existsSync(appSiteDir('ziplim-entries'))).toBe(false);
+  });
+
+  it('单条目声明解压体积超 100MB：不解压直接拒绝', () => {
+    const zip = new AdmZip();
+    zip.addFile('blob.bin', Buffer.alloc(101 * 1024 * 1024, 0x61));
+    expect(() => storePackageFiles('ziplim-declared', zip.toBuffer())).toThrow(/解压后总大小/);
+    expect(fs.existsSync(appSiteDir('ziplim-declared'))).toBe(false);
+  });
+
+  it('逐条声明合规但累计解压超限：按实际字节数兜底拒绝', () => {
+    const zip = new AdmZip();
+    for (let i = 0; i < 30; i++) zip.addFile(`p/${i}.bin`, Buffer.alloc(4 * 1024 * 1024, 0x61));
+    expect(() => storePackageFiles('ziplim-cumulative', zip.toBuffer())).toThrow(/解压后总大小/);
+  }, 60_000);
+
+  it('正常小包不受影响', () => {
+    const zip = new AdmZip();
+    zip.addFile('manifest.json', Buffer.from(JSON.stringify({ name: 'ziplim-ok', type: 'html' })));
+    zip.addFile('index.html', Buffer.from('<h1>ok</h1>'));
+    const r = storePackageFiles('ziplim-ok', zip.toBuffer());
+    expect(r.files).toBe(2);
+  });
+});
+
+describe('上传限频与磁盘水位（生产评审 6.2①）', () => {
+  it('数据卷水位超限时上传 503 DISK_ALMOST_FULL；恢复后正常', async () => {
+    setSetting('UPLOAD_MIN_FREE_MB', String(10 ** 9)); // 必然高于真实剩余空间
+    const res = await fetch(`${base}/api/apps/submit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie: ownerCookie, origin: base },
+      body: JSON.stringify({
+        filename: 'w.zip',
+        dataBase64: Buffer.from(zipPkg({ 'manifest.json': JSON.stringify({ name: 'wm-app', type: 'html' }), 'index.html': '<h1>w</h1>' })).toString('base64'),
+      }),
+    });
+    expect(res.status).toBe(503);
+    expect(((await res.json()) as { error?: { code?: string } }).error?.code).toBe('DISK_ALMOST_FULL');
+    setSetting('UPLOAD_MIN_FREE_MB', '512');
+  });
+
+  it('同用户每日第 21 次上传 429 UPLOAD_RATE_LIMITED（默认 20/天）', async () => {
+    const b64 = Buffer.from(zipPkg({ 'manifest.json': JSON.stringify({ name: 'rate-app', type: 'html' }), 'index.html': '<h1>r</h1>' })).toString('base64');
+    let lastStatus = 0;
+    let lastCode = '';
+    for (let i = 0; i < 21; i++) {
+      const res = await fetch(`${base}/api/apps/submit`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', cookie: otherCookie, origin: base },
+        body: JSON.stringify({ filename: 'r.zip', dataBase64: b64 }),
+      });
+      lastStatus = res.status;
+      if (res.status !== 200) lastCode = ((await res.json()) as { error?: { code?: string } }).error?.code ?? '';
+    }
+    expect(lastStatus).toBe(429);
+    expect(lastCode).toBe('UPLOAD_RATE_LIMITED');
+  });
+});
+
+describe('验证码条件消费（生产评审 6.3.1 纵深）', () => {
+  it('成功消费后同码复验被拒（条件 UPDATE）', async () => {
+    const logs: string[] = [];
+    const orig = console.log;
+    console.log = (...a: unknown[]) => {
+      logs.push(a.map(String).join(' '));
+    };
+    try {
+      await issueCode('email', 'once-a@test.local', 'register', '127.0.0.1');
+    } finally {
+      console.log = orig;
+    }
+    const line = logs.find((l) => l.includes('once-a@test.local') && l.includes('code='));
+    const code = /code=(\d{6})/.exec(line ?? '')?.[1];
+    expect(code).toBeTruthy();
+    expect(verifyCode('email', 'once-a@test.local', 'register', code!).ok).toBe(true);
+    const second = verifyCode('email', 'once-a@test.local', 'register', code!);
+    expect(second.ok).toBe(false);
   });
 });

@@ -42,7 +42,20 @@ const MIME: Record<string, string> = {
 export function writeHtmlApp(appId: string, html: string): void {
   const dir = appSiteDir(appId);
   fs.mkdirSync(dir, { recursive: true });
+  relaxDirForSandbox(dir);
   fs.writeFileSync(path.join(dir, 'index.html'), html, 'utf8');
+}
+
+/** 沙箱降权启用时（SANDBOX_UID），包目录须允许沙箱 uid 在其中创建 storage/ 与
+ *  app.sqlite（runner 以沙箱 uid 自建这两者）。容器内仅 root 与 aap(10001) 两个
+ *  uid，0777 的放宽面只在容器内部；未启用降权的部署保持默认 0755。 */
+function relaxDirForSandbox(dir: string): void {
+  if (!process.env.SANDBOX_UID) return;
+  try {
+    fs.chmodSync(dir, 0o777);
+  } catch {
+    /* 尽力而为：失败时降权沙箱将无法写入该包，运行报错可见 */
+  }
 }
 
 /** 解压 .neon-aap（html 包）到托管目录，返回解出的文件数与签名材料。
@@ -58,17 +71,29 @@ export function storePackageFiles(
 } {
   // adm-zip 延迟加载（纯 JS，无原生依赖）
   const req = createRequire(import.meta.url);
-  type ZipEntry = { entryName: string; isError: boolean; getData: () => Buffer };
+  type ZipEntry = { entryName: string; isError: boolean; getData: () => Buffer; header?: { size?: number } };
   const AdmZip = req('adm-zip') as new (b: Buffer) => { getEntries(): ZipEntry[] };
   const zip = new AdmZip(zipBuffer);
   const dir = appSiteDir(appId);
   fs.mkdirSync(dir, { recursive: true });
+  relaxDirForSandbox(dir);
   let files = 0;
   let manifest: Record<string, unknown> | null = null;
   let signature: Record<string, unknown> | null = null;
   const entries: Array<{ name: string; content: Buffer }> = [];
+  // 解压放大防护（zip 炸弹）：15MB 包体可声明任意解压体积——条目数与累计解压
+  // 字节双上限，超限整包拒绝（目录就地清理，调用方 catch 转 PACKAGE_INVALID）
+  const MAX_ENTRIES = 2000;
+  const MAX_UNCOMPRESSED = 100 * 1024 * 1024;
+  let processed = 0;
+  let uncompressed = 0;
+  const rejectPackage = (reason: string): never => {
+    fs.rmSync(dir, { recursive: true, force: true });
+    throw new Error(reason);
+  };
   for (const entry of zip.getEntries()) {
     if (entry.isError) continue;
+    if (++processed > MAX_ENTRIES) rejectPackage('包内条目数超过上限（2000）');
     const name = entry.entryName.replace(/\\/g, '/');
     if (name.includes('..') || name.startsWith('/') || name.endsWith('/')) continue;
     const dest = path.join(dir, name);
@@ -76,7 +101,17 @@ export function storePackageFiles(
     // （startsWith(dir) 缺路径分隔符，"x" 可匹配兄弟目录 "x-secret"，已实测绕过）
     const rel = path.relative(dir, dest);
     if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) continue;
+    // header 声明值先拒一遍，避免为判超限而先完整解压超大条目（声明可伪造，
+    // 解压后按实际字节数复核才是权威判定）
+    const declared = Number(entry.header?.size ?? 0);
+    if (declared > MAX_UNCOMPRESSED || uncompressed + declared > MAX_UNCOMPRESSED) {
+      rejectPackage('包解压后总大小超过上限（100MB），疑似压缩炸弹');
+    }
     const content = entry.getData();
+    uncompressed += content.length;
+    if (uncompressed > MAX_UNCOMPRESSED) {
+      rejectPackage('包解压后总大小超过上限（100MB），疑似压缩炸弹');
+    }
     fs.mkdirSync(path.dirname(dest), { recursive: true });
     fs.writeFileSync(dest, content);
     files++;

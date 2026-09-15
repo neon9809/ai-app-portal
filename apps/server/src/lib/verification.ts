@@ -27,11 +27,18 @@ export interface CodeChannel {
 
 class LogChannel implements CodeChannel {
   readonly id: VerifyChannel;
+  private static warned = false;
   constructor(id: VerifyChannel) {
     this.id = id;
   }
   async send(target: string, code: string, purpose: CodePurpose): Promise<void> {
-    // 离线兜底：验证码进服务端日志（自托管单管理员场景可接受）
+    // 离线兜底：验证码进服务端日志（自托管单管理员场景可接受）。
+    // 明文保留是兜底语义的一部分（管理员从日志读码转交用户），以首次使用时的
+    // 醒目警告替代掩码——掩码会让兜底失去可用性。
+    if (!LogChannel.warned) {
+      LogChannel.warned = true;
+      console.warn(`[dev-${this.id}] ⚠️ 邮件/短信通道未配置，验证码正经服务端日志兜底送达——生产环境务必配置 SMTP 或 Resend，并确保日志仅管理员可见`);
+    }
     console.log(`[dev-${this.id}] 验证码 purpose=${purpose} target=${target} code=${code}（5 分钟内有效）`);
   }
 }
@@ -240,10 +247,14 @@ export function verifyCode(channel: VerifyChannel, target: string, purpose: Code
     .get();
   if (!row) return { ok: false, error: 'CODE_INVALID_OR_EXPIRED' };
   if (!codeMatches(row.codeHash, code)) return { ok: false, error: 'CODE_MISMATCH' };
-  db.update(verificationCodes)
+  // 条件消费（consumed_at IS NULL 才置值）：同步模型下 SELECT/UPDATE 本不可交错，
+  // 此为防御纵深（未来引入多进程/异步通道时不退化为一码多用）
+  const consumed = db
+    .update(verificationCodes)
     .set({ consumedAt: now })
-    .where(eq(verificationCodes.id, row.id))
+    .where(and(eq(verificationCodes.id, row.id), isNull(verificationCodes.consumedAt)))
     .run();
+  if (consumed.changes === 0) return { ok: false, error: 'CODE_CONSUMED' };
   return { ok: true };
 }
 

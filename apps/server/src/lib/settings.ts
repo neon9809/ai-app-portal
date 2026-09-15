@@ -254,6 +254,12 @@ export const SETTING_DEFS: Record<string, SettingDef> = {
   SANDBOX_MAX_CONCURRENT_RUNS: {
     label: '沙箱并发执行上限',
     group: '应用网关', type: 'int', desc: '.neon-aap invoked 执行的全局并发进程数上限（超出排队，防进程炸弹）', initial: () => '8', defaultsWork: true, advanced: true },
+  UPLOAD_PER_USER_PER_DAY: {
+    label: '单用户每日上传上限',
+    group: '应用网关', type: 'int', desc: '每用户 24 小时内最多提交的 .neon-aap 包次数（含版本更新）；0 = 不限。防脚本化刷包写满数据卷（内存计数，重启归零）', initial: () => '20', defaultsWork: true, advanced: true },
+  UPLOAD_MIN_FREE_MB: {
+    label: '上传磁盘水位（MB）',
+    group: '应用网关', type: 'int', desc: '数据卷剩余空间低于该值（MB）时拒绝新包上传，防解压写满盘拖垮整站；0 = 不检查', initial: () => '512', defaultsWork: true, advanced: true },
   SANDBOX_IDLE_RECYCLE_SECONDS: {
     label: 'persistent 空闲回收（秒）',
     group: '应用网关', type: 'int', desc: '持久服务进程无访问多久后回收（下次访问重新拉起；任务型应用的状态应落 aap.db 不受影响）。最小 30', initial: () => '300', defaultsWork: true },

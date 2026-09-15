@@ -22,6 +22,26 @@ export function initDb(opts: { file: string; migrationsDir: string }): void {
   sqlite.pragma('foreign_keys = ON');
   db = drizzle(sqlite, { schema });
   migrate(db, { migrationsFolder: opts.migrationsDir });
+  hardenDbFilePerms(opts.file);
+}
+
+/** 数据库三件套收紧为仅属主可读写：沙箱降权（SANDBOX_UID）后 aap 用户对 /data
+ *  只应有遍历权，app.db 的口令/会话哈希不应被包代码读取（二轮渗透实测只读直连可读）。
+ *  WAL 的 -wal/-shm 会在 checkpoint 后以 umask 默认权限重建，故挂周期兜底；
+ *  文件尚不存在（如 -shm 未生成）时跳过，尽力而为。 */
+function hardenDbFilePerms(file: string): void {
+  const chmodAll = (): void => {
+    for (const f of [file, `${file}-wal`, `${file}-shm`]) {
+      try {
+        fs.chmodSync(f, 0o600);
+      } catch {
+        /* 未生成/已删除：跳过 */
+      }
+    }
+  };
+  chmodAll();
+  const timer = setInterval(chmodAll, 60_000);
+  timer.unref?.();
 }
 
 export function getDb(): Db {

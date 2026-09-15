@@ -25,10 +25,11 @@ services:
       # .neon-aap Python 运行时入口：容器内 REPO_ROOT 推导失效（代码在 /out），
       # 必须显式指定，否则所有 Python 包执行报 runner.py 缺失
       AAP_RUNNER: "/out/aap-sdk/aap_runtime/runner.py"
-      # 沙箱降权（推荐开启）：让 Python 包进程以预建非特权用户 aap(10001) 运行，
-      # 需先保证数据卷对该 uid 可写：chown -R 10001:10000 ../data
-      # SANDBOX_UID: "10001"
-      # SANDBOX_GID: "10001"
+      # 沙箱降权（默认开启）：Python 包进程以预建非特权用户 aap(10001) 运行。
+      # 存量部署升级时需一次性迁移数据卷属主：chown -R 10001:10001 ../data/appsites
+      # （开放注册 + 允许用户上传包的部署必须启用，否则任意注册用户可读全站凭据哈希）
+      SANDBOX_UID: "10001"
+      SANDBOX_GID: "10001"
       # 进一步加固（可选）：以非 root 运行主进程（注意先把数据卷属主改为 10001:10001）
       # user: "10001:10001"
       # 初始管理员密码（仅首启生效；不填则随机生成并打印到日志）
