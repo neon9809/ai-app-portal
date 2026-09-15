@@ -215,6 +215,9 @@ export function validateManifest(m: Record<string, unknown>): {
   if (type !== 'html' && type !== 'python') throw new Error('manifest.type 必须是 html 或 python');
   const entry = String(m.entry ?? (type === 'html' ? 'index.html' : ''));
   if (type === 'python' && !entry) throw new Error('python 包必须声明 entry');
+  // entry 越界即执行包目录外的任意 .py（第二轮渗透 NEW-1 实锤：跨包代码执行）——
+  // 上传口拒绝；packageEntryPath 另有运行时兜底
+  if (entry.includes('..') || path.isAbsolute(entry)) throw new Error('manifest.entry 不得包含相对路径段或绝对路径');
   const runtime = String(m.runtime ?? 'invoked');
   if (type === 'python' && !['invoked', 'persistent'].includes(runtime)) throw new Error('manifest.runtime 非法');
   const caps = Array.isArray(m.capabilities) ? m.capabilities.map(String) : [];

@@ -70,14 +70,27 @@ function escapeHtml(s: string): string {
   return String(s).replace(/[&<>"']/g, (c) => (c === '&' ? '&amp;' : c === '<' ? '&lt;' : c === '>' ? '&gt;' : c === '"' ? '&quot;' : '&#39;'));
 }
 
-function htmlError(res: Response, status: number, title: string, detail: string): void {
+/**
+ * 错误页：detail 支持「模板片段 + %% 」混合——%% 为插值锚点，按序以 escapeHtml
+ * 替换（转义只作用于插值，模板自身的 <a> 链接保持可用；NEW-3 外观回归修复）。
+ * 纯文本 detail 不含 %% 时行为同旧版整体转义。
+ */
+function htmlError(res: Response, status: number, title: string, detail: string, ...vals: unknown[]): void {
+  const parts = detail.split('%%');
+  let body: string;
+  if (parts.length === 1) {
+    body = `<p style="color:#888">${escapeHtml(detail)}</p>`;
+  } else {
+    const escaped = vals.map((v) => escapeHtml(String(v)));
+    body = `<p style="color:#888">${parts.map((seg, i) => seg + (i < escaped.length ? (escaped[i] ?? '') : '')).join('')}</p>`;
+  }
   res
     .status(status)
     .type('html')
     .send(
       `<!doctype html><meta charset="utf-8"><title>${escapeHtml(title)}</title>` +
         `<body style="font-family:system-ui;display:grid;place-items:center;min-height:80vh">` +
-        `<div style="text-align:center"><h1>${status}</h1><p>${escapeHtml(title)}</p><p style="color:#888">${escapeHtml(detail)}</p></div>`,
+        `<div style="text-align:center"><h1>${status}</h1><p>${escapeHtml(title)}</p>${body}</div>`,
     );
 }
 
@@ -208,19 +221,19 @@ gatewayRouter.all('/app/:id/*', async (req: Request, res: Response) => {
   if (!isSlug(id)) return htmlError(res, 404, 'Not Found', '应用不存在');
   const app = findApp(id);
   if (!app || !app.enabled) {
-    return htmlError(res, 404, '应用不存在', `未找到应用 ${id} 或已被停用`);
+    return htmlError(res, 404, '应用不存在', '未找到应用 %% 或已被停用', id);
   }
 
   // 访问策略三态
   const user = req.user;
   if (!canAccess(app, user ?? null)) {
     if (!user) {
-      return htmlError(res, 403, '需要登录', `应用「${app.name}」需要登录后访问，<a href="/login">去登录</a>`);
+      return htmlError(res, 403, '需要登录', '应用「%%」需要登录后访问，<a href="/login">去登录</a>', app.name);
     }
     if (user.authState !== 'full') {
       return htmlError(res, 403, '需要完成验证', '请先完成多因子认证');
     }
-    return htmlError(res, 403, '无权访问', `应用「${app.name}」未对你所在的分组或账号开放`);
+    return htmlError(res, 403, '无权访问', '应用「%%」未对你所在的分组或账号开放', app.name);
   }
 
   // 双维度限流
@@ -243,11 +256,17 @@ gatewayRouter.all('/app/:id/*', async (req: Request, res: Response) => {
       // 必填环境变量未配置 → 不拉起，给可操作的错误页（而不是让应用起来后行为异常）
       const missing = missingRequiredEnv(app.id);
       if (missing.length > 0) {
-        return htmlError(res, 503, '应用缺少配置', `必填环境变量未配置：${missing.join('、')}。请由归属者或管理员在应用「环境变量」中填写后重试。`);
+        return htmlError(res, 503, '应用缺少配置', '必填环境变量未配置：%%。请由归属者或管理员在应用「环境变量」中填写后重试。', missing.join('、'));
       }
-      const port = await ensurePersistent(app.id, manifestEntry(app), () => {
-        console.log(`[sandbox] persistent 崩溃重启: ${app.id}`);
-      });
+      let port: number | null = null;
+      try {
+        port = await ensurePersistent(app.id, manifestEntry(app), () => {
+          console.log(`[sandbox] persistent 崩溃重启: ${app.id}`);
+        });
+      } catch (err) {
+        // entry 越界等配置非法（上传口已拒，历史包兜底）：可读错误页而非 500
+        return htmlError(res, 503, '应用配置非法', err instanceof Error ? err.message : '应用配置非法');
+      }
       if (!port) return htmlError(res, 503, '应用启动中', '请稍后重试');
       // passUser：为沙箱逐请求签名注入身份头（persistent 内 LLM 调用按浏览用户归因计费）
       const identity = app.passUser && user ? signIdentity(user, app.id) : null;

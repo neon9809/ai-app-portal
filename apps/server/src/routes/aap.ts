@@ -13,6 +13,7 @@ import { getDb } from '../db/index.js';
 import { apps, users } from '../db/schema.js';
 import { HttpError, h } from '../lib/httpError.js';
 import { resolveAppToken, resolveDefaultModel, type AppTokenRow } from '../lib/llm.js';
+import { loopbackPlatformPort } from '../lib/sandbox.js';
 import { signIdentity, verifyIdentity } from '../gateway/identity.js';
 import { config } from '../config/index.js';
 import { getSetting, getSettingInt } from '../lib/settings.js';
@@ -141,9 +142,9 @@ aapRouter.post(
       }
     }
 
-    // 平台地址取服务端真实监听端口（同 appsRun 的 P1-8 修正：不信 config 常量，
-    // 测试/非常规端口部署下回环调用才不会打空）
-    const platformPort = req.socket.localPort ?? config.port;
+    // 平台地址取明文 HTTP 环回口（TLS 到达时回落 config.port，同 appsRun 的
+    // loopbackPlatformPort 修正：非常规端口部署不打空，TLS 口明文调用不悬断）
+    const platformPort = loopbackPlatformPort(req.socket.localPort, config);
     const gwRes = await fetch(`http://127.0.0.1:${platformPort}/v1/chat/completions`, {
       method: 'POST',
       headers,

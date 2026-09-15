@@ -25,7 +25,7 @@ import { createApp } from '../app.js';
 import { loadConfig } from '../config/index.js';
 import { appSiteDir, storePackageFiles, validateManifest, writeHtmlApp } from '../gateway/staticApp.js';
 import { egressHostGate, ipInAllowCidr, isPrivateIp, parseIntranetAllowlist } from '../routes/aap.js';
-import { identityEnv } from '../lib/sandbox.js';
+import { identityEnv, loopbackPlatformPort, packageEntryPath } from '../lib/sandbox.js';
 import { signIdentity, verifyIdentity } from '../gateway/identity.js';
 import { hasLeadingZeroBits } from '../lib/pow.js';
 import { appendLedger, cachedBalance, createAppToken, grantTokens, precheck, recomputeBalance, settleEstimate } from '../lib/llm.js';
@@ -114,9 +114,48 @@ describe('错误页 XSS（P0-1/P0-2）', () => {
     const body = await res.text();
     expect(body).toContain('&lt;b&gt;bold&lt;/b&gt;');
     expect(body).not.toContain('<b>bold</b>');
+    // NEW-3：模板自身的链接不被转义（对插值的转义只作用于插值本身）
+    expect(body).toContain('<a href="/login">');
   });
 
-  it('display_name 净化：剥 HTML 敏感字符 + 限长', () => {
+  it('404 页插值路径正常（%% 锚点重构后）', async () => {
+    const res = await fetch(`${base}/app/no-such-app-zzz/`);
+    expect(res.status).toBe(404);
+    const body = await res.text();
+    expect(body).toContain('未找到应用 no-such-app-zzz');
+    expect(body).not.toContain('%%');
+  });
+});
+
+describe('manifest.entry 越界（第二轮渗透 NEW-1）', () => {
+  it('上传口：entry 含 ../ 或绝对路径直接拒绝', () => {
+    for (const bad of ['../vic/mod.py', '..\\vic\\mod.py', '/etc/passwd', 'a/../../b.py']) {
+      expect(() => validateManifest({ name: 'e1', type: 'python', entry: bad, runtime: 'invoked' })).toThrow(/entry/);
+    }
+    expect(() => validateManifest({ name: 'e1', type: 'python', entry: 'mod.py', runtime: 'invoked' })).not.toThrow();
+    expect(() => validateManifest({ name: 'e1', type: 'python', entry: 'sub/mod.py', runtime: 'invoked' })).not.toThrow();
+  });
+
+  it('运行时兜底：packageEntryPath 拒绝越界解析', () => {
+    expect(() => packageEntryPath('e-app', '../other/mod.py')).toThrow(/越出包目录/);
+    expect(() => packageEntryPath('e-app', '..\\other\\mod.py')).toThrow(/越出包目录/);
+    const ok = packageEntryPath('e-app', 'sub/mod.py');
+    expect(ok.startsWith(appSiteDir('e-app'))).toBe(true);
+  });
+});
+
+describe('沙箱回环平台端口（第二轮渗透 NEW-2）', () => {
+  it('HTTP 口到达 → localPort；TLS 口到达 → 回落 config.port；未到达（undefined）→ config.port', () => {
+    const cfg = { port: 8080, httpsPort: 8443 };
+    expect(loopbackPlatformPort(8080, cfg)).toBe(8080);
+    expect(loopbackPlatformPort(9910, cfg)).toBe(9910); // 测试随机端口
+    expect(loopbackPlatformPort(8443, cfg)).toBe(8080); // HTTPS 到达：明文口回落
+    expect(loopbackPlatformPort(undefined, cfg)).toBe(8080);
+  });
+});
+
+describe('display_name 净化（回归）', () => {
+  it('剥 HTML 敏感字符 + 限长', () => {
     const m = validateManifest({ name: 'dn-app', type: 'html', display_name: `<img src=x onerror=alert(1)>${'长'.repeat(60)}` });
     expect(m.displayName).not.toMatch(/[<>"'`]/);
     expect(m.displayName.length).toBeLessThanOrEqual(64);

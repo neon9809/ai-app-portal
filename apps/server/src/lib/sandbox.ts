@@ -51,7 +51,28 @@ const SANDBOX_ENV_KEYS = [
 ];
 
 export function packageEntryPath(appId: string, entry: string): string {
-  return path.join(appSiteDir(appId), entry || 'mod.py');
+  const root = appSiteDir(appId);
+  const abs = path.resolve(root, entry || 'mod.py');
+  const rel = path.relative(root, abs);
+  if (rel.startsWith('..') || path.isAbsolute(rel)) {
+    // 上传时 validateManifest 已拒越界 entry；此处为纵深兜底（防历史包/绕过路径）
+    throw new Error(`manifest.entry 越出包目录: ${entry}`);
+  }
+  return abs;
+}
+
+/**
+ * 沙箱回连平台的端口（明文 HTTP 环回）。请求经 HTTP 监听到达时 localPort 即
+ * 真实口（测试用 0 号随机端口也不失准）；经 TLS 监听（httpsPort）到达时
+ * localPort 是 TLS 口，明文打过去必断（第二轮渗透 NEW-2，invoked 沙箱
+ * aap.llm.chat/egress 全挂）——此时回落 config.port（生产 HTTP 监听口）。
+ */
+export function loopbackPlatformPort(
+  localPort: number | undefined,
+  cfg: { port: number; httpsPort: number },
+): number {
+  if (localPort != null && localPort !== cfg.httpsPort) return localPort;
+  return cfg.port;
 }
 
 /**
@@ -260,6 +281,17 @@ export function runInvoked(
   // 排队上限：执行槽满且队列也满时直接 429（无界排队会积压请求内存）
   if (activeRuns >= sandboxMaxConcurrent() && runQueue.length >= MAX_QUEUE) {
     return Promise.reject(new HttpError(429, 'SANDBOX_BUSY', '沙箱执行排队已满，请稍后重试'));
+  }
+  // entry 越界（历史包/未来绕过路径）：上传口已拒，此处兜底转为可读错误
+  try {
+    packageEntryPath(appId, entry);
+  } catch (err) {
+    return Promise.resolve({
+      status: 'error',
+      error: err instanceof Error ? err.message : 'manifest.entry 非法',
+      logs: '',
+      durationMs: 0,
+    });
   }
   return acquireRunSlot().then((release) =>
     runInvokedOnce(appId, entry, input, opts).finally(release),

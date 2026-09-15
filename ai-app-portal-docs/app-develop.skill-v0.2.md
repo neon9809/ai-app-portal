@@ -41,7 +41,7 @@ description: "当用户要求开发、打包或重构 .neon-aap 应用（AI应�
   "display_name": "股票摘要助手",
   "version": "1.0.0",
   "type": "python",                  // "html" | "python"
-  "entry": "mod.py",                 // python 必填；html 固定 index.html
+  "entry": "mod.py",                 // python 必填；html 固定 index.html；仅限包内相对路径（含 ../ 或绝对路径上传即拒）
   "description": "输入股票代码，生成中文投资摘要",
   "author": "someone",
   "runtime": "invoked",              // "invoked" 按调用 | "persistent" 持久服务（仅 python）

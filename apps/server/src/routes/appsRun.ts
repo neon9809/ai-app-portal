@@ -18,7 +18,7 @@ import { HttpError, h } from '../lib/httpError.js';
 import { requireAdmin, requireAuth } from '../lib/auth.js';
 import { canAccess } from '../gateway/registry.js';
 import { appSiteDir } from '../gateway/staticApp.js';
-import { runInvoked } from '../lib/sandbox.js';
+import { loopbackPlatformPort, runInvoked } from '../lib/sandbox.js';
 import { ensureAutoProvisionedToken } from '../lib/llm.js';
 import { config } from '../config/index.js';
 import { storePackageFiles, validateManifest, parseEnvSpec, type ManifestEnvVar } from '../gateway/staticApp.js';
@@ -96,11 +96,10 @@ appsRunRouter.post(
     }
 
     const started = Date.now();
-    // 平台地址取服务端真实监听端口（req.socket.localPort 是本机绑定事实，
-    // 客户端不可控）。绝不能用请求 Host——那会注入沙箱的净网守卫放行面，
-    // 也是 AAP_TOKEN 的外泄目标（渗透测试 P1-8 关联项）
-    const platformPort = req.socket.localPort ?? config.port;
-    const platformBase = `http://127.0.0.1:${platformPort}`;
+    // 平台地址取明文 HTTP 环回口（TLS 到达时回落 config.port，见
+    // loopbackPlatformPort）。绝不能用请求 Host——那会注入沙箱的净网守卫
+    // 放行面，也是 AAP_TOKEN 的外泄目标（渗透测试 P1-8 关联项）
+    const platformBase = `http://127.0.0.1:${loopbackPlatformPort(req.socket.localPort, config)}`;
     const result = await runInvoked(app.id, entry, input.input ?? {}, { userId, timeoutMs: 30_000, platformBase });
 
     getDb()
