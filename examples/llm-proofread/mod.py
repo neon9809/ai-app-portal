@@ -29,11 +29,12 @@ PKG_DIR = os.environ.get("AAP_PACKAGE_DIR") or os.path.dirname(os.path.abspath(_
 
 MAX_TOTAL_CHARS = 30_000
 MAX_PARAGRAPHS = 60
-MAX_PARA_CHARS = 1_500
-MAX_COHERENCE_CHARS = 8_000
+# 字符护栏（输入侧，防单段超长打爆上下文）；生成侧不设 max_tokens——
+# 平台 LLM_SANDBOX_MAX_TOKENS 统一治理（0 = 不限制），推理型模型思考消耗大，
+# 包内硬编码上限会把 JSON 截断在半截（实测教训）
+MAX_PARA_CHARS = 8_000
+MAX_COHERENCE_CHARS = 16_000
 LLM_CONCURRENCY = 3
-PARA_MAX_TOKENS = 1_500
-COHERENCE_MAX_TOKENS = 1_200
 
 DEFAULT_PROOFREAD_PROMPT = (
     "你是严谨的中文文本校对助手。只修正错别字、标点误用、明显语病与事实性表述错误，"
@@ -175,9 +176,11 @@ def run_rules(text: str, user_key: str) -> dict:
 # ---------- LLM ----------
 
 def extract_json(text: str) -> dict | None:
-    """宽松提取 LLM 输出中的 JSON 对象（容忍 markdown 围栏与前后缀话）。"""
+    """宽松提取 LLM 输出中的 JSON 对象：剥 markdown 围栏与推理模型内联 <think> 块，
+    取首尾大括号之间尝试解析。"""
     if not text:
         return None
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.S)
     text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip())
     start, end = text.find("{"), text.rfind("}")
     if start < 0 or end <= start:
@@ -189,16 +192,16 @@ def extract_json(text: str) -> dict | None:
         return None
 
 
-def llm_json(system: str, user_content: str, identity, max_tokens: int) -> dict:
+def llm_json(system: str, user_content: str, identity) -> dict:
     """调用 LLM 并解析 JSON。返回 {"ok": True, "data": ...} 或 {"ok": False, "error": ...}。
-    identity 必须显式传入：工作线程没有 flask 请求上下文，runner 无法自动取头。"""
+    identity 必须显式传入：工作线程没有 flask 请求上下文，runner 无法自动取头。
+    不传 max_tokens：生成上限由平台 LLM_SANDBOX_MAX_TOKENS 统一治理（0 = 不限制）。"""
     try:
         resp = aap.llm.chat(  # noqa: F821 — runner 注入
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": user_content},
             ],
-            max_tokens=max_tokens,
             identity=identity,
         )
     except Exception as err:  # noqa: BLE001
@@ -247,7 +250,7 @@ def proofread_job(job_id: str, user_key: str, identity, text: str, opts: dict) -
             def one(i: int, para: str) -> tuple[int, dict, dict]:
                 truncated = len(para) > MAX_PARA_CHARS
                 content = para[:MAX_PARA_CHARS] + ("…[超长截断]" if truncated else "")
-                r = llm_json(proofread_prompt, f"校对以下段落：\n{content}", identity, PARA_MAX_TOKENS)
+                r = llm_json(proofread_prompt, f"校对以下段落：\n{content}", identity)
                 return i, r, {"truncated": truncated}
 
             with ThreadPoolExecutor(max_workers=LLM_CONCURRENCY) as pool:
@@ -274,7 +277,7 @@ def proofread_job(job_id: str, user_key: str, identity, text: str, opts: dict) -
         if opts.get("use_coherence"):
             coherence_prompt = get_setting(user_key, "coherence_prompt", DEFAULT_COHERENCE_PROMPT)
             full = text if len(text) <= MAX_COHERENCE_CHARS else text[:MAX_COHERENCE_CHARS] + "…[超长截断]"
-            r = llm_json(coherence_prompt, f"通读校验以下全文：\n{full}", identity, COHERENCE_MAX_TOKENS)
+            r = llm_json(coherence_prompt, f"通读校验以下全文：\n{full}", identity)
             usage_add(usage_total, r.get("usage") or {})
             if r.get("ok"):
                 result["coherence"] = {

@@ -15,7 +15,7 @@ import { HttpError, h } from '../lib/httpError.js';
 import { resolveAppToken, resolveDefaultModel, type AppTokenRow } from '../lib/llm.js';
 import { signIdentity, verifyIdentity } from '../gateway/identity.js';
 import { config } from '../config/index.js';
-import { getSetting } from '../lib/settings.js';
+import { getSetting, getSettingInt } from '../lib/settings.js';
 
 export const aapRouter = Router();
 
@@ -84,6 +84,13 @@ aapRouter.post(
         throw new HttpError(400, 'INVALID_INPUT', '未指定 model，且网关模型目录为空——请管理员先在「LLM 网关」配置模型路由（或在设置中指定沙箱默认模型）');
       }
     }
+    // max_tokens：包显式指定优先；未指定时按 LLM_SANDBOX_MAX_TOKENS 注入（0 = 不限制，
+    // 模型自然收尾，实际用量照常归因计量——推理型模型思考消耗大，由平台统一治理而非包内硬编码）
+    let maxTokens: number | null = typeof body.max_tokens === 'number' && body.max_tokens > 0 ? body.max_tokens : null;
+    if (maxTokens === null) {
+      const configured = getSettingInt('LLM_SANDBOX_MAX_TOKENS', 0);
+      if (configured > 0) maxTokens = configured;
+    }
     // 归因：SDK 透传运行身份头（invoked=运行用户；persistent=门户代理注入的请求身份），验签 aud=appId
     let userId: number | null = null;
     const idPayload = req.headers['x-aap-identity'];
@@ -134,13 +141,16 @@ aapRouter.post(
       }
     }
 
-    const gwRes = await fetch(`http://127.0.0.1:${config.port}/v1/chat/completions`, {
+    // 平台地址取服务端真实监听端口（同 appsRun 的 P1-8 修正：不信 config 常量，
+    // 测试/非常规端口部署下回环调用才不会打空）
+    const platformPort = req.socket.localPort ?? config.port;
+    const gwRes = await fetch(`http://127.0.0.1:${platformPort}/v1/chat/completions`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
         messages: body.messages,
         model,
-        ...(body.max_tokens ? { max_tokens: body.max_tokens } : {}),
+        ...(maxTokens !== null ? { max_tokens: maxTokens } : {}),
         ...(body.temperature !== undefined ? { temperature: body.temperature } : {}),
       }),
     });

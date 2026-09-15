@@ -232,6 +232,11 @@ export const SETTING_DEFS: Record<string, SettingDef> = {
     group: '计费', type: 'string',
     desc: '沙箱包 aap.llm.chat 不指定 model 时使用的模型（须为「LLM 网关」里已配置的模型路由公开名）。留空 = 自动取模型目录中排序第一个',
     initial: () => '', defaultsWork: true },
+  LLM_SANDBOX_MAX_TOKENS: {
+    label: '沙箱 LLM max_tokens',
+    group: '计费', type: 'int',
+    desc: '沙箱包 aap.llm.chat 未显式指定 max_tokens 时注入的生成上限；0 = 不限制（模型自然收尾，实际用量照常归因计量）。推理型模型思考消耗大，建议保持 0 并依赖余额闸门',
+    initial: () => '0', defaultsWork: true },
   TOPUP_TOKENS_PER_FEN: {
     label: '充值单价（token/分）',
     group: '计费', type: 'int',

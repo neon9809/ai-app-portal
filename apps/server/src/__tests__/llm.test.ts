@@ -276,3 +276,80 @@ describe('沙箱默认模型（LLM_DEFAULT_MODEL，规范 §3.1「不填用平�
     setSetting('LLM_DEFAULT_MODEL', '');
   });
 });
+
+describe('aap 代理：沙箱 max_tokens 注入策略（LLM_SANDBOX_MAX_TOKENS，0=不限制）', () => {
+  // aap 代理回环调用网关用 config.port（生产=真实监听端口），所以这里起一个
+  // 固定端口的独立实例（其他测试文件均 listen(0)，不冲突）
+  const AAP_PORT = 18117;
+  let aapGw: Server;
+
+  it('包未指定：0=不注入、正数=注入；包显式指定优先于设置', async () => {
+    const cfg = { ...loadConfig({ PORT: String(AAP_PORT) }), webDist: null };
+    aapGw = createApp(cfg).listen(AAP_PORT, '127.0.0.1');
+    await new Promise<void>((r) => aapGw!.once('listening', r));
+    const aapBase = `http://127.0.0.1:${AAP_PORT}`;
+
+    // 带 llm 能力的应用（能力校验依据 apps.manifestJson）+ 真实用户（代理按 uid 重签身份）
+    const { apps, users } = await import('../db/schema.js');
+    getDb()
+      .insert(apps)
+      .values({
+        id: 'llmcapapp',
+        name: 'LLM App',
+        kind: 'package',
+        upstream: '',
+        manifestJson: JSON.stringify({ capabilities: ['llm'] }),
+        enabled: true,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      })
+      .run();
+    getDb()
+      .insert(users)
+      .values({ kind: 'local', username: 'u600', name: 'u600', role: 'user', createdAt: Date.now() })
+      .run();
+    const uid = getDb().select({ id: users.id }).from(users).where(eq(users.username, 'u600')).get()!.id;
+    const token = createAppToken('llmcapapp', 'test', null);
+    grantTokens(uid, 100_000, 'cap-test', 1);
+    const auth = { 'x-aap-token': token, ...identityHeaders(uid, 'llmcapapp') };
+
+    let last: Record<string, unknown> | null = null;
+    const cap = await upServer((q, res, body) => {
+      last = JSON.parse(body || '{}');
+      res.writeHead(200, { 'content-type': 'application/json' }).end(OK_BODY);
+    });
+    okUpstreams.push(cap.server);
+    const capId = createUpstream('捕获上游', cap.baseUrl, 'sk-cap');
+    createRoute({ model: 'cap-model', upstreamId: capId, upstreamModel: 'cap-up' });
+
+    const call = async (extra: Record<string, unknown> = {}): Promise<void> => {
+      const res = await fetch(`${aapBase}/api/aap/llm/chat`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...auth },
+        body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }], ...extra }),
+      });
+      const text = await res.text();
+      expect(res.status, text.slice(0, 200)).toBe(200);
+    };
+
+    // 0 = 不限制：不向网关注入 max_tokens（模型自然收尾）
+    setSetting('LLM_SANDBOX_MAX_TOKENS', '0');
+    await call();
+    expect(last && (last as { max_tokens?: number }).max_tokens).toBeUndefined();
+
+    // 正数：注入
+    setSetting('LLM_SANDBOX_MAX_TOKENS', '500');
+    await call();
+    expect(last && (last as { max_tokens?: number }).max_tokens).toBe(500);
+
+    // 包显式指定优先于设置
+    await call({ max_tokens: 77 });
+    expect(last && (last as { max_tokens?: number }).max_tokens).toBe(77);
+
+    setSetting('LLM_SANDBOX_MAX_TOKENS', '0');
+  });
+
+  afterAll(async () => {
+    aapGw?.close();
+  });
+});

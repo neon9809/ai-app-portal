@@ -1,13 +1,16 @@
 {
   "name": "llm-proofread",
   "display_name": "文语校对",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "python",
   "entry": "mod.py",
   "runtime": "persistent",
   "route": "llm-proofread",
   "description": "规则引擎 + 大模型双重审核的长文本校对：违禁词标红、替换建议、逐段 LLM 校对（Inline Diff 呈现、逐段接受/忽略）、全文一致性评分。每用户独立提示词与词库，LLM 消耗按门户账号归因计费。",
   "author": "Neon",
-  "capabilities": ["llm", "db"],
+  "capabilities": [
+    "llm",
+    "db"
+  ],
   "network": []
 }
