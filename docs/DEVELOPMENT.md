@@ -105,6 +105,7 @@ client = OpenAI(base_url="http://<host>:8080/v1", api_key="aapk_…")
 
 - Docker：`deploy/docker/Dockerfile`（两阶段，含 web 构建与文档资产），`docker-compose.yml`；`DATA_DIR=/data` 卷。
 - FPK：`deploy/fpk/build-fpk.sh`（fpk-root 模板 + `__VERSION__` 占位替换）。上架前待确认清单见 `deploy/fpk/README.md`。
+- 原生（无 Docker）：`deploy/native/build-native.sh linux/arm64|linux/amd64` —— 在 node:22-bookworm（glibc）容器内构建，产出自包含包（自带 Node 22 二进制与按目标 C 库编译的 better-sqlite3，勿与 alpine/musl 产物混用），唯一外部依赖是系统 `python3`；运行方式与安全红线（systemd 专用用户替代 `SANDBOX_UID/GID` 降权）见包内 `README-NATIVE.md`。
 - CI：`.github/workflows/docker-publish.yml` —— push main / tag `v*`：多架构镜像 → ghcr.io（冒烟 `/api/health`）→ 自动打包 FPK 附 Release；tag 必须与根 `package.json.version` 一致。
 - 测试机快速部署：`./deploy/fast-deploy.sh`（本地构建产物 + rsync + **docker cp** 灌入容器重启，零服务器下载——轻量机带宽小，服务器上构建曾两次整机饿死）；仅依赖变更（lockfile）才需服务器 `compose build`（Dockerfile 已 manifest 先行 COPY + pnpm store BuildKit 缓存挂载，源码变更不再触发全量拉包）。
 
