@@ -15,6 +15,7 @@ import { getSetting, getSettingInt } from '../lib/settings.js';
 import { HttpError } from '../lib/httpError.js';
 import { h } from '../lib/httpError.js';
 import {
+  appLlmAllowed,
   llmPerMinuteDefault,
   modelCatalog,
   precheck,
@@ -137,6 +138,17 @@ llmGatewayRouter.post(
   h(async (req: Request, res: Response) => {
     const token = req.llmToken!;
     const body = (req.body ?? {}) as ChatBody;
+    // 能力声明闸（G1，审计 F1）：AAP_TOKEN 对全部包注入（egress 凭据），
+    // 未声明 llm 的包不得凭它直连 /v1 花运行用户余额——与 /api/aap/llm/chat 同一判定
+    if (!appLlmAllowed(token.appId)) {
+      const { status, body: e } = openaiError(
+        403,
+        'capability_not_declared',
+        '该应用 manifest 未声明 llm 能力，不能调用对话网关（请在 capabilities 声明 llm 后重新上传）',
+      );
+      res.status(status).json(e);
+      return;
+    }
     const model = String(body.model ?? '');
     if (!model || !Array.isArray(body.messages)) {
       const { status, body: e } = openaiError(400, 'invalid_request_error', '缺少 model 或 messages');

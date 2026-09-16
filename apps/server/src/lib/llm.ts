@@ -7,7 +7,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { and, eq, sql } from 'drizzle-orm';
 import { getDb } from '../db/index.js';
-import { llmAppTokens, llmBalanceCache, llmLedger, llmRoutes, llmUpstreams } from '../db/schema.js';
+import { llmAppTokens, llmBalanceCache, llmLedger, llmRoutes, llmUpstreams, apps } from '../db/schema.js';
 import { decryptSecret, encryptSecret } from './cryptoSecrets.js';
 import { HttpError } from './httpError.js';
 import { getSetting, getSettingInt } from './settings.js';
@@ -74,7 +74,34 @@ export function getAppLlmProvision(appId: string): { token: string; perMinuteLim
   }
 }
 
-/** manifest 声明 llm 能力的包：确保存在自动签发凭据（幂等；重复上传复用） */
+/**
+ * 网关侧 llm 能力闸（审计 F1）：AAP_TOKEN 是运行时凭据、对全部包签发
+ * （egress 出站 / 身份归因都依赖它），因此「花模型余额」必须单独闸——
+ * /api/aap/llm/chat 与 /v1 直连两侧按同一判定：manifest.capabilities 声明
+ * llm 才放行。无 manifestJson 的应用（管理员手建 HTML/反代应用 + 手动凭据）
+ * 无声明面，沿用旧行为放行；应用删除时凭据在删除路由连带吊销（app.delete）。
+ */
+export function appLlmAllowed(appId: string): boolean {
+  const row = getDb()
+    .select({ manifestJson: apps.manifestJson })
+    .from(apps)
+    .where(eq(apps.id, appId))
+    .get();
+  // 应用行不存在：管理员手动签发的虚拟凭据（外部集成等用途，appId 可不对应
+  // 已上传应用）沿用旧行为放行；已删除应用的凭据随删除路由连带吊销，不会走到这
+  if (!row) return true;
+  if (!row.manifestJson) return true;
+  try {
+    const m = JSON.parse(row.manifestJson) as { capabilities?: unknown };
+    return Array.isArray(m.capabilities) && m.capabilities.map(String).includes('llm');
+  } catch {
+    return false;
+  }
+}
+
+/** 自动签发运行时凭据（幂等；重复上传复用）。对全部包签发（AAP_TOKEN 同时
+ *  是 egress 凭据），LLM 花费面由 appLlmAllowed 在网关侧闸——签发广度与
+ *  能力闸门解耦，勿以「未声明 llm 就不签发」来修（会断非 llm 包的出站代理）。 */
 export function ensureAutoProvisionedToken(appId: string): void {
   const existing = getDb()
     .select()

@@ -11,7 +11,7 @@ import { closeDb, getDb } from '../db/index.js';
 import { seedSettings, setSetting } from '../lib/settings.js';
 import { createApp } from '../app.js';
 import { loadConfig } from '../config/index.js';
-import { llmBalanceCache } from '../db/schema.js';
+import { apps, llmBalanceCache, users } from '../db/schema.js';
 import { eq } from 'drizzle-orm';
 import {
   createAppToken,
@@ -388,5 +388,72 @@ describe('aap 代理：沙箱 max_tokens 注入策略（LLM_SANDBOX_MAX_TOKENS�
 
   afterAll(async () => {
     aapGw?.close();
+  });
+});
+
+describe('LLM 能力声明闸（审计 F1：未声明 llm 不得直连 /v1 花余额）', () => {
+  const U901 = 901;
+
+  const insertPackageApp = (id: string, capabilities: string[]): void => {
+    getDb()
+      .insert(apps)
+      .values({
+        id,
+        name: id,
+        kind: 'package',
+        upstream: '',
+        manifestJson: JSON.stringify({ capabilities }),
+        enabled: true,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      })
+      .run();
+  };
+
+  it('manifest 未声明 llm：/v1 直连与 aap.llm/chat 双侧 403（凭据照常签发——egress 需要）', async () => {
+    insertPackageApp('nollm-f1', ['storage']);
+    const token = createAppToken('nollm-f1', 'f1', null);
+
+    const gw = await chat({}, { authorization: `Bearer ${token}` });
+    expect(gw.status).toBe(403);
+    expect(gw.body).toContain('capability_not_declared');
+
+    const aap = await fetch(`http://127.0.0.1:${gwPort}/api/aap/llm/chat`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-aap-token': token },
+      body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }] }),
+    });
+    expect(aap.status).toBe(403);
+    expect(await aap.text()).toContain('CAPABILITY_NOT_DECLARED');
+  });
+
+  it('声明 llm：/v1 直连放行并按身份归因计费；manifest 缺 capabilities 同样 403', async () => {
+    getDb()
+      .insert(users)
+      .values({ id: U901, kind: 'local', username: 'u901', name: 'u901', role: 'user', createdAt: Date.now() })
+      .run();
+    grantTokens(U901, 100_000, 'f1', 1);
+    insertPackageApp('withllm-f1', ['llm']);
+    const token = createAppToken('withllm-f1', 'f1', null);
+
+    const before = balanceOf(U901);
+    const res = await chat(
+      { model: 'test-model', messages: [{ role: 'user', content: 'hi' }] },
+      { authorization: `Bearer ${token}`, ...identityHeaders(U901, 'withllm-f1') },
+    );
+    expect(res.status).toBe(200);
+    expect(balanceOf(U901)).toBeLessThan(before);
+
+    // manifest 存在但没写 capabilities：按未声明拒绝（fail-closed）
+    getDb()
+      .update(apps)
+      .set({ manifestJson: JSON.stringify({ version: '1.0.0' }) })
+      .where(eq(apps.id, 'withllm-f1'))
+      .run();
+    const res2 = await chat(
+      { model: 'test-model', messages: [{ role: 'user', content: 'hi' }] },
+      { authorization: `Bearer ${token}`, ...identityHeaders(U901, 'withllm-f1') },
+    );
+    expect(res2.status).toBe(403);
   });
 });

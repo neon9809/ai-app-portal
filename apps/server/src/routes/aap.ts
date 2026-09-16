@@ -12,7 +12,7 @@ import { eq } from 'drizzle-orm';
 import { getDb } from '../db/index.js';
 import { apps, users } from '../db/schema.js';
 import { HttpError, h } from '../lib/httpError.js';
-import { resolveAppToken, resolveDefaultModel, type AppTokenRow } from '../lib/llm.js';
+import { appLlmAllowed, resolveAppToken, resolveDefaultModel, type AppTokenRow } from '../lib/llm.js';
 import { loopbackPlatformPort } from '../lib/sandbox.js';
 import { signIdentity, verifyIdentity } from '../gateway/identity.js';
 import { config } from '../config/index.js';
@@ -63,18 +63,8 @@ aapRouter.post(
     if (!Array.isArray(body.messages)) {
       throw new HttpError(400, 'INVALID_INPUT', 'messages 必填');
     }
-    // 能力声明校验（G1）：未声明 llm 的包不允许调用
-    const app = getDb().select().from(apps).where(eq(apps.id, token.appId)).get();
-    let caps: string[] = [];
-    if (app?.manifestJson) {
-      try {
-        const m = JSON.parse(app.manifestJson) as { capabilities?: unknown };
-        if (Array.isArray(m.capabilities)) caps = m.capabilities.map(String);
-      } catch {
-        /* ignore */
-      }
-    }
-    if (!caps.includes('llm')) {
+    // 能力声明校验（G1）：未声明 llm 的包不允许调用（与 /v1 网关同一判定，审计 F1）
+    if (!appLlmAllowed(token.appId)) {
       throw new HttpError(403, 'CAPABILITY_NOT_DECLARED', '该应用 manifest 未声明 llm 能力');
     }
     // 规范 §3.1「不填用平台默认模型」：缺省取 LLM_DEFAULT_MODEL 设置，未设置取目录第一个

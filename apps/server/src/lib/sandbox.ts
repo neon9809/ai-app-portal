@@ -315,6 +315,31 @@ function idleRecycleMs(): number {
 }
 const MAX_RESTARTS = 3;
 
+/** persistent 全局进程数上限（审计 F3）：invoked 有全局并发闸，长驻侧此前无界——
+ *  每个被拜访的 distinct 应用各拉一个数十至数百 MB 的 Python 进程，足够多即可
+ *  耗尽内存。超限时回收最久未用进程腾位（LRU：任务状态应落 aap.db，重拉无损）；
+ *  对抗性轮流拜访会造成拉起抖动但内存有界（与 invoked 排队满 429 同一取舍）。
+ *  与 ensurePersistent 复查点同步执行、其间无 await，无超限竞态。 */
+function persistentMax(): number {
+  return Math.max(1, getSettingInt('SANDBOX_MAX_PERSISTENT', 12));
+}
+
+function makeRoomForPersistent(): boolean {
+  if (persistent.size < persistentMax()) return true;
+  let lruAppId: string | null = null;
+  let lruUsed = Infinity;
+  for (const [appId, p] of persistent) {
+    if (p.lastUsed < lruUsed) {
+      lruUsed = p.lastUsed;
+      lruAppId = appId;
+    }
+  }
+  if (lruAppId === null) return false;
+  console.log(`[sandbox] persistent 达上限（${persistentMax()}），回收最久未用: ${lruAppId}`);
+  stopPersistentFor(lruAppId);
+  return persistent.size < persistentMax();
+}
+
 function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const srv = net.createServer();
@@ -346,6 +371,8 @@ export async function ensurePersistent(
     raced.lastUsed = Date.now();
     return raced.port;
   }
+  // 全局上限（与复查点同步执行、其间无 await，无超限竞态）：腾不出位 → 503
+  if (!makeRoomForPersistent()) return null;
   const proc = spawn(
     PYTHON_BIN,
     [RUNNER, 'serve'],

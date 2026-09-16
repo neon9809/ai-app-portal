@@ -148,13 +148,13 @@ office-tool 后台丑且交互差是已知痛点；新面板七条要求：① �
 M1–M4 核心已交付；测试数与实装明细以 `docs/DEVELOPMENT.md` 为准（本节只记里程碑快照，不放易过期的用例计数）。
 
 - **已实装**：路径反代全套（§二）、WS 双通道、passUser 自动签发/注入、自动 HTTPS（PEM 热替换 + ACME HTTP-01 + 续期）、本地账号+注册（验证码 SMTP/Resend/日志兜底 + 邀请码 + Turnstile 接口）、MFA（TOTP/Passkey/恢复码/步升/状态机）、用户中心四区、管理后台（总览/站点设置/应用管理/用户与注册/安全/通知通道/证书/LLM 网关/运营 九个功能域选项卡 + 左侧竖向首配向导）、Docker/FPK/CI(ghcr 多架构+FPK Release)、OIDC SSO（PKCE）
-- **M2 LLM 网关**：`/v1/chat/completions`（流式透传+末帧 usage 捕获）、`/v1/models` 聚合；凭据 `aapk_*`（SHA-256 存储、可吊销、按凭据限流）；路由 priority+加权 failover；`llm_ledger` append-only 账本 + `llm_balance_cache` 预检（402）+ 事后校正；结算循环每分钟对账；manifest 声明 llm 的包上传即自动签发凭据（tokenEnc 加密保管，`getAppLlmProvision` 供 M4 运行时注入）
+- **M2 LLM 网关**：`/v1/chat/completions`（流式透传+末帧 usage 捕获）、`/v1/models` 聚合；凭据 `aapk_*`（SHA-256 存储、可吊销、按凭据限流）；路由 priority+加权 failover；`llm_ledger` append-only 账本 + `llm_balance_cache` 预检（402）+ 事后校正；结算循环每分钟对账；凭据对全部包上传即自动签发（AAP_TOKEN 同时是 egress 出站凭据；tokenEnc 加密保管，`getAppLlmProvision` 供 M4 运行时注入），LLM 花费面由 `appLlmAllowed` 按 manifest.capabilities 在 `/v1` 直连与 `/api/aap/llm/chat` 双侧闸（审计 F1：签发广度与能力闸解耦，勿改回「未声明不签发」——会断非 llm 包出站）；应用删除连带吊销全部网关凭据
 - **M3 计费**：功能订阅套餐（开通入分组/续费顺延/到期自动降级出组）；额度充值与**卡券码**（AAP-XXXX-XXXX-XXXX，原子兑换防双花，可作废/设有效期）；运营面板（套餐 CRUD/订单确认/余额消耗排行/应用热度/成本毛利）；manual 支付渠道首发（adapter 接口可扩）
 - **可见性模型（P）**：public / login / restricted（ACL：分组或账号任一命中，空=全部登录用户）/ private（仅归属者，用户自建默认，门户对他人隐藏）；用户分组 = 订阅等级载体
 - **通知通道**：MAIL_PROVIDER = smtp | resend（Resend 仅需 API Key，from 留空用沙箱发件人）；日志兜底（内网离线）；`SHOW_TOPUP_PANEL` 可隐藏用户充值面板
 - **统一页面元素（已实装）**：`portal-chrome.js` 注入所有代理/托管 HTML（应用门户/个人中心/退出登录+用户名，GET /api/auth/logout?next= 回跳）；幂等失败静默
 - **管理后台体验（P）**：九个功能域选项卡（总览/站点设置/应用管理/用户与注册/安全/通知通道/证书/LLM 网关/运营）+ 左侧竖向首配向导（可收起，完成自动隐藏）；设置项控件化（choiceLabels 下拉/bool 开关/int 数字框/取色器/密码+审计查看）与 `exclusiveOf` 互斥渲染（SMTP vs Resend）；展示降噪（短标签+tooltip 收纳描述与配置键，仅 defaultsWork=false 显示「需配置」）；密钥查看端点 `GET /api/admin/secrets/:key`（记审计）
-- **LLM 凭据签发已收敛为自动**：manifest 声明 llm 的包上传即自动签发（tokenEnc 加密保管，运行时按 appId 注入），管理端手动签发表单已移除，仅保留凭据列表与吊销；用户调额入口在运营面板
+- **LLM 凭据签发已收敛为自动**：包上传即自动签发运行时凭据（tokenEnc 加密保管，运行时按 appId 注入；未声明 llm 的包凭据仅服务 egress，LLM 调用被网关能力闸 403），管理端手动签发表单已移除，仅保留凭据列表与吊销；用户调额入口在运营面板
 - **更名记录**：X-Office-*→X-AAP-*；WEBUI_SIGN_SECRET→AAP_SIGN_SECRET（settings 表，首启随机/env 初值，管理端高级项可查看需审计）；邮件通道→通知通道；会员→功能订阅
 - **关键新增配置**：RATE_LLM_PER_MIN / TOPUP_TOKENS_PER_FEN / SHOW_TOPUP_PANEL / MFA_STEPUP_TTL / CODE_SEND_DAILY_LIMIT / DELETION_COOLDOWN_DAYS / APP_ALLOW_PUBLIC_UPSTREAM / ACME_* / HTTPS_REDIRECT / MAIL_PROVIDER / RESEND_*
 - **M4 已交付（G2–G5 核心）**：Python 沙箱运行时（runner + aap 对象 llm/db/storage/http/log；invoked stdin/stdout JSON + 30s 强杀；persistent 拉起+空闲 5 分钟回收+崩溃重启≤3 次+反代纳管）；出站唯一通道 = `/api/aap/egress`（manifest 白名单逐请求核验，IP/内网直连拒绝）；`/api/aap/llm/chat` 平台代理（签名归因到运行用户 + 能力声明校验）；审核流（用户上传默认私有→提交审核→管理员通过/驳回带理由，版本更新=重新审核）；运行记录 `app_runs` + 审计

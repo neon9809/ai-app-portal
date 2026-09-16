@@ -70,6 +70,22 @@ export function handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer
     });
 }
 
+/**
+ * upgrade 请求不经 express 中间件（req.ip 不存在）：按 TRUST_PROXY 语义取
+ * 客户端 IP，与 HTTP 通道 req.clientIp（getClientIp）保持一致（审计 F2）——
+ * 反代后置部署时所有 WS 连接的 socket 地址都是反代 IP，不读 XFF 会让
+ * IP 维度限流形同虚设或误伤全员。TRUST_PROXY=1 时取 XFF 最右一跳；
+ * 未开启时用 socket 地址（防伪造 XFF 绕过限流）。
+ */
+export function upgradeClientIp(req: IncomingMessage, trustProxy: boolean = config.trustProxy): string {
+  const strip = (ip: string): string => ip.replace(/^::ffff:/, '');
+  const socketIp = req.socket.remoteAddress ? strip(req.socket.remoteAddress) : '';
+  if (!trustProxy) return socketIp || 'unknown';
+  const xff = req.headers['x-forwarded-for'];
+  const last = typeof xff === 'string' ? xff.split(',').map((s) => s.trim()).filter(Boolean).pop() : undefined;
+  return (last ? strip(last) : socketIp) || 'unknown';
+}
+
 async function upgrade(req: IncomingMessage, socket: Duplex, head: Buffer): Promise<void> {
   const url = new URL(req.url ?? '/', 'http://internal.invalid');
   const m = url.pathname.match(/^\/app\/([a-z0-9][a-z0-9-]*)(\/.*)?$/);
@@ -101,7 +117,7 @@ async function upgrade(req: IncomingMessage, socket: Duplex, head: Buffer): Prom
   }
 
   const userKey = user ? `${user.kind}:${user.id}` : null;
-  const ip = req.socket.remoteAddress?.replace(/^::ffff:/, '') ?? 'unknown';
+  const ip = upgradeClientIp(req);
   if (!allowRequest(userKey, ip)) return reject(socket, 429, 'Too Many Requests');
 
   // 目标三类：upstream 反代 / persistent 沙箱（HTTP + WS 同门禁同语义）/ 其它形态不支持 WS

@@ -19,7 +19,8 @@ WORKDIR /app
 # （轻量机小管道曾因每次全量下载数百 MB 包整机饿死，758ec46 事故）
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json tsconfig.base.json ./
 COPY packages/shared/package.json packages/shared/
-COPY packages/aap-sdk/package.json packages/aap-sdk/
+# packages/aap-sdk 是纯 Python+脚本目录（无 package.json），不参与依赖层：
+# 运行阶段从 /app/packages/aap-sdk 原样拷贝（PYTHONPATH 指向）
 COPY apps/server/package.json apps/server/
 COPY apps/web/package.json apps/web/
 # pnpm store 走 BuildKit 缓存挂载：即使依赖层失效（lockfile 变更），命中部分免重下

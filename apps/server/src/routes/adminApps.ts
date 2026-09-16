@@ -9,7 +9,7 @@ import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { getDb } from '../db/index.js';
-import { apps } from '../db/schema.js';
+import { apps, llmAppTokens } from '../db/schema.js';
 import { HttpError, h } from '../lib/httpError.js';
 import { requireAdmin } from '../lib/auth.js';
 import { isSlug, listApps, findApp, getAcl, setAcl } from '../gateway/registry.js';
@@ -219,6 +219,9 @@ adminAppsRouter.delete(
     const id = String(req.params.id ?? '');
     if (!findApp(id)) throw new HttpError(404, 'APP_NOT_FOUND', '应用不存在');
     getDb().delete(apps).where(eq(apps.id, id)).run();
+    // 网关能力闸以 apps 行为准（appLlmAllowed）：应用删除必须连带吊销全部
+    // 网关凭据，否则残留凭据因「应用行已不存在」反而脱离能力闸（审计 F1 配套）
+    getDb().delete(llmAppTokens).where(eq(llmAppTokens.appId, id)).run();
     audit(`${req.user!.kind}:${req.user!.id}`, req.clientIp ?? null, 'app.delete', { id });
     res.json({ ok: true });
   }),
@@ -421,8 +424,8 @@ adminAppsRouter.post(
       allowGroupIds: body.allowedGroupIds ?? [],
       allowUserIds: body.allowedUserIds ?? [],
     });
-    // manifest 声明 llm 能力 → 自动签发网关凭据（幂等），运行时按 appId 注入，无需手动下发
-    // 所有包统一自动签发运行时凭据（egress/db/storage 必需）；llm.chat 额外校验能力声明
+    // 运行时凭据统一自动签发（幂等）：AAP_TOKEN 同时是 egress 出站凭据，非 llm 包也需要；
+    // LLM 花费面由 appLlmAllowed 在 /v1 网关与 /api/aap/llm/chat 双侧按 manifest.capabilities 闸（审计 F1）
     ensureAutoProvisionedToken(manifest.name);
     const llmProvisioned = manifest.capabilities.includes('llm');
     audit(`${req.user!.kind}:${req.user!.id}`, req.clientIp ?? null, 'app.package.create', {

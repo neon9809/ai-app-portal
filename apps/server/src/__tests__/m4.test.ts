@@ -12,11 +12,12 @@ import AdmZip from 'adm-zip';
 import { WebSocket } from 'ws';
 import { setupTestDb, teardownTestDb } from './testkit.js';
 import { closeDb, getDb } from '../db/index.js';
-import { seedSettings } from '../lib/settings.js';
+import { seedSettings, setSetting } from '../lib/settings.js';
 import { createApp } from '../app.js';
 import { loadConfig } from '../config/index.js';
 import { handleUpgrade } from '../gateway/wsproxy.js';
-import { stopAllPersistent } from '../lib/sandbox.js';
+import { appSiteDir } from '../gateway/staticApp.js';
+import { ensurePersistent, persistentPort, stopAllPersistent } from '../lib/sandbox.js';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
@@ -338,6 +339,47 @@ HTTPServer(("127.0.0.1", int(os.environ["PORT"])), Handler).serve_forever()
     expect(received).toBe('persist');
     ws.close();
   });
+
+  it('persistent 全局上限（审计 F3）：超限回收最久未用进程，腾位后新应用可拉起', async () => {
+    if (!pythonOk) return;
+    const SERVE_MOD = `
+import json, os
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+class Handler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, *args):
+        pass
+
+    def do_GET(self):
+        body = b'{"ok": true}'
+        self.send_response(200)
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+HTTPServer(("127.0.0.1", int(os.environ["PORT"])), Handler).serve_forever()
+`;
+    for (const id of ['cap-a', 'cap-b']) {
+      fs.mkdirSync(appSiteDir(id), { recursive: true });
+      fs.writeFileSync(path.join(appSiteDir(id), 'mod.py'), SERVE_MOD);
+    }
+    setSetting('SANDBOX_MAX_PERSISTENT', '1');
+    try {
+      const portA = await ensurePersistent('cap-a', 'mod.py');
+      expect(portA).not.toBeNull();
+      const portB = await ensurePersistent('cap-b', 'mod.py'); // cap-a 被 LRU 回收腾位
+      expect(portB).not.toBeNull();
+      expect(portB).not.toBe(portA);
+      expect(persistentPort('cap-a')).toBeNull();
+    } finally {
+      setSetting('SANDBOX_MAX_PERSISTENT', '');
+      stopAllPersistent();
+    }
+  }, 30_000);
 });
 
 describe('M4 安全回归（鉴权与归属校验）', () => {

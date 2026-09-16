@@ -7,7 +7,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
-import type { Server } from 'node:http';
+import type { IncomingMessage, Server } from 'node:http';
 import { WebSocket, WebSocketServer } from 'ws';
 import { eq } from 'drizzle-orm';
 import { setupTestDb, teardownTestDb } from './testkit.js';
@@ -15,7 +15,7 @@ import { closeDb, getDb, getSqlite } from '../db/index.js';
 import { seedSettings, setSetting, getSetting } from '../lib/settings.js';
 import { createApp } from '../app.js';
 import { loadConfig } from '../config/index.js';
-import { handleUpgrade } from '../gateway/wsproxy.js';
+import { handleUpgrade, upgradeClientIp } from '../gateway/wsproxy.js';
 import { users } from '../db/schema.js';
 import { writeLocalCredentials } from '../lib/bootstrap.js';
 import { verifyIdentity } from '../gateway/identity.js';
@@ -448,5 +448,26 @@ describe('W5 限流（令牌桶双维度）', () => {
     }
     expect(got429).toBe(true);
     setSetting('RATE_IP_PER_MIN', '600');
+  });
+});
+
+describe('WS 通道客户端 IP（审计 F2：upgrade 不经 express，按 TRUST_PROXY 语义解析）', () => {
+  function mkReq(headers: Record<string, string>, remoteAddress: string | undefined): IncomingMessage {
+    return { headers, socket: { remoteAddress } } as unknown as IncomingMessage;
+  }
+
+  it('TRUST_PROXY=1：与 req.ip 同语义——只信直连一跳，取 XFF 最右（反代上报的其对端）；无 XFF 回落 socket 地址', () => {
+    // 一级反代：nginx 追加客户端地址 → 最右即真实客户端
+    expect(upgradeClientIp(mkReq({ 'x-forwarded-for': '203.0.113.7' }, '10.0.0.2'), true)).toBe('203.0.113.7');
+    // 两级链：client, 中间代理 —— trust=1 只到中间代理（与 express req.ip 一致）
+    expect(upgradeClientIp(mkReq({ 'x-forwarded-for': '198.51.100.1, 203.0.113.7' }, '10.0.0.2'), true)).toBe('203.0.113.7');
+    expect(upgradeClientIp(mkReq({}, '203.0.113.7'), true)).toBe('203.0.113.7');
+  });
+
+  it('TRUST_PROXY 关闭：忽略 XFF 用 socket 地址（防伪造 XFF 绕过限流）；::ffff: 前缀剥离', () => {
+    expect(upgradeClientIp(mkReq({ 'x-forwarded-for': '203.0.113.7' }, '10.0.0.2'), false)).toBe('10.0.0.2');
+    expect(upgradeClientIp(mkReq({}, '::ffff:203.0.113.7'), false)).toBe('203.0.113.7');
+    expect(upgradeClientIp(mkReq({}, '::ffff:203.0.113.7'), true)).toBe('203.0.113.7');
+    expect(upgradeClientIp(mkReq({}, undefined), false)).toBe('unknown');
   });
 });

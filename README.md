@@ -33,7 +33,7 @@
 ```bash
 pnpm install
 pnpm dev          # server: http://localhost:8080 · web: http://localhost:5173
-pnpm test          # 单元/集成测试（服务端 14 个文件 140 用例）
+pnpm test          # 单元/集成测试（服务端 14 个文件 145 用例）
 pnpm test:e2e     # Playwright 端到端（自动起真实服务 + mock 上游）
 pnpm typecheck    # 全部类型检查
 ```
@@ -51,8 +51,8 @@ push 到 `main` 或打 `v*` tag 时，GitHub Actions 自动：
 ## 核心能力（当前实现）
 
 - **应用网关**：`/app/<id>/` 路径反代（HTML 改写 / `<base>` / fetch+XHR+script 猴补丁 / 路径穿越防御 / SSE 零缓冲），**WebSocket 透传**（HTTP+HTTPS 双通道），passUser 签名身份注入（X-AAP-Identity）
-- **门户托管应用**：简单 HTML 页直接粘贴接入；上传 `.neon-aap` 包自动校验 manifest 并提取字段；声明 `llm` 能力的包自动签发网关凭据（加密保管，运行时注入）；manifest `env` 声明环境变量/机密（必填/可选/格式校验/默认值），归属者或管理员在门户填值、密钥加密存储（只写不读），沙箱启动时注入进程环境变量
-- **LLM 网关**：OpenAI 兼容 `/v1/chat/completions`（流式）+ `/v1/models`；多上游按优先级+权重 failover；网关凭据（SHA-256 存储/可吊销/限流）；用户级+应用级计量（append-only 账本）、余额预检 402、预估事后校正；沙箱调用支持平台默认模型与生成上限（`LLM_DEFAULT_MODEL` / `LLM_SANDBOX_MAX_TOKENS`，0=不限）、上游连通性一键测试；**无归因调用默认拒绝**（`LLM_UNATTRIBUTED_POLICY` 可放行）
+- **门户托管应用**：简单 HTML 页直接粘贴接入；上传 `.neon-aap` 包自动校验 manifest 并提取字段；包上传即自动签发网关凭据（加密保管，运行时注入；未声明 `llm` 能力的包凭据仅用于出站代理，LLM 调用在网关侧按能力声明闸拒绝）；manifest `env` 声明环境变量/机密（必填/可选/格式校验/默认值），归属者或管理员在门户填值、密钥加密存储（只写不读），沙箱启动时注入进程环境变量
+- **LLM 网关**：OpenAI 兼容 `/v1/chat/completions`（流式）+ `/v1/models`；多上游按优先级+权重 failover；网关凭据（SHA-256 存储/可吊销/限流），**能力声明闸**对 `/v1` 直连与沙箱代理双侧强制（manifest 未声明 `llm` 一并 403）；用户级+应用级计量（append-only 账本）、余额预检 402、预估事后校正；沙箱调用支持平台默认模型与生成上限（`LLM_DEFAULT_MODEL` / `LLM_SANDBOX_MAX_TOKENS`，0=不限）、上游连通性一键测试；**无归因调用默认拒绝**（`LLM_UNATTRIBUTED_POLICY` 可放行）
 - **账号与安全**：本地账号+注册（验证码 SMTP/Resend/日志兜底、邀请码事务化防双花、Turnstile）、MFA（TOTP+Passkey，绑定新因子需步升）、OIDC 单点登录（PKCE）、登录防爆破（IP+账号双维度）+IP 封禁累犯倍增+PoW、步升认证（登录即授窗口）、审计日志、敏感配置 AES-GCM 落盘、HTTPS 启用即挂 HSTS
 - **订阅与计费**：功能订阅套餐（开通即入分组、到期自动降级）、额度充值与**卡券码兑换**（manual 确认渠道，支付渠道 adapter 可扩展）、运营面板（订单确认/排行/成本毛利）
 - **可见性模型**：公开 / 需登录 / 指定分组与账号 / 仅自己（用户自建应用默认私有，门户对他人隐藏）
