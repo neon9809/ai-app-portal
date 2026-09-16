@@ -25,6 +25,10 @@ services:
       # .neon-aap Python 运行时入口：容器内 REPO_ROOT 推导失效（代码在 /out），
       # 必须显式指定，否则所有 Python 包执行报 runner.py 缺失
       AAP_RUNNER: "/out/aap-sdk/aap_runtime/runner.py"
+      # 官方发布者公钥预置（每次启动自动种入信任列表，builtin 不可删——
+      # 该 key 签名的 .neon-aap 包上传即 verified 免审；私钥由发布者线下保管）
+      AAP_OFFICIAL_SIGN_PUBKEY: "TZxb0LoJihvn7d0c+9D6dVY3BgbhpCUAjZiWgMw7AnE="
+      AAP_OFFICIAL_SIGNER_NAME: "neon9809"
       # 沙箱降权（默认开启）：Python 包进程以预建非特权用户 aap(10001) 运行。
       # 存量部署升级时需一次性迁移数据卷属主：chown -R 10001:10001 ../data/appsites
       # （开放注册 + 允许用户上传包的部署必须启用，否则任意注册用户可读全站凭据哈希）
