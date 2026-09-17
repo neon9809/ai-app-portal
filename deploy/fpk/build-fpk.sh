@@ -25,6 +25,7 @@ NATIVE_TARBALL="${3:-}"
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 NATIVE_DIST="$ROOT/../native/dist"
 OUT="$ROOT/dist"
+REPO="$(cd "$ROOT/../.." && pwd)"
 
 case "$PLATFORMS" in x86|arm|all) ;; *) echo "✗ 平台参数必须是 x86|arm|all" >&2; exit 1;; esac
 [ -d "$ROOT/fpk-root" ] || { echo "✗ 缺少包源目录 $ROOT/fpk-root" >&2; exit 1; }
@@ -64,6 +65,12 @@ build_one() {
   mkdir -p "$stage/app"
   tar -xzf "$tarball" -C "$stage/app"
   mv "$stage/app/ai-app-portal-native_${VERSION}_linux_${arch}" "$stage/app/server"
+  # 开发指南/平台文档随包（guideRouter 定位 <载荷根>/assets/；旧 native 包亦补齐）
+  mkdir -p "$stage/app/server/assets"
+  cp "$REPO/ai-app-portal-docs/app-develop.skill-v0.2.md" \
+     "$REPO/README.md" \
+     "$REPO/ai-app-portal-docs/app-develop-internal.skill.md" \
+     "$stage/app/server/assets/"
 
   # ④ 剔除编译进 dist 的测试文件（不随包分发）；前端直接用包内根路径构建
   #    （build-native 产物即 Docker/端口同款 dist，与图标端口入口语义一致）

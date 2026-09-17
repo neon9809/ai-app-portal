@@ -27,7 +27,7 @@
 ```
 ai-app-portal/
 ├── app/
-│   ├── server/          ← deploy/native 自包含包（bin/node, dist, public, aap-sdk…）
+│   ├── server/          ← deploy/native 自包含包（bin/node, dist, public, aap-sdk, assets=开发指南三件…）
 │   └── ui/
 │       ├── config       ← 桌面入口（type=url + port=${wizard_port}，纯快捷方式）
 │       └── images/icon_{64,256}.png

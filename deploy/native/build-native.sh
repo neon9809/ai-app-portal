@@ -59,6 +59,12 @@ cp -R "$SRC/apps/web/dist" "$BUNDLE/public"
 cp -R "$SRC/packages/aap-sdk" "$BUNDLE/aap-sdk"
 cp "$ROOT/deploy/native/start.sh" "$BUNDLE/start.sh" && chmod +x "$BUNDLE/start.sh"
 cp "$ROOT/deploy/native/README-NATIVE.md" "$BUNDLE/README-NATIVE.md"
+# 开发指南/平台文档随包（guideRouter 定位 <载荷根>/assets/，三件与 Dockerfile 同源；
+# 此前遗漏导致原生形态「开发指南」404）
+mkdir -p "$BUNDLE/assets"
+cp "$ROOT/ai-app-portal-docs/app-develop.skill-v0.2.md" "$BUNDLE/assets/"
+cp "$ROOT/README.md" "$BUNDLE/assets/README.md"
+cp "$ROOT/ai-app-portal-docs/app-develop-internal.skill.md" "$BUNDLE/assets/"
 
 echo "⑥ 打包"
 tar -C "$DIST" -czf "$BUNDLE.tar.gz" "$(basename "$BUNDLE")"
