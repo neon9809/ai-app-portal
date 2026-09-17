@@ -43,14 +43,16 @@ docker run --rm --platform "$PLATFORM" \
   "$IMG" bash /app/deploy/native/build-inside.sh
 
 echo "④ 取出同镜像的 Node 22 二进制（ABI 与编译环境一致）"
+# 落点用宿主自建的 $DIST（runner 属主）：③ 的挂载目录 out-$ARCH 由容器 root 写出，
+# GitHub Actions 等 Linux 原生 Docker 下 runner 对其无写权限（macOS Docker Desktop 共享层不暴露此问题）
 CID=$(docker create --platform "$PLATFORM" "$IMG")
-docker cp "$CID:/usr/local/bin/node" "$DIST/out-$ARCH/node"
+docker cp "$CID:/usr/local/bin/node" "$DIST/node-$ARCH"
 docker rm "$CID" >/dev/null
 
 echo "⑤ 组装包"
 BUNDLE="$DIST/ai-app-portal-native_${VER}_linux_$ARCH"
 rm -rf "$BUNDLE" && mkdir -p "$BUNDLE/bin"
-cp "$DIST/out-$ARCH/node" "$BUNDLE/bin/node" && chmod +x "$BUNDLE/bin/node"
+cp "$DIST/node-$ARCH" "$BUNDLE/bin/node" && chmod +x "$BUNDLE/bin/node"
 cp -R "$DIST/out-$ARCH/out/node_modules" "$BUNDLE/node_modules"
 cp "$DIST/out-$ARCH/out/package.json" "$BUNDLE/package.json"
 cp -R "$SRC/apps/server/dist" "$BUNDLE/dist"
