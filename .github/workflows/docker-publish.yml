@@ -10,6 +10,10 @@ permissions:
   contents: write
   packages: write
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
@@ -35,6 +39,9 @@ jobs:
 
       - name: 安装依赖
         run: pnpm install --frozen-lockfile
+
+      - name: 构建 @aap/shared（types 指向 dist，冷启动必须先 build）
+        run: pnpm --filter @aap/shared build
 
       - name: typecheck + 全量测试
         run: |
@@ -139,12 +146,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-
-      - name: 安装 pnpm 11
-        run: npm i -g pnpm@11
-
-      - name: 安装依赖（前端按网关前缀重建需要）
-        run: pnpm install --frozen-lockfile
 
       - name: 设置 QEMU（arm64 原生构建用）
         uses: docker/setup-qemu-action@v3
