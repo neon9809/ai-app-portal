@@ -66,3 +66,7 @@ push 到 `main` 或打 `v*` tag 时，GitHub Actions 自动：
 - **M4 生态** ◐：Python 沙箱运行时（invoked 全链路 + persistent 拉起/回收/重启 + **HTTP/WS 反代透传**）、用户上传默认私有 + 审核流（审核门禁进 canAccess，未审新版对非归属者不可见）、**包签名信任链（Ed25519，官方签名免审）**、**用户包 iframe 沙箱（PRD G1：opaque origin，禁同源 cookie 面）**、统一页面元素注入（沙箱外壳层）；**沙箱内 LLM 调用已闭环归因到调用者**（环境/请求身份 → 平台代理验签 → 网关预检扣费）。剩 aap-dev 完整版。**沙箱隔离现状**：SDK 出网的受控通道为平台 egress 代理（manifest 白名单 + **解析后 IP 私网段复核**逐跳校验），runner 内置 Python 层出站守卫（直连仅放行平台地址，`AAP_NET_GUARD=0` 关闭），容器内可设 `SANDBOX_UID/GID` 降权运行（compose 已注记推荐开启）；进程级禁网、CPU/内存限额与 ns/cgroups 硬隔离待补，第三方包须先经审核再放开可见性
 
 详见 `ai-app-portal-docs/ai-app-portal-PRD-v0.3.1.md`；开发者文档见 `docs/DEVELOPMENT.md`。
+
+## 许可证
+
+[GPL-3.0](LICENSE) —— 本项目按 **GNU General Public License v3.0** 开源：你可以自由使用、修改和分发，衍生作品在分发时必须同样以 GPL-3.0 开源。版权所有 © 2026 neon9809。
