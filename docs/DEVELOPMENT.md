@@ -24,7 +24,7 @@
 pnpm install
 pnpm dev            # server:8080（tsx watch）+ web:5173（Vite，代理 /api 与 /app）
 pnpm build          # shared → server → web（生产产物 apps/web/dist）
-pnpm test           # 服务端测试（vitest，14 个文件 145 用例）
+pnpm test           # 服务端测试（vitest，15 个文件 154 用例）
 pnpm test:e2e       # Playwright 端到端（自动拉起真实服务 + mock 上游）
 pnpm typecheck      # 全仓类型检查
 pnpm db:generate    # drizzle-kit 生成迁移（schema 变更后必跑）
@@ -104,9 +104,9 @@ client = OpenAI(base_url="http://<host>:8080/v1", api_key="aapk_…")
 ## 8. 分发（deploy/）
 
 - Docker：`deploy/docker/Dockerfile`（两阶段，含 web 构建与文档资产），`docker-compose.yml`；`DATA_DIR=/data` 卷。
-- FPK：`deploy/fpk/build-fpk.sh`（fpk-root 模板 + `__VERSION__` 占位替换）。上架前待确认清单见 `deploy/fpk/README.md`。
+- FPK（**原生形态**，2026-09 定稿）：`deploy/fpk/build-fpk.sh <版本> <x86|arm|all>`——载荷 = `deploy/native` 自包含包，`manifest`/`config`/`cmd`/`wizard`/双尺寸图标按官方 fnpack 必检清单组装；**主入口 = 本服务自主监听端口**（向导 `wizard_port` 默认 8080，绑 0.0.0.0，`checkport=false`），与 Docker 形态路径行为完全一致；桌面图标 = `type=url` 端口快捷方式（不经飞牛统一网关——跨源 iframe 会被门户自身 frame-ancestors 拦截）；业务鉴权全部走门户自有账号体系。服务端 `GATEWAY_PREFIX`/`SOCKET_PATH`/`HOST` 能力保留休眠。取舍与真机待验证清单见 `deploy/fpk/README.md`。Docker 形态不再出 FPK。
 - 原生（无 Docker）：`deploy/native/build-native.sh linux/arm64|linux/amd64` —— 在 node:22-bookworm（glibc）容器内构建，产出自包含包（自带 Node 22 二进制与按目标 C 库编译的 better-sqlite3，勿与 alpine/musl 产物混用），唯一外部依赖是系统 `python3`；运行方式与安全红线（systemd 专用用户替代 `SANDBOX_UID/GID` 降权）见包内 `README-NATIVE.md`。
-- CI：`.github/workflows/docker-publish.yml` —— push main / tag `v*`：多架构镜像 → ghcr.io（冒烟 `/api/health`）→ 自动打包 FPK 附 Release；tag 必须与根 `package.json.version` 一致。
+- CI：`.github/workflows/docker-publish.yml` —— push main / tag `v*`：多架构镜像 → ghcr.io（tag 冒烟 `/api/health`）；原生 FPK 与镜像发布解耦，按 amd64/arm64 矩阵构建自包含包 → 打包 x86/arm 双 FPK 附 Release；tag 必须与根 `package.json.version` 一致。
 - 测试机快速部署：`./deploy/fast-deploy.sh`（本地构建产物 + rsync + **docker cp** 灌入容器重启，零服务器下载——轻量机带宽小，服务器上构建曾两次整机饿死）；仅依赖变更（lockfile）才需服务器 `compose build`（Dockerfile 已 manifest 先行 COPY + pnpm store BuildKit 缓存挂载，源码变更不再触发全量拉包）。
 
 ## 9. 约束与纪律

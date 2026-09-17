@@ -1,0 +1,13 @@
+{
+  ".url": {
+    "ai-app-portal.main": {
+      "title": "AI应用门户",
+      "icon": "images/icon_{0}.png",
+      "type": "url",
+      "protocol": "http",
+      "port": "${wizard_port}",
+      "url": "/",
+      "allUsers": true
+    }
+  }
+}

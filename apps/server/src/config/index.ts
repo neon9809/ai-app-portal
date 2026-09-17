@@ -25,6 +25,16 @@ export interface AapConfig {
   /** 生产模式下前端构建产物目录（不存在则不托管静态资源） */
   webDist: string | null;
 
+  /**
+   * FPK 统一网关形态（飞牛 fnOS）：入口把 /app/<appname>/... 转发到 Unix Socket，
+   * 服务端在最外层剥离该前缀再进路由（见 lib/gatewayPrefix.ts）；未设置 = 端口/容器形态。
+   */
+  gatewayPrefix: string | null;
+  /** 额外监听的 Unix Socket 路径（FPK manifest 的 gatewaySocket=app.sock） */
+  socketPath: string | null;
+  /** TCP 绑定地址；缺省全接口，FPK 形态绑 127.0.0.1——唯一对外入口收敛到统一网关 */
+  host: string | null;
+
   trustProxy: boolean;
 
   sessionTtlSec: number;
@@ -87,6 +97,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AapConfig {
       ? path.resolve(env.MIGRATIONS_DIR)
       : path.join(PKG_ROOT, 'drizzle'),
     webDist: env.WEB_DIST ? path.resolve(env.WEB_DIST) : path.join(PKG_ROOT, '../web/dist'),
+    gatewayPrefix: env.GATEWAY_PREFIX?.trim().replace(/\/+$/, '') || null,
+    socketPath: env.SOCKET_PATH?.trim() || null,
+    host: env.HOST?.trim() || null,
     trustProxy: asBool(env.TRUST_PROXY, false),
 
     sessionTtlSec: asInt(env.SESSION_TTL, 86400),

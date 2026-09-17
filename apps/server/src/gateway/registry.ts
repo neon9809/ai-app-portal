@@ -9,6 +9,7 @@ import { apps } from '../db/schema.js';
 import { decryptSecret } from '../lib/cryptoSecrets.js';
 import { appAcl } from '../db/schema.js';
 import { userGroupIds } from '../lib/groups.js';
+import { config } from '../config/index.js';
 
 export type AppRow = typeof apps.$inferSelect;
 
@@ -58,6 +59,16 @@ export interface UrlSecret {
 
 export function isSlug(id: string): boolean {
   return /^[a-z0-9][a-z0-9-]{0,63}$/.test(id);
+}
+
+/**
+ * FPK 统一网关形态下，应用 ID 不得与网关前缀末段相同（GATEWAY_PREFIX=/app/ai-app-portal
+ * 时即禁止 id=ai-app-portal）：入口层会把 /app/<末段>/... 整体剥前缀进门户路由，
+ * 同名应用的反代路径将永远不可达。端口/容器形态（未配置前缀）不受限。
+ */
+export function idConflictsWithGatewayPrefix(id: string, prefix = config.gatewayPrefix): boolean {
+  const last = prefix?.split('/').filter(Boolean).pop();
+  return !!last && id.toLowerCase() === last.toLowerCase();
 }
 
 export function listApps(): AppRow[] {

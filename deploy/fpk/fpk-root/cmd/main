@@ -1,0 +1,96 @@
+#!/bin/bash
+# ============================================================
+# AI应用门户 生命周期控制（start/stop/status）——飞牛 FPK 原生形态
+#
+# 运行身份：包用户（config/privilege run-as=package）
+# 数据：TRIM_PKGVAR（SQLite aap.db / 上传件 / master.key）
+# 入口：本服务自主监听 0.0.0.0:$wizard_port（内网直连；外网走门户自带
+#       HTTPS/ACME 或用户自有反代）。桌面图标 = 打开面板的快捷方式
+#       （type=url 端口入口），不经过飞牛统一网关。
+# 业务鉴权全部走门户自有账号体系。脚本可重复执行（安装/升级/配置
+# 流程可能被系统重新触发）。
+# ============================================================
+set -u
+
+APP_NAME="ai-app-portal"
+LOG_FILE="${TRIM_PKGVAR}/app.log"
+PID_FILE="${TRIM_PKGVAR}/app.pid"
+APP_DIR="${TRIM_APPDEST}/server"
+# 沙箱运行时：优先飞牛 python312 运行时包（manifest install_dep_apps），回落系统 python3
+PYTHON_BIN="/var/apps/python312/target/bin/python3"
+[ -x "$PYTHON_BIN" ] || PYTHON_BIN="$(command -v python3 || echo /usr/bin/python3)"
+
+log_msg() { echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "$LOG_FILE"; }
+
+check_process() { [ -n "${1:-}" ] && kill -0 "$1" 2>/dev/null; }
+
+status_app() {
+  if [ -f "$PID_FILE" ]; then
+    local pid
+    pid="$(head -n 1 "$PID_FILE" | tr -d '[:space:]')"
+    if check_process "$pid"; then return 0; fi
+    rm -f "$PID_FILE"
+  fi
+  # PID 文件丢失/失效时按启动命令自愈（setsid fork 等边缘情况）
+  local found
+  found="$(pgrep -f "$APP_DIR/dist/server.js" 2>/dev/null | head -1 || true)"
+  if [ -n "$found" ]; then
+    echo "$found" > "$PID_FILE"
+    return 0
+  fi
+  return 1
+}
+
+start_app() {
+  if status_app; then return 0; fi
+  log_msg "Starting $APP_NAME $TRIM_APPVER"
+  if [ ! -x "$APP_DIR/bin/node" ]; then
+    echo "应用文件缺失：$APP_DIR/bin/node" > "${TRIM_TEMP_LOGFILE:-/dev/null}"
+    exit 1
+  fi
+  cd "$APP_DIR" || exit 1
+  mkdir -p "$TRIM_PKGVAR"
+  # setsid 独立进程组：stop 时整组回收（node 及其沙箱 python 子进程）
+  # wizard_port：安装/配置向导收集的服务端口（对外主入口；默认 8080）
+  # wizard_admin_password：安装向导自设的初始管理员密码；留空时服务端随机生成
+  #   并写数据目录 admin-credentials.txt（两种方式首次登录均强制改密+绑 MFA）
+  PORT="${wizard_port:-8080}" DATA_DIR="$TRIM_PKGVAR" PYTHON_BIN="$PYTHON_BIN" NODE_ENV=production \
+    ADMIN_INITIAL_PASSWORD="${wizard_admin_password:-}" \
+    setsid bash "$APP_DIR/start.sh" >> "$LOG_FILE" 2>&1 &
+  echo "$!" > "$PID_FILE"
+}
+
+stop_app() {
+  log_msg "Stopping $APP_NAME"
+  status_app || return 0
+  local pid
+  pid="$(head -n 1 "$PID_FILE" | tr -d '[:space:]')"
+  # 先按进程组 TERM（含沙箱 python 子进程），失败退回单进程
+  kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
+  local count=0
+  while check_process "$pid" && [ "$count" -lt 10 ]; do
+    sleep 1
+    count=$((count + 1))
+  done
+  if check_process "$pid"; then
+    kill -KILL -- "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
+  fi
+  rm -f "$PID_FILE"
+}
+
+case "${1:-}" in
+  start)
+    start_app
+    ;;
+  stop)
+    stop_app
+    ;;
+  status)
+    if status_app; then exit 0; fi
+    exit 3
+    ;;
+  *)
+    echo "Unknown command: $1" > "${TRIM_TEMP_LOGFILE:-/dev/null}"
+    exit 1
+    ;;
+esac

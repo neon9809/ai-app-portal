@@ -1,0 +1,13 @@
+#!/bin/bash
+# config_callback：配置向导（wizard/config）提交后应用新值。
+# 应用正在运行则重启，让新向导值（如 wizard_port）生效；未运行则不动，
+# 下次 start 自然携带新值。可重复执行。
+set -u
+
+DIR="$(cd "$(dirname "$0")" && pwd)"
+
+if "$DIR/main" status; then
+  "$DIR/main" stop
+  "$DIR/main" start
+fi
+exit 0

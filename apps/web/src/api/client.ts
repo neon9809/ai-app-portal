@@ -1,4 +1,5 @@
 import type { ApiErrorBody } from '@aap/shared';
+import { withBase } from '../lib/base';
 
 /** 统一 API 错误：携带契约错误码与可选 action（pow/mfa/step-up 挑战） */
 export class ApiError extends Error {
@@ -23,7 +24,7 @@ export async function api<T = unknown>(path: string, init: ApiInit = {}): Promis
   const { json, headers, body, ...rest } = init;
   let res: Response;
   try {
-    res = await fetch(path, {
+    res = await fetch(withBase(path), {
       credentials: 'include',
       ...rest,
       headers: {

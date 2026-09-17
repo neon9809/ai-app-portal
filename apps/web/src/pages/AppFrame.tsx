@@ -3,16 +3,17 @@
 import { Result, Spin } from 'antd';
 import { useEffect } from 'react';
 import { useParams } from 'react-router-dom';
+import { withBase } from '../lib/base';
 
 export function AppFramePage() {
   const { id = '' } = useParams();
 
   useEffect(() => {
-    if (id) window.location.replace(`/app/${encodeURIComponent(id)}/`);
+    if (id) window.location.replace(withBase(`/app/${encodeURIComponent(id)}/`));
   }, [id]);
 
   if (!id) {
-    return <Result status="404" title="应用不存在" extra={<a href="/">返回门户</a>} />;
+    return <Result status="404" title="应用不存在" extra={<a href={withBase('/')}>返回门户</a>} />;
   }
   return (
     <div style={{ textAlign: 'center', padding: 80 }}>

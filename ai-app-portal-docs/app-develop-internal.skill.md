@@ -27,11 +27,11 @@ Neon 的 OSS 项目：自托管 AI 应用网关 + 门户，中文名「AI应用�
 | 4 | **单组织**，不做多租户/白标 |
 | 5 | **计费双线**：会员订阅（×应用可见性）+ token 充值（LLM 用量，池式扣减）；不做任意 SQL 级按量账单 |
 | 6 | **品牌全数据化**：logo/站名/主题/页脚/ICP+公安备案号组件；内置 ≥6 套主题（复用 fnos-dashboard 主题方法论） |
-| 7 | **分发两手抓**：飞牛 FPK（初始流量主阵地，`install_dep_apps=database` 用飞牛内置 DB）+ Docker（外部/容器 DB 走 DATABASE_URL）；**两形态路径行为完全一致**——业务流量都走监听端口（service_port），差异只在基础设施装配层（配置驱动 adapter） |
-| 8 | **飞牛统一网关只做桌面图标入口**：点图标 → 网关校验 NAS 登录态 → 识别 NAS 管理员 → 直接建立管理员会话（首次强制设密码）。业务调用不走统一网关 |
+| 7 | **分发两手抓（2026-09 定稿）**：飞牛 FPK = **原生形态**（载荷 `deploy/native` 自包含包 + `install_dep_apps=python312`，SQLite 内置，不用飞牛 database）+ Docker（非飞牛用户，DATABASE_URL/SQLite 均可）；**两形态都是端口主入口**（FPK 端口向导化 wizard_port），路径行为完全一致 |
+| 8 | **飞牛桌面图标 = 纯快捷方式（2026-09 定稿）**：type=url 端口入口新标签页打开面板，**不经统一网关**（跨源 iframe 会被门户 frame-ancestors 拦截，不放行）；面板与全部业务都走门户自有端口与账号体系（不消费 X-Trim-* 身份头、不做 NAS 管理员免密建会话——原 F3 免密通道废弃；网关 socket/前缀能力服务端保留休眠） |
 | 9 | **公用设施集中配置**：数据库（平台 DAL 统一访问，应用不直连）/ LLM 网关 / 反向代理，应用零配置受益 |
 | 10 | **管理面板体验是 P0 验收硬指标**（详见下文 E 要求） |
-| 11 | **首次初始化**：FPK = NAS 管理员免密进入 → 强制设密；Docker = 首启初始密码打印容器日志（+ data/ 一次性凭据文件）→ 登录强制改密。两形态收敛到同一份 checklist；admin 强制 MFA 不可关 |
+| 11 | **首次初始化（2026-09 定稿）**：FPK 与 Docker 同流程 = 首启随机初始密码落数据目录 `app.log`（Docker 为容器日志 + data/ 一次性凭据文件）→ 登录强制改密。收敛到同一份 checklist；admin 强制 MFA 不可关 |
 
 ## 二、路径模式反代的坑与解法（核心经验，office-tool 实战验证）
 
@@ -99,7 +99,7 @@ office-tool 后台丑且交互差是已知痛点；新面板七条要求：① �
 
 ## 八、FPK 要点（文档镜像：github.com/ckcoding/fnnas-docs，每晚同步官方）
 
-统一网关（gatewayPrefix `/app/{appname}` + gatewaySocket Unix socket，NAS 登录态校验后转发附用户 Header，支持 WS）；依赖声明 `install_dep_apps`（database/cache/redis/minio，右到左安装）；运行时包 python312/nodejs_v22/java-21（`/var/apps/<rt>/target/bin` 加 PATH）；TRIM_* 环境变量族（TRIM_APPDEST/TRIM_PKGVAR 等）；Docker 类 FPK = `app/docker/docker-compose.yaml` 模板。
+统一网关（gatewayPrefix `/app/{appname}` + gatewaySocket Unix socket，NAS 登录态校验后转发附用户 Header，支持 WS）；依赖声明 `install_dep_apps`（database/cache/redis/minio，右到左安装）；运行时包 python312/nodejs_v22/java-21（`/var/apps/<rt>/target/bin` 加 PATH）；TRIM_* 环境变量族（TRIM_APPDEST/TRIM_PKGVAR 等）。**本包采用原生形态 + 端口主入口（2026-09 定稿，官方 fnpack 必检清单全过）**：manifest（INI 无扩展名，省略 service_port + checkport=false）+ config/{privilege,resource} + cmd/ 九脚本 + wizard/（wizard_port 端口）+ ICON.PNG/ICON_256.PNG（64/256）；载荷 = deploy/native 自包含包；入口 = 桌面图标 type=url 端口快捷方式（不经统一网关）；服务端 GATEWAY_PREFIX/SOCKET_PATH 前缀与 socket 能力保留休眠（`apps/server/src/lib/gatewayPrefix.ts`）；细节与取舍见 `deploy/fpk/README.md`。
 
 ## 九、沙箱日志收口与调试沙箱（平台侧约定，v2.1 新增；与 app-develop 规范 v0.2 §3.5/§3.6/§七 配套）
 

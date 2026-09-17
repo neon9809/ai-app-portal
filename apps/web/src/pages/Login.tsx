@@ -6,6 +6,7 @@ import { Alert, Button, Card, Form, Input, Tabs, Typography, message } from 'ant
 import { KeyOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
 import { useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { withBase } from '../lib/base';
 import { useQuery } from '@tanstack/react-query';
 import type { PortalBootstrap } from '@aap/shared';
 import { startAuthentication } from '@simplewebauthn/browser';
@@ -205,7 +206,7 @@ export function LoginPage() {
                 <span style={{ color: 'var(--aap-text-secondary)', fontSize: 12 }}>或</span>
                 <div style={{ flex: 1, height: 1, background: 'var(--aap-border)' }} />
               </div>
-              <Button block href="/api/auth/oidc/start">
+              <Button block href={withBase('/api/auth/oidc/start')}>
                 使用 OIDC 单点登录
               </Button>
             </>

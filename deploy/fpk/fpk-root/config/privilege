@@ -1,0 +1,7 @@
+{
+  "defaults": {
+    "run-as": "package"
+  },
+  "username": "ai-app-portal",
+  "groupname": "ai-app-portal"
+}

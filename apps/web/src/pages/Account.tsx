@@ -2,6 +2,7 @@
  * 用户中心（A4）：个人信息 / 安全（改密、MFA、会话管理）/ 账单（M3 占位）/ 注销。
  * 敏感操作（换绑邮箱、注销、MFA 管理）前置步升认证：重输密码或 TOTP。
  */
+import { withBase } from '../lib/base';
 import {
   Alert,
   ColorPicker,
@@ -169,7 +170,7 @@ export function AccountPage() {
   }, [me]);
 
   if (!me || !user) {
-    return <Alert type="info" showIcon message="请先登录" description={<a href="/login">去登录</a>} />;
+    return <Alert type="info" showIcon message="请先登录" description={<a href={withBase('/login')}>去登录</a>} />;
   }
 
   async function saveProfile(values: { name: string }): Promise<void> {
@@ -357,7 +358,7 @@ export function AccountPage() {
                     推荐 TOTP 验证器 + Passkey 双因子。管理员账号强制启用。
                   </Typography.Paragraph>
                   <Space>
-                    <a href="/mfa-setup">
+                    <a href={withBase('/mfa-setup')}>
                       <Button type="primary">绑定 / 管理</Button>
                     </a>
                   </Space>

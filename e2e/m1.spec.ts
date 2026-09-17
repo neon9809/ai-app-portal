@@ -44,7 +44,7 @@ test('F3 初始化：改密 → 绑定 TOTP → 进入门户', async ({ page }) 
   await expect(page.getByText('演示应用')).toBeVisible();
 });
 
-/** M1 验收主链路②：注册 → 卡片墙 → 打开应用（iframe 上游可见） */
+/** M1 验收主链路②：注册 → 卡片墙 → 打开应用（整页直跳，上游标记可见） */
 test('注册用户 → 卡片墙 → 打开演示应用', async ({ page }) => {
   await page.goto('/register');
   await page.locator('#username').fill('e2euser');
@@ -63,10 +63,9 @@ test('注册用户 → 卡片墙 → 打开演示应用', async ({ page }) => {
   await page.waitForURL(`${PORTAL}/`);
   await expect(page.getByText('演示应用')).toBeVisible();
 
-  // 打开应用：iframe 内可见上游标记
+  // 打开应用：卡片整页直跳 /app/<id>/（b3663a9 起无 iframe 包装，门户导航由注入 chrome 承载）
   await page.getByText('演示应用').first().click();
-  const frame = page.frameLocator('iframe');
-  await expect(frame.locator('#upstream-marker')).toHaveText('DEMO-UPSTREAM-OK');
+  await expect(page.locator('#upstream-marker')).toHaveText('DEMO-UPSTREAM-OK');
 });
 
 /** M1 验收主链路③：退出 → 新密码登录 → TOTP 挑战 → 完整会话 */

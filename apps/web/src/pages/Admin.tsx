@@ -11,6 +11,7 @@
  * ④危险操作防呆 ⑤状态仪表卡 ⑥移动端可看状态 ⑦保存即生效+测试按钮
  */
 import type { ReactNode } from 'react';
+import { withBase } from '../lib/base';
 import {
   Alert,
   Badge,
@@ -313,7 +314,7 @@ export function AdminPage() {
   const showRail = !railCollapsed && !wizardDone;
 
   if (!me || me.user.role !== 'admin') {
-    return <Alert type="warning" showIcon message="需要管理员权限" description={<a href="/login">使用管理员账号登录</a>} />;
+    return <Alert type="warning" showIcon message="需要管理员权限" description={<a href={withBase('/login')}>使用管理员账号登录</a>} />;
   }
 
   const go = (tab: string) => () => setActiveTab(tab);
@@ -350,12 +351,12 @@ export function AdminPage() {
                 {
                   title: '管理员密码',
                   status: c.adminPasswordChanged ? 'finish' : 'process',
-                  description: <a href="/account">去修改</a>,
+                  description: <a href={withBase('/account')}>去修改</a>,
                 },
                 {
                   title: '绑定 MFA',
                   status: c.adminMfaEnabled ? 'finish' : 'process',
-                  description: <a href="/mfa-setup">去绑定</a>,
+                  description: <a href={withBase('/mfa-setup')}>去绑定</a>,
                 },
                 {
                   title: '域名证书',

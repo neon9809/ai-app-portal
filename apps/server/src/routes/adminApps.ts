@@ -12,7 +12,7 @@ import { getDb } from '../db/index.js';
 import { apps, llmAppTokens } from '../db/schema.js';
 import { HttpError, h } from '../lib/httpError.js';
 import { requireAdmin } from '../lib/auth.js';
-import { isSlug, listApps, findApp, getAcl, setAcl } from '../gateway/registry.js';
+import { isSlug, idConflictsWithGatewayPrefix, listApps, findApp, getAcl, setAcl } from '../gateway/registry.js';
 import { writeHtmlApp, storePackageFiles, validateManifest, appSiteDir } from '../gateway/staticApp.js';
 import { checkPackageSignature, type SignatureCheck, type SignatureObj } from '../lib/signing.js';
 import { ensureAutoProvisionedToken } from '../lib/llm.js';
@@ -116,6 +116,8 @@ adminAppsRouter.post(
     const body = (req.body ?? {}) as AppPayload;
     const id = String(body.id ?? '').trim();
     if (!isSlug(id)) throw new HttpError(400, 'INVALID_ID', '应用 ID 需为小写字母/数字/连字符（字母或数字开头）');
+    if (idConflictsWithGatewayPrefix(id))
+      throw new HttpError(400, 'INVALID_ID', '该应用 ID 与 FPK 统一网关入口路径冲突，请更换 ID');
     if (findApp(id)) throw new HttpError(409, 'APP_EXISTS', '应用 ID 已存在');
     if (!body.name?.trim()) throw new HttpError(400, 'INVALID_NAME', '请填写应用名称');
     const kind = (body.kind as string) ?? 'upstream';
@@ -268,6 +270,8 @@ adminAppsRouter.post(
     const body = (req.body ?? {}) as { id?: string; name?: string; description?: string; html?: string; visibility?: string };
     const id = String(body.id ?? '').trim();
     if (!isSlug(id)) throw new HttpError(400, 'INVALID_ID', '应用 ID 需为小写字母/数字/连字符');
+    if (idConflictsWithGatewayPrefix(id))
+      throw new HttpError(400, 'INVALID_ID', '该应用 ID 与 FPK 统一网关入口路径冲突，请更换 ID');
     if (findApp(id)) throw new HttpError(409, 'APP_EXISTS', '应用 ID 已存在');
     if (!body.name?.trim()) throw new HttpError(400, 'INVALID_NAME', '请填写应用名称');
     const html = String(body.html ?? '');

@@ -1,6 +1,6 @@
 # AI应用门户 · ai-app-portal
 
-自托管 **AI 应用网关 + 门户**：把散落在各端口的自部署应用（尤其 AI 应用）收敛到一个域名下——统一入口、自动 HTTPS、登录鉴权、主题品牌、会员与 token 计费。**人从门户进来，应用经平台调用大模型。**
+**解决 agent 写完代码之后的「下一站」问题。** 现在 agent 能快速产出可用的 HTML 页面、JavaScript 小工具或 Python 脚本，但分享和使用一直很别扭——微信打不开 HTML 文件，跑 Python 要开终端、装依赖，折腾一圈别人还是用不上。本项目是自托管的 **AI 应用网关 + 门户**：agent 携带 `.neon-aap` 打包规范（skill），按统一接口把成果直接发布上架——静态页面、前端工具、Python 应用（长驻服务）立刻获得访问地址、登录鉴权、统一主题与运行沙箱，他人点开即用、无需装任何环境；同时把散落在各端口的自部署应用（尤其 AI 应用）收敛到一个域名下——统一入口、自动 HTTPS、主题品牌、会员与 token 计费。**人从门户进来，应用经平台调用大模型。**
 
 ```
 用户 ──HTTPS──▶ ai-app-portal（自动证书，监听端口）
@@ -33,7 +33,7 @@
 ```bash
 pnpm install
 pnpm dev          # server: http://localhost:8080 · web: http://localhost:5173
-pnpm test          # 单元/集成测试（服务端 14 个文件 145 用例）
+pnpm test          # 单元/集成测试（服务端 15 个文件 154 用例）
 pnpm test:e2e     # Playwright 端到端（自动起真实服务 + mock 上游）
 pnpm typecheck    # 全部类型检查
 ```
@@ -44,7 +44,7 @@ pnpm typecheck    # 全部类型检查
 
 push 到 `main` 或打 `v*` tag 时，GitHub Actions 自动：
 1. 构建多架构镜像（amd64/arm64）并发布到 **ghcr.io/neon9809/ai-app-portal**（main → `latest`，tag → 版本号）
-2. 真实容器冒烟（`/api/health`）→ 打包 **FPK**（镜像引用与版本一致性校验）→ 附着到 GitHub Release
+2. 真实容器冒烟（`/api/health`）；原生 **FPK**（x86/arm 双包，载荷为自包含包、统一网关入口，不依赖镜像拉取）按架构矩阵并行构建 → 附着到 GitHub Release
 
 发布只走 ghcr.io（Docker Hub 不使用）。tag 版本必须与根 `package.json.version` 一致。
 

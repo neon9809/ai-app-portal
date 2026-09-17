@@ -14,8 +14,6 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
   APP_NAME: ai-app-portal
-  FPK_DIR: deploy/fpk
-  FPK_OUT: dist/ai-app-portal.fpk
 
 jobs:
   # 审计建议（2026-09-16 §8）：CI 固定 Node 版本跑全量测试；测试本身即
@@ -99,76 +97,8 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  build_fpk:
-    needs: build_and_push_image
-    timeout-minutes: 20
-    runs-on: ubuntu-latest
-    steps:
-      - name: 检出仓库
-        uses: actions/checkout@v4
-
-      - name: 安装 zip
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq zip
-
-      - name: 设置 Docker Buildx
+      - name: 冒烟测试（真实容器跑 /api/health，amd64 单架构）
         if: startsWith(github.ref, 'refs/tags/')
-        uses: docker/setup-buildx-action@v3
-
-      - name: 登录 GHCR
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: 校验已发布镜像存在
-        if: startsWith(github.ref, 'refs/tags/')
-        run: |
-          set -e
-          TAG="${GITHUB_REF_NAME#v}"
-          docker buildx imagetools inspect "${REGISTRY}/${IMAGE_NAME}:${TAG}" >/dev/null
-
-      - name: 版本一致性检查（tag = package.json = FPK 内 compose 应用镜像标签）
-        if: startsWith(github.ref, 'refs/tags/')
-        run: |
-          set -e
-          TAG="${GITHUB_REF_NAME#v}"
-          VER="$(node -p "require('./package.json').version")"
-
-          # 仅校验本项目镜像的标签（依赖镜像不参与版本一致性）
-          TAGS="$(
-            grep -E '^[[:space:]]*image:' "${FPK_DIR}/fpk-root/app/docker/docker-compose.yaml" \
-              | awk '{print $2}' \
-              | sed 's/.*://'
-          )"
-
-          if [ -z "$TAGS" ]; then
-            echo "::error::未在 docker-compose.yaml 中找到本项目镜像字段"
-            exit 1
-          fi
-
-          UNIQ_COUNT="$(echo "$TAGS" | sort -u | wc -l | tr -d '[:space:]')"
-          if [ "$UNIQ_COUNT" != "1" ]; then
-            echo "::error::compose 中存在多个不同的应用镜像标签，请统一后重新打标签"
-            echo "$TAGS"
-            exit 1
-          fi
-
-          IMGTAG="$(echo "$TAGS" | head -1)"
-          echo "tag=$TAG package.json=$VER image_tag=$IMGTAG"
-
-          if [ "$TAG" != "$VER" ]; then
-            echo "::error::git 标签 ($TAG) 与 package.json.version ($VER) 不一致"
-            exit 1
-          fi
-
-          if [ "$IMGTAG" != "__VERSION__" ]; then
-            echo "::error::fpk-root compose 模板应使用 __VERSION__ 占位符（当前: $IMGTAG）"
-            exit 1
-          fi
-
-      - name: 冒烟测试（真实容器跑 /api/health）
         run: |
           set -e
           TAG="${GITHUB_REF_NAME#v}"
@@ -187,40 +117,99 @@ jobs:
           docker rm -f aap-smoke >/dev/null || true
           exit 1
 
-      - name: 构建 .fpk 并生成校验和
+  build_fpk:
+    # 原生 FPK（载荷 = deploy/native 自包含包），与镜像发布解耦：
+    # 包内自带 glibc Node 22 与目标架构 better-sqlite3，安装不依赖任何镜像拉取。
+    needs: test
+    timeout-minutes: 60
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: x86
+          - arch: arm64
+            platform: arm
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
+      - name: 固定 Node 22（与原生包运行时一致）
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: 安装 pnpm 11
+        run: npm i -g pnpm@11
+
+      - name: 安装依赖（前端按网关前缀重建需要）
+        run: pnpm install --frozen-lockfile
+
+      - name: 设置 QEMU（arm64 原生构建用）
+        uses: docker/setup-qemu-action@v3
+
+      - name: 构建原生自包含包（glibc Node 22 + 目标 C 库 better-sqlite3）
+        run: ./deploy/native/build-native.sh linux/${{ matrix.arch }}
+
+      - name: 校验 tag 与 package.json 一致
+        if: startsWith(github.ref, 'refs/tags/')
         run: |
+          set -e
+          TAG="${GITHUB_REF_NAME#v}"
+          VER="$(node -p "require('./package.json').version")"
+          if [ "$TAG" != "$VER" ]; then
+            echo "::error::git 标签 ($TAG) 与 package.json.version ($VER) 不一致，拒绝打包"
+            exit 1
+          fi
+
+      - name: 打包 FPK（原生形态，统一网关入口）
+        run: |
+          set -e
+          VER="$(node -p "require('./package.json').version")"
+          bash deploy/fpk/build-fpk.sh "$VER" ${{ matrix.platform }}
           mkdir -p dist
-          bash "${FPK_DIR}/build-fpk.sh" "${GITHUB_REF_NAME#v}" "${REGISTRY}/${IMAGE_NAME}"
-          cp "${FPK_DIR}/dist/ai-app-portal_${GITHUB_REF_NAME#v}.fpk" "${FPK_OUT}"
-          (cd dist && sha256sum ai-app-portal.fpk > SHA256SUMS.txt)
+          cp "deploy/fpk/dist/ai-app-portal_${VER}_${{ matrix.platform }}.fpk" dist/
+          (cd dist && sha256sum "ai-app-portal_${VER}_${{ matrix.platform }}.fpk" > "SHA256SUMS_${{ matrix.platform }}.txt")
           ls -l dist/
 
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
-          name: ai-app-portal-${{ github.ref_name }}
+          name: fpk-${{ matrix.platform }}
           path: dist/*
           if-no-files-found: error
 
+  release_fpk:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build_fpk
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 汇集双架构 FPK
+        uses: actions/download-artifact@v4
+        with:
+          pattern: fpk-*
+          merge-multiple: true
+          path: dist
+
       - name: 附着到 GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
           files: |
-            dist/ai-app-portal.fpk
-            dist/SHA256SUMS.txt
+            dist/*.fpk
+            dist/SHA256SUMS_*.txt
           body: |
             ## AI应用门户
 
-            自托管 AI 应用网关 + 门户：统一入口 / 自动 HTTPS / 登录鉴权 / 主题品牌 / LLM 网关（M2）/ 计费（M3）。
+            解决 agent 写完代码之后的「下一站」：agent 生成的网页 / 小工具 / Python 应用按 .neon-aap 规范一键上架，他人点开即用，无需装环境。自托管 AI 应用网关 + 门户：统一入口 / 自动 HTTPS / 登录鉴权 / 主题品牌 / LLM 网关 / 计费。
 
             ## 部署方式
 
-            - **Docker 多架构镜像**（amd64/arm64）：
+            - **飞牛 fnOS（原生 FPK）**：按设备架构下载 `ai-app-portal_<版本>_x86.fpk`（x86 设备）或 `ai-app-portal_<版本>_arm.fpk`（ARM 设备），应用中心手动安装；校验和见 `SHA256SUMS_*.txt`。桌面图标经统一网关进入，业务鉴权由门户自带账号体系完成；管理员初始密码在应用数据目录 `app.log`（TRIM_PKGVAR），登录后请立即改密并绑定 MFA。
+            - **Docker 多架构镜像**（amd64/arm64，非飞牛环境）：
               ```
               docker pull ghcr.io/${{ github.repository }}:${{ github.ref_name }}
               ```
-            - **飞牛 fnOS 应用**：下载本 Release 附带的 `ai-app-portal.fpk`，在应用中心手动安装；校验和见 `SHA256SUMS.txt`
-
-            安装完成后，管理员初始密码打印在容器日志中（`docker logs ai-app-portal`），登录后请立即修改密码并绑定 MFA。
+              管理员初始密码打印在容器日志（`docker logs`）。
