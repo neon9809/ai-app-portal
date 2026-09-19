@@ -33,7 +33,7 @@
 ```bash
 pnpm install
 pnpm dev          # server: http://localhost:8080 · web: http://localhost:5173
-pnpm test          # 单元/集成测试（服务端 15 个文件 154 用例）
+pnpm test          # 单元/集成测试（服务端 16 个文件 176 用例）
 pnpm test:e2e     # Playwright 端到端（自动起真实服务 + mock 上游）
 pnpm typecheck    # 全部类型检查
 ```

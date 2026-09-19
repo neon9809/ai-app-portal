@@ -45,3 +45,4 @@ apps/server/assets/
 .zcode/
 ai-app-portal-docs/pentest-report-*.md
 ai-app-portal-docs/code-review-production-*.md
+audit-*/

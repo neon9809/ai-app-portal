@@ -3,12 +3,16 @@ import { createHash } from 'node:crypto';
 import { setupTestDb, teardownTestDb } from './testkit.js';
 import { getSqlite } from '../db/index.js';
 import {
+  accountFailuresInWindow,
+  clearMfaFailures,
   consumePowToken,
   failuresInWindow,
   isBanned,
+  mfaFailuresInWindow,
   needsPow,
   powDifficulty,
   recordFailure,
+  recordMfaFailure,
   recordSuccess,
 } from '../lib/security.js';
 import { hasLeadingZeroBits, issueChallenge, verifyPow } from '../lib/pow.js';
@@ -98,5 +102,35 @@ describe('pow challenge/verify（服务端全流程）', () => {
     expect(verifyPow(ch2.challengeId, 'abc', IP2)).toMatchObject({ ok: false, error: 'INVALID_NONCE' });
     expect(verifyPow(ch2.challengeId, '0', IP2).ok).toBe(false); // 解不对
     expect(verifyPow('no-such', '1', IP2)).toMatchObject({ ok: false, error: 'CHALLENGE_NOT_FOUND' });
+  });
+});
+
+describe('MFA 账号维度错猜计数（终审 P1-3）', () => {
+  const KEY = 'mfa:777';
+
+  it('持久计数（login_attempts）、命名空间隔离、成功清零、不污染 IP 维度', () => {
+    expect(mfaFailuresInWindow(KEY)).toBe(0);
+    for (let i = 0; i < 4; i++) recordMfaFailure(KEY);
+    expect(mfaFailuresInWindow(KEY)).toBe(4);
+    recordMfaFailure(KEY);
+    expect(mfaFailuresInWindow(KEY)).toBe(5);
+
+    // 计数落在 login_attempts 表（重启不丢），subject 用 mfa:<userId> 命名空间
+    const row = getSqlite()
+      .prepare("SELECT COUNT(*) AS n FROM login_attempts WHERE user_key = ? AND success = 0")
+      .get(KEY) as { n: number };
+    expect(row.n).toBe(5);
+    // 命名空间隔离：不影响其他账号/其他维度
+    expect(accountFailuresInWindow('mfa:778')).toBe(0);
+    expect(accountFailuresInWindow('local:someone')).toBe(0);
+
+    // 哨兵 ip='mfa-guard'：不污染真实 IP 的失败窗口与 PoW 判定
+    expect(failuresInWindow('198.51.100.7')).toBe(0);
+    expect(needsPow('198.51.100.7')).toBe(false);
+    expect(isBanned('198.51.100.7')).toBeNull();
+
+    // 成功验证清零（防正常用户被误锁）
+    clearMfaFailures(KEY);
+    expect(mfaFailuresInWindow(KEY)).toBe(0);
   });
 });

@@ -116,6 +116,27 @@ export function recordSuccess(ip: string, subject: string | null): void {
   S().insertAttempt.run(ip, subject ?? null, 1, null, Date.now());
 }
 
+// ---------- MFA 第二因子错猜（账号维度持久节流；终审 P1-3） ----------
+// 复用 login_attempts 表（重启不丢计数），subject 用 'mfa:<userId>' 独立命名空间。
+// ip 列写哨兵 'mfa-guard' 而非真实 IP：第二因子错猜者是已持密码的半登录会话，
+// 不等于撞库——若计入 IP 维度，failuresInWindow/needsPow/IP 自动封禁会被
+// 正常用户的 MFA 手滑触发，误伤同出口地址的其他用户。真实 IP 由 audit 记录。
+
+/** 记录一次 MFA 错猜（只进账号维度，不触发 IP 封禁逻辑） */
+export function recordMfaFailure(userKey: string): void {
+  S().insertAttempt.run('mfa-guard', userKey, 0, 'totp-mismatch', Date.now());
+}
+
+/** 账号维度窗口内 MFA 错猜次数（窗口沿用 LOGIN_FAIL_WINDOW，默认 10 分钟） */
+export function mfaFailuresInWindow(userKey: string): number {
+  return accountFailuresInWindow(userKey);
+}
+
+/** 成功验证后清零账号计数（防正常用户被窗口内历史错猜误锁） */
+export function clearMfaFailures(userKey: string): void {
+  getSqlite().prepare('DELETE FROM login_attempts WHERE user_key = ? AND success = 0').run(userKey);
+}
+
 // ---------- PoW token（绑 IP、一次性、短时效） ----------
 
 export function issuePowToken(ip: string): string {

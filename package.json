@@ -1,6 +1,6 @@
 {
   "name": "ai-app-portal",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "license": "GPL-3.0",
   "private": true,
   "description": "AI应用门户 — 自托管 AI 应用网关 + 门户（统一入口 / 自动 HTTPS / 登录鉴权 / 主题品牌 / LLM 网关 / 计费）",

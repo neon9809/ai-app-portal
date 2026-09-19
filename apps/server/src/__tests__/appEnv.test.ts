@@ -9,7 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import AdmZip from 'adm-zip';
 import { createServer, type Server as HttpServer } from 'node:http';
-import { setupTestDb, teardownTestDb } from './testkit.js';
+import { sessionCookieFor, setupTestDb, teardownTestDb } from './testkit.js';
 import { closeDb, getDb } from '../db/index.js';
 import { seedSettings, setSetting } from '../lib/settings.js';
 import { createApp } from '../app.js';
@@ -83,10 +83,11 @@ beforeAll(async () => {
   const { writeLocalCredentials } = await import('../lib/bootstrap.js');
   getDb()
     .insert(users)
-    .values({ kind: 'local', username: 'admin', name: '管理员', role: 'admin', createdAt: Date.now() })
+    .values({ kind: 'local', username: 'admin', name: '管理员', role: 'admin', mfaEnabled: true, createdAt: Date.now() })
     .run();
   const adminId = getDb().select().from(users).get()!.id;
-  await writeLocalCredentials(adminId, 'admin-password');
+  // 直建 full 会话（mfaEnabled=true 时 HTTP 登录只给半登录态，过不了 requireAuth）
+  adminCookie = sessionCookieFor(adminId);
   getDb()
     .insert(users)
     .values({ kind: 'local', username: 'bob', name: '路人', role: 'user', createdAt: Date.now() })
@@ -94,12 +95,6 @@ beforeAll(async () => {
   const bobId = getDb().select().from(users).where(eq(users.username, 'bob')).get()!.id;
   await writeLocalCredentials(bobId, 'bob-password');
 
-  const login = await fetch(`${base}/api/auth/login`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', origin: base },
-    body: JSON.stringify({ username: 'admin', password: 'admin-password' }),
-  });
-  adminCookie = cookieOf(login);
   const loginBob = await fetch(`${base}/api/auth/login`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', origin: base },

@@ -11,7 +11,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import AdmZip from 'adm-zip';
-import { setupTestDb, teardownTestDb } from './testkit.js';
+import { sessionCookieFor, setupTestDb, teardownTestDb } from './testkit.js';
 import { closeDb, getDb } from '../db/index.js';
 import { seedSettings } from '../lib/settings.js';
 import { createApp } from '../app.js';
@@ -103,16 +103,11 @@ beforeAll(async () => {
 
   getDb()
     .insert((await import('../db/schema.js')).users)
-    .values({ kind: 'local', username: 'admin', name: '管理员', role: 'admin', createdAt: Date.now() })
+    .values({ kind: 'local', username: 'admin', name: '管理员', role: 'admin', mfaEnabled: true, createdAt: Date.now() })
     .run();
   const adminId = getDb().select().from((await import('../db/schema.js')).users).get()!.id;
-  await writeLocalCredentials(adminId, 'admin-password');
-  const login = await fetch(`${base}/api/auth/login`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', origin: base },
-    body: JSON.stringify({ username: 'admin', password: 'admin-password' }),
-  });
-  adminCookie = cookieOf(login);
+  // 直建 full 会话（mfaEnabled=true 时 HTTP 登录只给半登录态）
+  adminCookie = sessionCookieFor(adminId);
 });
 
 afterAll(() => {

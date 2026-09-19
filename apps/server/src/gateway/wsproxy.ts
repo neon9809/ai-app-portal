@@ -126,10 +126,12 @@ async function upgrade(req: IncomingMessage, socket: Duplex, head: Buffer): Prom
   let hostHeader: string;
   let requestPath: string;
   let transport: typeof http | typeof https;
+  /** persistent 沙箱专用：剥除的挂载前缀，经 x-forwarded-prefix 交给包（与 HTTP 侧 proxyToSandbox 一致） */
+  let forwardedPrefix: string | null = null;
 
   if (app.kind === 'package' && app.runtimeMode === 'persistent') {
-    // G2 persistent：拉起长驻沙箱并把 WS 透传到沙箱端口；路径与 HTTP 反代一致（原样含 /app/<id>/ 前缀；
-    // 沙箱外壳 raw 通道同理剥除 raw 段）
+    // G2 persistent：拉起长驻沙箱并把 WS 透传到沙箱端口；路径与 HTTP 反代（proxyToSandbox）
+    // 同语义：剥 /app/<id> 前缀（沙箱路由挂根 @app.route("/")），raw 通道再剥 raw 段
     const sandboxPort = await ensurePersistent(app.id, manifestEntry(app), (aid, restarts) => {
       console.log(`[sandbox] persistent 崩溃重启: ${aid} (${restarts})`);
     });
@@ -138,7 +140,16 @@ async function upgrade(req: IncomingMessage, socket: Duplex, head: Buffer): Prom
     hostname = '127.0.0.1';
     port = sandboxPort;
     hostHeader = `127.0.0.1:${sandboxPort}`;
-    requestPath = (req.url ?? '/').replace(/^(\/app\/[^/]+)\/raw(?=\/|\/?\?|$)/, '$1');
+    // req.url 里 id 为 URL 形态；slug 无保留字符，与 HTTP 侧 encodeURIComponent 拼法等价
+    const prefix = `/app/${encodeURIComponent(app.id)}`;
+    let p = req.url ?? '/';
+    if (p === prefix || p.startsWith(`${prefix}?`)) p = `/${p.slice(prefix.length)}`;
+    else if (p.startsWith(`${prefix}/`)) p = p.slice(prefix.length);
+    // raw 段剥除（沿用原 raw 正则语义：raw / raw/… 命中，rawfoo 不命中）；剥尽后补根
+    p = p.replace(/^\/raw(?=\/|\/?\?|$)/, '');
+    if (!p.startsWith('/')) p = `/${p}`;
+    requestPath = p;
+    forwardedPrefix = prefix;
     transport = http;
   } else if (app.kind === 'upstream') {
     let base: URL;
@@ -175,6 +186,8 @@ async function upgrade(req: IncomingMessage, socket: Duplex, head: Buffer): Prom
     headers[k] = Array.isArray(v) ? v.join(', ') : (v ?? '');
   }
   headers['host'] = hostHeader;
+  // persistent 沙箱：挂载前缀随头下发（覆盖客户端自带值），供包拼绝对 URL（与 HTTP 侧一致）
+  if (forwardedPrefix) headers['x-forwarded-prefix'] = forwardedPrefix;
   if (identity) {
     headers['x-aap-identity'] = identity.payload;
     headers['x-aap-identity-sig'] = identity.sig;

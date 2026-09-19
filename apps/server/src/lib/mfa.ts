@@ -4,7 +4,7 @@
  * 策略：admin 强制不可关（无其他因子时禁止全部关闭）。
  */
 import { createHash, randomBytes } from 'node:crypto';
-import { and, eq, isNull, sql } from 'drizzle-orm';
+import { and, eq, isNull, lt, sql } from 'drizzle-orm';
 import { generate, generateSecret, generateURI } from 'otplib';
 import { getDb } from '../db/index.js';
 import { passkeys, recoveryCodes, totpSecrets, users } from '../db/schema.js';
@@ -71,11 +71,16 @@ export async function confirmTotp(userId: number, token: string): Promise<string
   const v = await verifyTotpToken(secret, token.trim(), row.lastUsedCounter);
   if (!v.ok) throw new HttpError(400, v.error, v.error === 'TOTP_REPLAYED' ? '验证码已被使用' : '验证码错误');
 
-  getDb()
+  // 条件更新写回计数器（并发护栏）：await 校验期间可能有并发请求已消费同一码，
+  // 仅当库内计数器仍落后于本次窗口才落库；changes=0 = 该码已被并发消费（重放）
+  const consumed = getDb()
     .update(totpSecrets)
     .set({ confirmed: true, lastUsedCounter: v.counter })
-    .where(eq(totpSecrets.userId, userId))
+    .where(and(eq(totpSecrets.userId, userId), lt(totpSecrets.lastUsedCounter, v.counter)))
     .run();
+  if (consumed.changes === 0) {
+    throw new HttpError(400, 'TOTP_REPLAYED', '验证码已被使用');
+  }
   getDb().update(users).set({ mfaEnabled: true }).where(eq(users.id, userId)).run();
   const codes = generateRecoveryCodes(userId);
   audit(`user:${userId}`, null, 'mfa.totp.confirmed', {});
@@ -92,7 +97,17 @@ export async function verifyTotpForLogin(userId: number, token: string, ip: stri
   const secret = decryptSecret(row.secretEnc);
   const v = await verifyTotpToken(secret, token.trim(), row.lastUsedCounter);
   if (v.ok) {
-    getDb().update(totpSecrets).set({ lastUsedCounter: v.counter }).where(eq(totpSecrets.userId, userId)).run();
+    // 条件更新写回（并发护栏）：读 lastUsedCounter 与写回之间隔着 await，
+    // 并发请求可用同一枚动态码双双通过校验；带 lt 条件的 UPDATE 保证只有
+    // 先到者落库（changes=1），后者 changes=0 → 按重放拒绝（码有效但已被消费）
+    const consumed = getDb()
+      .update(totpSecrets)
+      .set({ lastUsedCounter: v.counter })
+      .where(and(eq(totpSecrets.userId, userId), lt(totpSecrets.lastUsedCounter, v.counter)))
+      .run();
+    if (consumed.changes === 0) {
+      throw new HttpError(400, 'TOTP_REPLAYED', '验证码已被使用，请等待下一个验证码');
+    }
     audit(`user:${userId}`, ip, 'mfa.totp.verify', { context: 'login' });
     return { viaRecovery: false };
   }

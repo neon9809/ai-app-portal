@@ -10,7 +10,7 @@ import type { AddressInfo } from 'node:net';
 import type { IncomingMessage, Server } from 'node:http';
 import { WebSocket, WebSocketServer } from 'ws';
 import { eq } from 'drizzle-orm';
-import { setupTestDb, teardownTestDb } from './testkit.js';
+import { sessionCookieFor, setupTestDb, teardownTestDb } from './testkit.js';
 import { closeDb, getDb, getSqlite } from '../db/index.js';
 import { seedSettings, setSetting, getSetting } from '../lib/settings.js';
 import { createApp } from '../app.js';
@@ -19,6 +19,7 @@ import { handleUpgrade, upgradeClientIp } from '../gateway/wsproxy.js';
 import { users } from '../db/schema.js';
 import { writeLocalCredentials } from '../lib/bootstrap.js';
 import { verifyIdentity } from '../gateway/identity.js';
+import { getAcl } from '../gateway/registry.js';
 
 let gw: Server; // 网关（含 upgrade）
 let gwPort = 0;
@@ -109,18 +110,12 @@ beforeAll(async () => {
   gwPort = (gw.address() as AddressInfo).port;
   const base = `http://127.0.0.1:${gwPort}`;
 
-  // 管理员（直插 + 登录）
+  // 管理员（直插 + 直建 full 会话；mfaEnabled=true 时 HTTP 登录只给半登录态）
   const info = getDb()
     .insert(users)
-    .values({ kind: 'local', username: 'admin', name: '管理员', role: 'admin', createdAt: Date.now() })
+    .values({ kind: 'local', username: 'admin', name: '管理员', role: 'admin', mfaEnabled: true, createdAt: Date.now() })
     .run();
-  await writeLocalCredentials(Number(info.lastInsertRowid), 'admin-password');
-  const login = await fetch(`${base}/api/auth/login`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', origin: base },
-    body: JSON.stringify({ username: 'admin', password: 'admin-password' }),
-  });
-  adminCookie = cookieOf(login);
+  adminCookie = sessionCookieFor(Number(info.lastInsertRowid));
 
   // 普通用户（plan=free）
   const u = getDb()
@@ -272,6 +267,42 @@ describe('W5 访问策略（B4 三态）', () => {
     const privCard = anonBody.apps.find((a) => a.id === 'priv');
     expect(pubCard?.accessible).toBe(true);
     expect(privCard?.accessible).toBe(false);
+  });
+});
+
+describe('PUT 应用受众 ACL（回归：PUT 曾不写 ACL，restricted 收窄受众「保存成功」实际无效）', () => {
+  it('PUT allowedGroupIds 后 ACL 实际收窄；单侧提交时另一侧保留现有值', async () => {
+    const base = `http://127.0.0.1:${gwPort}`;
+    const login = await fetch(`${base}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: base },
+      body: JSON.stringify({ username: 'freeuser', password: 'free-password' }),
+    });
+    const cookie = cookieOf(login);
+    const freeId = getDb().select().from(users).where(eq(users.username, 'freeuser')).get()!.id;
+
+    // 初始：restricted + 空 ACL = 全体登录用户可见
+    await createAppViaAdmin({ id: 'aclput', name: 'ACL-PUT', upstream: `http://127.0.0.1:${upPort}`, visibility: 'restricted' });
+    expect((await fetch(`${base}/app/aclput/`, { headers: { cookie } })).status).toBe(200);
+
+    const putAcl = (json: Record<string, unknown>): Promise<Response> =>
+      fetch(`${base}/api/admin/apps/aclput`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json', origin: base, cookie: adminCookie },
+        body: JSON.stringify(json),
+      });
+
+    // PUT 收窄：仅放行 freeuser 不在的分组 → ACL 落库且访问判定立即收窄
+    expect((await putAcl({ allowedGroupIds: [999999] })).status).toBe(200);
+    expect(getAcl('aclput').allowGroupIds).toEqual([999999]);
+    expect(getAcl('aclput').allowUserIds).toEqual([]); // 未提交的一侧保留（创建时为空）
+    expect((await fetch(`${base}/app/aclput/`, { headers: { cookie } })).status).toBe(403);
+
+    // 再 PUT 仅提交 allowedUserIds：分组一侧保留，freeuser 命中账号白名单恢复可见
+    expect((await putAcl({ allowedUserIds: [freeId] })).status).toBe(200);
+    expect(getAcl('aclput').allowGroupIds).toEqual([999999]);
+    expect(getAcl('aclput').allowUserIds).toEqual([freeId]);
+    expect((await fetch(`${base}/app/aclput/`, { headers: { cookie } })).status).toBe(200);
   });
 });
 

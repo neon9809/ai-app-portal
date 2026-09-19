@@ -170,7 +170,9 @@ export const verificationCodes = sqliteTable(
   (t) => [index('verification_codes_target_idx').on(t.channel, t.target, t.createdAt)],
 );
 
-/** 待激活注册（验证邮箱/手机通过后才建 users 行；废弃 N 天清理） */
+/** 待激活注册（验证邮箱/手机通过后才建 users 行；废弃 N 天清理）。
+ *  completed_at：注册完成时间——完成后保留行（而非删除），使同 IP 24h
+ *  注册上限涵盖已完成注册（终审 P1-5）；完成行超过 24h 由清理任务删除。 */
 export const registrations = sqliteTable(
   'registrations',
   {
@@ -183,6 +185,8 @@ export const registrations = sqliteTable(
     ip: text('ip'),
     /** 验证码尝试次数（≥5 作废整个注册） */
     attempts: integer('attempts').notNull().default(0),
+    /** 注册完成时间（null = 待激活）；完成行继续计入同 IP 24h 名额 */
+    completedAt: integer('completed_at'),
     createdAt: integer('created_at').notNull(),
     expiresAt: integer('expires_at').notNull(),
   },

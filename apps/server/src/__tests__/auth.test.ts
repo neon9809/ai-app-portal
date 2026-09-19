@@ -6,7 +6,8 @@ import { setupTestDb, teardownTestDb } from './testkit.js';
 import { closeDb } from '../db/index.js';
 import { seedSettings, setSetting } from '../lib/settings.js';
 import { getDb } from '../db/index.js';
-import { inviteCodes } from '../db/schema.js';
+import { inviteCodes, registrations, users } from '../db/schema.js';
+import { and, eq, gt, sql } from 'drizzle-orm';
 import { createApp } from '../app.js';
 import { loadConfig } from '../config/index.js';
 import { hasLeadingZeroBits } from '../lib/pow.js';
@@ -134,8 +135,7 @@ describe('W3 注册（A2）', () => {
     expect(info.mustEnrollMfa).toBe(true); // admin 强制 MFA（W4 落地绑定流程）
   });
 
-  it('60s 重发限流在「找回密码」用例中覆盖（同邮箱连发 → 429）', () => {
-    // 限流断言见 W3 找回密码 用例（需要真实存在的收件用户）
+  it('60s 重发限流：注册路径占用校验（409）先于发码限流，无枚举面；找回路径的限流已静默化（P1-4 用例覆盖）', () => {
     expect(true).toBe(true);
   });
 });
@@ -234,6 +234,7 @@ describe('W3 找回密码（防枚举）', () => {
       body: JSON.stringify({ email: 'ghost@example.com', powToken: token }),
     });
     expect(ghost.status).toBe(200);
+    const ghostBody = (await ghost.json()) as unknown;
 
     const token2 = await solvePow();
     const start = await fetch(`${base}/api/auth/forgot/start`, {
@@ -242,17 +243,22 @@ describe('W3 找回密码（防枚举）', () => {
       body: JSON.stringify({ email: 'resetguy@example.com', powToken: token2 }),
     });
     expect(start.status).toBe(200);
+    const startBody = (await start.json()) as unknown;
     const code = lastCodeFromLog();
 
-    // 60s 内对同一邮箱再次发码 → 429（限流按通道+目标计）
+    // 60s 内对同一邮箱再次发码：命中重发限流但对外静默——与不存在的邮箱
+    // 完全相同的 200 响应体（防账号存在性枚举 oracle，终审 P1-4）
     const token3 = await solvePow();
     const again = await fetch(`${base}/api/auth/forgot/start`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', origin: base },
       body: JSON.stringify({ email: 'resetguy@example.com', powToken: token3 }),
     });
-    expect(again.status).toBe(429);
-    expect(((await again.json()) as { error: { code: string } }).error.code).toBe('CODE_RESEND_TOO_FAST');
+    expect(again.status).toBe(200);
+    const againBody = (await again.json()) as unknown;
+    expect(againBody).toEqual(startBody); // 二连发响应体一致
+    expect(againBody).toEqual(ghostBody); // 与不存在邮箱响应体一致
+    // 静默跳过发送：旧码仍有效（下方 verify 用其完成重置）
 
     const verify = await fetch(`${base}/api/auth/forgot/verify`, {
       method: 'POST',
@@ -396,5 +402,203 @@ describe('W3 邀请码注册', () => {
       }),
     });
     expect(again.status).toBe(403);
+  });
+});
+
+describe('终审 P1-1：半登录态改密拒绝', () => {
+  it('MFA 用户 password_ok 会话调 change-password → 403 MFA_REQUIRED', async () => {
+    const { writeLocalCredentials } = await import('../lib/bootstrap.js');
+    const info = getDb()
+      .insert(users)
+      .values({
+        kind: 'local',
+        username: 'halfguy',
+        email: 'halfguy@example.com',
+        name: 'hg',
+        mfaEnabled: true, // 登录状态机据此给半登录态（无需真实 TOTP 绑定）
+        createdAt: Date.now(),
+      })
+      .run();
+    await writeLocalCredentials(Number(info.lastInsertRowid), 'password123');
+
+    const login = await fetch(`${base}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: base },
+      body: JSON.stringify({ username: 'halfguy', password: 'password123', powToken: await solvePow() }),
+    });
+    expect(login.status).toBe(200);
+    const body = (await login.json()) as { authState: string; mfaRequired: boolean };
+    expect(body.authState).toBe('password_ok');
+    expect(body.mfaRequired).toBe(true);
+
+    const res = await fetch(`${base}/api/auth/change-password`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: base, cookie: cookieOf(login) },
+      body: JSON.stringify({ currentPassword: 'password123', newPassword: 'newPassword456' }),
+    });
+    expect(res.status).toBe(403);
+    const err = (await res.json()) as { error: { code: string; action?: string } };
+    expect(err.error.code).toBe('MFA_REQUIRED');
+    expect(err.error.action).toBe('mfa');
+  });
+});
+
+describe('终审 P1-5：同 IP 24h 注册上限（含已完成）', () => {
+  it('完成的注册仍占 24h 名额：触顶后新注册 429', async () => {
+    setSetting('REGISTRATION_MODE', 'open');
+    const ip = '127.0.0.1';
+    // 前面用例已完成的注册（neo/guest）行保留 → 计入窗口
+    const existing =
+      getDb()
+        .select({ n: sql<number>`count(*)` })
+        .from(registrations)
+        .where(and(eq(registrations.ip, ip), gt(registrations.createdAt, Date.now() - 24 * 3600_000)))
+        .get()?.n ?? 0;
+    expect(existing).toBeGreaterThan(0);
+    // 上限 = 现有数 + 1：再完成一个注册即触顶
+    setSetting('MAX_ACCOUNTS_PER_IP_24H', String(existing + 1));
+    try {
+      const start = await fetch(`${base}/api/auth/register/start`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', origin: base },
+        body: JSON.stringify({
+          username: 'capuser',
+          password: 'password123',
+          email: 'capuser@example.com',
+          powToken: await solvePow(),
+        }),
+      });
+      expect(start.status).toBe(200);
+      const { registrationId } = (await start.json()) as { registrationId: string };
+      const done = await fetch(`${base}/api/auth/register/verify`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', origin: base },
+        body: JSON.stringify({ registrationId, code: lastCodeFromLog() }),
+      });
+      expect(done.status).toBe(200);
+      // 完成行保留（completedAt 非空），不再删除释放名额
+      const row = getDb().select().from(registrations).where(eq(registrations.username, 'capuser')).get();
+      expect(row?.completedAt).not.toBeNull();
+
+      const over = await fetch(`${base}/api/auth/register/start`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', origin: base },
+        body: JSON.stringify({
+          username: 'capover',
+          password: 'password123',
+          email: 'capover@example.com',
+          powToken: await solvePow(),
+        }),
+      });
+      expect(over.status).toBe(429);
+      expect(((await over.json()) as { error: { code: string } }).error.code).toBe('TOO_MANY_REGISTRATIONS');
+    } finally {
+      setSetting('MAX_ACCOUNTS_PER_IP_24H', '5');
+    }
+  });
+});
+
+describe('终审 P1-6：强制流程门禁', () => {
+  it('mustChangePassword 会话：/api/apps → 403 FORCE_CHANGE_PASSWORD；/me 正常；改密后放行', async () => {
+    const { writeLocalCredentials } = await import('../lib/bootstrap.js');
+    const info = getDb()
+      .insert(users)
+      .values({
+        kind: 'local',
+        username: 'forcepw',
+        email: 'forcepw@example.com',
+        name: 'fp',
+        mustChangePassword: true,
+        createdAt: Date.now(),
+      })
+      .run();
+    await writeLocalCredentials(Number(info.lastInsertRowid), 'initialPass123');
+
+    const login = await fetch(`${base}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: base },
+      body: JSON.stringify({ username: 'forcepw', password: 'initialPass123', powToken: await solvePow() }),
+    });
+    expect(login.status).toBe(200);
+    const loginBody = (await login.json()) as { mustChangePassword: boolean; mustEnrollMfa: boolean };
+    expect(loginBody.mustChangePassword).toBe(true);
+    expect(loginBody.mustEnrollMfa).toBe(false); // 普通用户不强制绑 MFA
+    const cookie = cookieOf(login);
+
+    const blocked = await fetch(`${base}/api/apps`, { headers: { cookie } });
+    expect(blocked.status).toBe(403);
+    const blockedBody = (await blocked.json()) as { error: { code: string; action?: string } };
+    expect(blockedBody.error.code).toBe('FORCE_CHANGE_PASSWORD');
+    expect(blockedBody.error.action).toBe('change-password');
+
+    // /me 永不被门禁拦（前端靠它拿状态）
+    const me = await fetch(`${base}/api/auth/me`, { headers: { cookie } });
+    expect(me.status).toBe(200);
+    expect(((await me.json()) as { mustChangePassword: boolean }).mustChangePassword).toBe(true);
+
+    // 白名单内完成改密 → 门禁放行
+    const change = await fetch(`${base}/api/auth/change-password`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: base, cookie },
+      body: JSON.stringify({ currentPassword: 'initialPass123', newPassword: 'changedPass456' }),
+    });
+    expect(change.status).toBe(200);
+    const apps = await fetch(`${base}/api/apps`, { headers: { cookie } });
+    expect(apps.status).toBe(200);
+  });
+
+  it('未绑 MFA 的 local admin：登录响应 mustEnrollMfa=true；/api/apps → 403 FORCE_ENROLL_MFA；/me 正常', async () => {
+    const { writeLocalCredentials } = await import('../lib/bootstrap.js');
+    const info = getDb()
+      .insert(users)
+      .values({ kind: 'local', username: 'nomfaadmin', email: 'nomfa@example.com', name: 'na', role: 'admin', createdAt: Date.now() })
+      .run();
+    await writeLocalCredentials(Number(info.lastInsertRowid), 'adminPass123');
+
+    const login = await fetch(`${base}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: base },
+      body: JSON.stringify({ username: 'nomfaadmin', password: 'adminPass123', powToken: await solvePow() }),
+    });
+    expect(login.status).toBe(200);
+    const loginBody = (await login.json()) as { authState: string; mustEnrollMfa: boolean };
+    expect(loginBody.authState).toBe('full');
+    expect(loginBody.mustEnrollMfa).toBe(true); // 契约补齐（P1-6a）
+    const cookie = cookieOf(login);
+
+    const blocked = await fetch(`${base}/api/apps`, { headers: { cookie } });
+    expect(blocked.status).toBe(403);
+    const blockedBody = (await blocked.json()) as { error: { code: string; action?: string } };
+    expect(blockedBody.error.code).toBe('FORCE_ENROLL_MFA');
+    expect(blockedBody.error.action).toBe('mfa');
+
+    // /me 与 MFA 绑定流程端点在白名单内
+    const me = await fetch(`${base}/api/auth/me`, { headers: { cookie } });
+    expect(me.status).toBe(200);
+    expect(((await me.json()) as { mustEnrollMfa: boolean }).mustEnrollMfa).toBe(true);
+    const mfaStatus = await fetch(`${base}/api/auth/mfa/status`, { headers: { cookie } });
+    expect(mfaStatus.status).toBe(200);
+  });
+
+  it('OIDC 管理员（MFA 委托 IdP）不受强制绑定门禁', async () => {
+    const info = getDb()
+      .insert(users)
+      .values({ kind: 'oidc', subject: 'sub-boss', email: 'boss@example.com', name: 'boss', role: 'admin', createdAt: Date.now() })
+      .run();
+    // 直建会话（OIDC 回调链路在 e2e 覆盖，这里只验门禁判定）
+    const { createSession } = await import('../lib/session.js');
+    let token = '';
+    createSession(
+      { cookie: (_name: string, value: string) => { token = value; } } as never,
+      { id: Number(info.lastInsertRowid) },
+      { ip: '127.0.0.1' },
+    );
+    const cookie = `aap_sid=${token}`;
+
+    const apps = await fetch(`${base}/api/apps`, { headers: { cookie } });
+    expect(apps.status).toBe(200); // 门禁对 OIDC 管理员惰性
+    const me = await fetch(`${base}/api/auth/me`, { headers: { cookie } });
+    expect(me.status).toBe(200);
+    expect(((await me.json()) as { mustEnrollMfa: boolean }).mustEnrollMfa).toBe(false);
   });
 });

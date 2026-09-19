@@ -11,7 +11,8 @@ import { loadConfig } from '../config/index.js';
 import { totpSecrets, users } from '../db/schema.js';
 import { decryptSecret } from '../lib/cryptoSecrets.js';
 import { writeLocalCredentials } from '../lib/bootstrap.js';
-import { remainingRecoveryCodes } from '../lib/mfa.js';
+import { remainingRecoveryCodes, verifyTotpForLogin } from '../lib/mfa.js';
+import { mfaFailuresInWindow } from '../lib/security.js';
 
 let server: Server;
 let base: string;
@@ -146,7 +147,7 @@ describe('W4 MFA（TOTP + 状态机 + 恢复码 + 步升）', () => {
     expect(((await replay.json()) as { error: { code: string } }).error.code).toBe('TOTP_REPLAYED');
   });
 
-  it('TOTP 错猜节流：同一会话错猜 ≥5 次会话作废；重新登录不受影响', async () => {
+  it('TOTP 错猜节流：同一会话错猜 ≥5 次会话作废；账号维度窗口内换会话仍被拒（P1-3）', async () => {
     const { username, secret } = await setupUserWithTotp();
     const login = await jsonPost('/api/auth/login', { username, password: 'password123' });
     const cookie = cookieOf(login);
@@ -164,10 +165,14 @@ describe('W4 MFA（TOTP + 状态机 + 恢复码 + 步升）', () => {
     const me = await fetch(`${base}/api/auth/me`, { headers: { cookie } });
     expect(me.status).toBe(401);
 
-    // 重新登录走完整流程不受影响
-    const okCookie = await fullLogin(username, secret);
-    const me2 = await fetch(`${base}/api/auth/me`, { headers: { cookie: okCookie } });
-    expect(me2.status).toBe(200);
+    // 账号维度节流（跨会话合计，持久化）：持密码重新登录拿到全新会话，
+    // TOTP 验证在预检即被拒——旧语义的「换会话续命」穷举面已堵死
+    const relogin = await jsonPost('/api/auth/login', { username, password: 'password123' });
+    expect(relogin.status).toBe(200);
+    const cookie2 = cookieOf(relogin);
+    const blocked = await jsonPost('/api/auth/mfa/login/totp', { token: await tokenFor(secret, 0) }, cookie2);
+    expect(blocked.status).toBe(429);
+    expect(((await blocked.json()) as { error: { code: string } }).error.code).toBe('MFA_TOO_MANY_ATTEMPTS');
   });
 
   it('步升认证 + 恢复码一枚一用', async () => {
@@ -214,5 +219,69 @@ describe('W4 MFA（TOTP + 状态机 + 恢复码 + 步升）', () => {
     const disable = await jsonPost('/api/auth/mfa/totp/disable', {}, cookie);
     expect(disable.status).toBe(403);
     expect(((await disable.json()) as { error: { code: string } }).error.code).toBe('MFA_REQUIRED_FOR_ADMIN');
+  });
+
+  it('同一枚动态码并发验证只成功一次（条件更新护栏，P1-2）', async () => {
+    const { userId, token } = await setupUserWithTotp();
+    const code = await token(0); // confirm 消耗的是 -1 窗，0 窗新鲜
+    const results = await Promise.allSettled([
+      verifyTotpForLogin(userId, code, '127.0.0.1'),
+      verifyTotpForLogin(userId, code, '127.0.0.1'),
+    ]);
+    const okCount = results.filter((r) => r.status === 'fulfilled').length;
+    const replayed = results.filter(
+      (r) => r.status === 'rejected' && (r.reason as { code?: string }).code === 'TOTP_REPLAYED',
+    );
+    expect(okCount).toBe(1); // 只有先到者落库
+    expect(replayed).toHaveLength(1); // 并发后者按重放拒绝（码有效但已被消费）
+  });
+
+  it('账号维度错猜跨会话合计：两会话累计 5 次后，新会话预检即拒（P1-3）', async () => {
+    const { userId, username, secret } = await setupUserWithTotp();
+
+    // 会话 A 错 2 次（会话级未达 5，不作废）
+    const la = await jsonPost('/api/auth/login', { username, password: 'password123' });
+    const ca = cookieOf(la);
+    for (let i = 0; i < 2; i++) {
+      expect((await jsonPost('/api/auth/mfa/login/totp', { token: '000000' }, ca)).status).toBe(400);
+    }
+    // 会话 B 错 3 次（账号合计 5）
+    const lb = await jsonPost('/api/auth/login', { username, password: 'password123' });
+    const cb = cookieOf(lb);
+    for (let i = 0; i < 3; i++) {
+      expect((await jsonPost('/api/auth/mfa/login/totp', { token: '000000' }, cb)).status).toBe(400);
+    }
+    // 计数持久化在 login_attempts（user_key = mfa:<userId> 命名空间）
+    expect(mfaFailuresInWindow(`mfa:${userId}`)).toBe(5);
+
+    // 全新会话 C：第一次尝试（即便持正确码）预检即 429
+    const lc = await jsonPost('/api/auth/login', { username, password: 'password123' });
+    const cc = cookieOf(lc);
+    const blocked = await jsonPost('/api/auth/mfa/login/totp', { token: await tokenFor(secret, 0) }, cc);
+    expect(blocked.status).toBe(429);
+    expect(((await blocked.json()) as { error: { code: string } }).error.code).toBe('MFA_TOO_MANY_ATTEMPTS');
+  });
+
+  it('成功验证清零账号计数：错 4 次后成功，再错 4 次不误锁（P1-3）', async () => {
+    const { userId, username, token } = await setupUserWithTotp();
+
+    const c1 = cookieOf(await jsonPost('/api/auth/login', { username, password: 'password123' }));
+    for (let i = 0; i < 4; i++) {
+      expect((await jsonPost('/api/auth/mfa/login/totp', { token: '000000' }, c1)).status).toBe(400);
+    }
+    expect(mfaFailuresInWindow(`mfa:${userId}`)).toBe(4);
+
+    // 成功一次（0 窗，confirm 消耗的是 -1 窗）→ 账号计数清零
+    const ok = await jsonPost('/api/auth/mfa/login/totp', { token: await token(0) }, c1);
+    expect(ok.status).toBe(200);
+    expect(mfaFailuresInWindow(`mfa:${userId}`)).toBe(0);
+
+    // 再错 4 次：均为普通 TOTP_INVALID，不触发账号级 429（若未清零此时已累计 8 次）
+    const c2 = cookieOf(await jsonPost('/api/auth/login', { username, password: 'password123' }));
+    for (let i = 0; i < 4; i++) {
+      const bad = await jsonPost('/api/auth/mfa/login/totp', { token: '000000' }, c2);
+      expect(bad.status).toBe(400);
+      expect(((await bad.json()) as { error: { code: string } }).error.code).toBe('TOTP_INVALID');
+    }
   });
 });

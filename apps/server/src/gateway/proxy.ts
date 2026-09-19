@@ -20,7 +20,7 @@ import { canAccess, findApp, getUrlSecret, isSlug, type UrlSecret } from './regi
 import { signIdentity } from './identity.js';
 import { allowRequest } from './limiter.js';
 import { getSettingInt } from '../lib/settings.js';
-import { injectChrome, serveHtmlApp, serveSandboxShell, needsIframeSandbox, stripRawPrefix } from './staticApp.js';
+import { injectChrome, serveHtmlApp, serveSandboxShell, needsIframeSandbox, stripRawPrefix, RAW_SANDBOX_CSP } from './staticApp.js';
 import { ensurePersistent, touchByPort } from '../lib/sandbox.js';
 import { missingRequiredEnv } from '../lib/appEnv.js';
 import http from 'node:http';
@@ -248,7 +248,8 @@ gatewayRouter.all('/app/:id/*', async (req: Request, res: Response) => {
     // 用户上传包（归属者非管理员）经 iframe 沙箱隔离（PRD G1）：
     // 外壳层挂统一页面元素；内容只经 /raw/ 通道输出（不直出门户源）
     const sandboxed = needsIframeSandbox(app);
-    const inRaw = sandboxed && /^raw\/?/.test(sub0);
+    // raw 判定与 staticApp.RAW_PREFIX_RE 同义（锚定段边界：raw/raw/… 命中，rawfoo 不命中）
+    const inRaw = sandboxed && /^raw(?:\/|$)/.test(sub0);
     if (sandboxed && !inRaw) return serveSandboxShell(res, app.id, sub0);
 
     if (app.kind === 'package' && app.runtimeMode === 'persistent') {
@@ -459,6 +460,9 @@ function proxyToSandbox(
         if (Array.isArray(value)) res.setHeader(key, value);
         else res.setHeader(key, value);
       }
+      // raw 通道（沙箱外壳 iframe 内容）：上游 CSP 已被 RESP_STRIP 剥除，此处覆盖
+      // 全局中间件的通用 CSP——顶层直达 raw URL 时同样被 sandbox 关进 opaque origin
+      if (inRaw) res.setHeader('Content-Security-Policy', RAW_SANDBOX_CSP);
       // 统一页面元素（W0/§9.3）：persistent 直连通道的 HTML 响应注入门户 chrome
       // （沙箱外壳的 raw 通道除外——外壳层已挂 chrome，勿重复）。与 serveHtmlApp
       // 的 injectChrome 同一幂等策略；仅缓冲小体积 HTML，超限即原样透传

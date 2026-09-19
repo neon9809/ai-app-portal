@@ -294,8 +294,17 @@ export function needsIframeSandbox(app: AppRow): boolean {
   return owner?.role !== 'admin';
 }
 
-/** raw 通道前缀：沙箱外壳内 iframe 加载 /app/<id>/raw/…（内容不经门户源直出） */
-const RAW_PREFIX_RE = /^raw\/?/;
+/** raw 通道前缀：沙箱外壳内 iframe 加载 /app/<id>/raw/…（内容不经门户源直出）。
+ *  必须锚定段边界（raw 或 raw/…）：/^raw\/?/ 会把 rawfoo 也当 raw 直出，
+ *  既绕过外壳又误伤以 raw 开头的正常资源 */
+const RAW_PREFIX_RE = /^raw(?:\/|$)/;
+
+/** raw 通道响应的 CSP：sandbox 标志与外壳 iframe sandbox 对齐（刻意不含
+ *  allow-same-origin）——受害者被诱导顶层直达 raw URL 时，包代码同样被关进
+ *  opaque origin（读 /api 受 CORS 拦、写 /api 受 CSRF Origin(null) 拦、
+ *  会话 cookie 不随 opaque origin 可用）。处理器内在全局通用 CSP 之后覆盖设置 */
+export const RAW_SANDBOX_CSP =
+  "sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads allow-pointer-lock; object-src 'none'; base-uri 'none'";
 
 export function stripRawPrefix(sub: string): string {
   return sub.replace(RAW_PREFIX_RE, '');
@@ -322,6 +331,9 @@ export function serveSandboxShell(res: Response, appId: string, sub: string): vo
 
 /** 托管应用请求处理（已过门禁与限流；sub 为 /app/<id>/ 之后的路径） */
 export function serveHtmlApp(req: Request, res: Response, app: AppRow, sub: string, noChrome = false): void {
+  // raw 通道（noChrome）：顶层直达 raw URL 时包代码在门户源裸奔执行（P0）——
+  // 输出前覆盖全局通用 CSP，用 sandbox 指令把顶层导航也关进 opaque origin
+  if (noChrome) res.setHeader('Content-Security-Policy', RAW_SANDBOX_CSP);
   if (app.kind === 'package') {
     res
       .status(503)

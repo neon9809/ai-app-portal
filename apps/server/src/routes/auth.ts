@@ -17,7 +17,7 @@ import { HttpError, h } from '../lib/httpError.js';
 import { dummyVerify, hashPassword, randomToken, verifyPassword } from '../lib/passwords.js';
 import { consumePowToken, isBanned, needsPow, recordFailure, recordSuccess } from '../lib/security.js';
 import { issueChallenge, verifyPow } from '../lib/pow.js';
-import { createSession, destroySession, markStepUp } from '../lib/session.js';
+import { createSession, destroySession, markStepUp, mustEnrollMfaFor } from '../lib/session.js';
 import { getSetting, getSettingInt } from '../lib/settings.js';
 import { verifyTurnstile, turnstileEnabled } from '../lib/turnstile.js';
 import { issueCode, maskEmail, verifyCode } from '../lib/verification.js';
@@ -172,14 +172,17 @@ authRouter.post(
       throw new HttpError(429, 'TOO_MANY_REGISTRATIONS', '该地址近期注册次数过多');
     }
 
-    // 用户名/邮箱占用（users + 待激活 registrations 双查）
+    // 用户名/邮箱占用（users + 待激活 registrations 双查）。
+    // registrations 侧只查「待激活」行（completedAt IS NULL）：已完成行的
+    // 用户名/邮箱已由 users 表查询覆盖；排除可避免账号注销后 24h 内残留
+    // 完成行继续占用同名/同邮箱的歧义。
     const usernameTaken =
       getDb().select({ id: users.id }).from(users).where(eq(users.username, username)).get() ??
-      getDb().select({ id: registrations.id }).from(registrations).where(eq(registrations.username, username)).get();
+      getDb().select({ id: registrations.id }).from(registrations).where(and(eq(registrations.username, username), isNull(registrations.completedAt))).get();
     if (usernameTaken) throw new HttpError(409, 'USERNAME_TAKEN', '用户名已被占用');
     const emailTaken =
       getDb().select({ id: users.id }).from(users).where(eq(users.email, email)).get() ??
-      getDb().select({ id: registrations.id }).from(registrations).where(eq(registrations.email, email)).get();
+      getDb().select({ id: registrations.id }).from(registrations).where(and(eq(registrations.email, email), isNull(registrations.completedAt))).get();
     if (emailTaken) throw new HttpError(409, 'EMAIL_TAKEN', '邮箱已被占用');
 
     // 发送验证码（60s/24h 限发在 issueCode 内）
@@ -219,7 +222,8 @@ authRouter.post(
     const reg = body.registrationId
       ? getDb().select().from(registrations).where(eq(registrations.id, body.registrationId)).get()
       : undefined;
-    if (!reg || reg.expiresAt <= Date.now()) {
+    // 已完成行（completedAt 非空）按不存在处理：防重复消费/防通过错猜删行释放 24h 名额
+    if (!reg || reg.completedAt != null || reg.expiresAt <= Date.now()) {
       throw new HttpError(404, 'REGISTRATION_NOT_FOUND', '注册会话不存在或已过期，请重新注册');
     }
 
@@ -271,7 +275,9 @@ authRouter.post(
           .run();
         if (used.changes === 0) throw new HttpError(409, 'INVITE_CODE_USED', '邀请码已被使用，请更换邀请码重新注册');
       }
-      getDb().delete(registrations).where(eq(registrations.id, reg.id)).run();
+      // 完成不删行：置 completedAt 保留（同 IP 24h 注册名额继续计入，终审 P1-5）；
+      // 超过 24h 后由清理任务删除
+      getDb().update(registrations).set({ completedAt: now }).where(eq(registrations.id, reg.id)).run();
     });
 
     audit(`local:${reg.username}`, ip, 'user.register.done', { userId, promoted: promote });
@@ -283,6 +289,7 @@ authRouter.post(
       authState: 'full',
       mfaRequired: false,
       mustChangePassword: user.mustChangePassword,
+      mustEnrollMfa: mustEnrollMfaFor(user),
     });
   }),
 );
@@ -347,6 +354,7 @@ authRouter.post(
       authState,
       mfaRequired: mfaEnabled,
       mustChangePassword: user.mustChangePassword,
+      mustEnrollMfa: mustEnrollMfaFor(user),
     });
   }),
 );
@@ -412,8 +420,9 @@ authRouter.get(
       authState: u.authState,
       stepUpUntil: u.stepUpUntil,
       mustChangePassword: row.mustChangePassword,
-      // MFA 策略（A3）：admin 强制；会员默认强制（M3 接入后按 plan 扩展）
-      mustEnrollMfa: row.role === 'admin' && !row.mfaEnabled,
+      // MFA 策略（A3）：local admin 强制；会员默认强制（M3 接入后按 plan 扩展）。
+      // OIDC 账号 MFA 委托 IdP（ADR），不纳入强制绑定判定（mustEnrollMfaFor）
+      mustEnrollMfa: mustEnrollMfaFor(row),
     };
     res.json(info);
   }),
@@ -552,8 +561,23 @@ authRouter.post(
     // 无论是否存在都返回 ok（防枚举）；存在才真正发码
     const user = getDb().select({ id: users.id }).from(users).where(eq(users.email, email)).get();
     if (user) {
-      await issueCode('email', email, 'reset', ip);
-      resetFails.delete(email); // 新码 = 全新尝试额度
+      try {
+        await issueCode('email', email, 'reset', ip);
+        resetFails.delete(email); // 新码 = 全新尝试额度
+      } catch (err) {
+        // 发码限流（60s 重发 / 24h 上限）命中：对外一律与不存在的邮箱同 200 响应体
+        // （静默跳过发送），否则「存在 → 429 / 不存在 → 200」构成确定性账号枚举
+        // oracle（终审 P1-4）。内部事件留审计；发信失败等其他错误照常抛出。
+        if (err instanceof HttpError && (err.code === 'CODE_RESEND_TOO_FAST' || err.code === 'CODE_DAILY_LIMIT')) {
+          audit(`reset:${maskEmail(email)}`, ip, 'auth.forgot.send_suppressed', { reason: err.code });
+        } else {
+          throw err;
+        }
+      }
+    } else {
+      // 不存在的邮箱：补一次等量 scrypt（同登录路径 dummyVerify 思路），
+      // 拉齐与「存在且发码」路径的时序量级，降低计时侧信道分辨力
+      await dummyVerify(email);
     }
     res.json({ ok: true });
   }),
@@ -615,6 +639,8 @@ authRouter.post(
   h(async (req, res) => {
     const u = req.user;
     if (!u) throw new HttpError(401, 'UNAUTHENTICATED', '请先登录');
+    // 半登录态（password_ok）不得改密：先完成 MFA（同 step-up/password 守卫）
+    if (u.authState !== 'full') throw new HttpError(403, 'MFA_REQUIRED', '请先完成多因子认证', { action: 'mfa' });
     const body = (req.body ?? {}) as { currentPassword?: string; newPassword?: string };
     const newPassword = String(body.newPassword ?? '');
     if (newPassword.length < 8 || newPassword.length > 128) {
@@ -643,11 +669,17 @@ function registrationMode(): 'closed' | 'open' | 'invite' {
   return m === 'open' || m === 'invite' ? m : 'closed';
 }
 
-// 废弃注册（未完成验证）N 天清理（A2），挂进统一清理循环
+// 废弃注册清理（A2），挂进统一清理循环：
+//  - 已完成行（completedAt 非空）：超过 24h 即删——同 IP 24h 名额计数窗口不再引用它；
+//  - 未完成行：沿用 REGISTRATION_PENDING_TTL_DAYS（按 createdAt 计）
 registerPurgeTask((now) => {
   const ttlDays = getSettingInt('REGISTRATION_PENDING_TTL_DAYS', 7);
   getDb()
     .delete(registrations)
-    .where(lt(registrations.createdAt, now - ttlDays * 86_400_000))
+    .where(lt(registrations.completedAt, now - 24 * 3600_000))
+    .run();
+  getDb()
+    .delete(registrations)
+    .where(and(isNull(registrations.completedAt), lt(registrations.createdAt, now - ttlDays * 86_400_000)))
     .run();
 });

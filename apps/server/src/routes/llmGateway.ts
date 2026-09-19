@@ -168,6 +168,9 @@ llmGatewayRouter.post(
     const stream = body.stream === true;
     // 预估成本：max_tokens 优先，缺省 1024（C6：预估先行、事后校正、不中途掐断）
     const estimatedCost = Math.max(1, Math.ceil((((body.max_tokens as number | undefined) ?? 1024) * multiplier) / 100));
+    // 流式无 usage 帧的入账兜底：预检处算好请求 token 估算随 meta 传入，
+    // 避免结算处二次序列化（审计 P1-7）
+    const estimatedPromptTokens = stream ? estimateTokens(body.messages) : 0;
     precheck(userId, estimatedCost);
 
     const started = Date.now();
@@ -228,6 +231,7 @@ llmGatewayRouter.post(
             started,
             requestId,
             estimatedCost,
+            estimatedPromptTokens,
           });
           return;
         }
@@ -291,6 +295,8 @@ async function streamPassthrough(
     started: number;
     requestId: string;
     estimatedCost: number;
+    /** 请求消息 token 估算（预检处算好；无 usage 帧时兜底入账用） */
+    estimatedPromptTokens: number;
   },
 ): Promise<void> {
   res.status(200);
@@ -301,6 +307,7 @@ async function streamPassthrough(
 
   let usage: { prompt_tokens?: number; completion_tokens?: number } | null = null;
   let carry = '';
+  let sentBytes = 0; // 已转发给客户端的字节数（无 usage 帧时按此估 completion，审计 P1-7）
 
   const reader = up.body!.getReader();
   const dec = new TextDecoder();
@@ -328,31 +335,33 @@ async function streamPassthrough(
       const { done, value } = await reader.read();
       if (done || closed) break;
       res.write(value);
+      sentBytes += value.byteLength;
       bumpIdle();
       // 增量解析 SSE data 行，捕获 usage（通常在最后一个 chunk）
       carry += dec.decode(value, { stream: true });
       const lines = carry.split('\n');
       carry = lines.pop() ?? '';
       for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed.startsWith('data:')) continue;
-        const payload = trimmed.slice(5).trim();
-        if (payload === '[DONE]') continue;
-        try {
-          const json = JSON.parse(payload) as { usage?: { prompt_tokens?: number; completion_tokens?: number } };
-          if (json.usage) usage = json.usage;
-        } catch {
-          /* 非完整 JSON 行，跳过 */
-        }
+        const u = parseUsageLine(line);
+        if (u) usage = u;
       }
     }
   } finally {
     if (idleTimer) clearTimeout(idleTimer);
   }
+  // 循环结束后 carry 可能残留最后一行（usage 帧无结尾换行）：flush 解码器按同逻辑补解析
+  carry += dec.decode();
+  if (carry) {
+    const u = parseUsageLine(carry);
+    if (u) usage = u;
+  }
   res.end();
 
-  const promptTokens = usage?.prompt_tokens ?? 0;
-  const completionTokens = usage?.completion_tokens ?? 0;
+  // 无 usage 帧按估算入账，防断连免单（审计 P1-7）：客户端末帧前断开或上游
+  // 不回 usage 时，prompt 按请求消息估算、completion 按已转发字节数/4 估；
+  // usage 帧存在时按真实值。sentBytes=0（无内容流出）保持 0 入账全额退回
+  const promptTokens = usage?.prompt_tokens ?? (sentBytes > 0 ? meta.estimatedPromptTokens : 0);
+  const completionTokens = usage?.completion_tokens ?? (sentBytes > 0 ? Math.ceil(sentBytes / 4) : 0);
   recordUsage({
     userId: meta.userId,
     appId: meta.appId,
@@ -366,6 +375,20 @@ async function streamPassthrough(
   });
   // 流式不中途掐断：预估已扣，实际用量事后校正缓存（账本只记实际）
   settleEstimate(meta.userId, meta.estimatedCost, Math.ceil(((promptTokens + completionTokens) * meta.multiplier) / 100));
+}
+
+/** 从单行 SSE data 提取 usage；非 data 行 / [DONE] / 非完整 JSON 返回 null */
+function parseUsageLine(line: string): { prompt_tokens?: number; completion_tokens?: number } | null {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith('data:')) return null;
+  const payload = trimmed.slice(5).trim();
+  if (payload === '[DONE]') return null;
+  try {
+    const json = JSON.parse(payload) as { usage?: { prompt_tokens?: number; completion_tokens?: number } };
+    return json.usage ?? null;
+  } catch {
+    return null; // 非完整 JSON 行，跳过
+  }
 }
 
 /** 请求体 token 估算兜底（上游未回 usage 时按字符数/4 估） */

@@ -24,7 +24,7 @@
 pnpm install
 pnpm dev            # server:8080（tsx watch）+ web:5173（Vite，代理 /api 与 /app）
 pnpm build          # shared → server → web（生产产物 apps/web/dist）
-pnpm test           # 服务端测试（vitest，15 个文件 154 用例）
+pnpm test           # 服务端测试（vitest，16 个文件 176 用例）
 pnpm test:e2e       # Playwright 端到端（自动拉起真实服务 + mock 上游）
 pnpm typecheck      # 全仓类型检查
 pnpm db:generate    # drizzle-kit 生成迁移（schema 变更后必跑）
@@ -53,15 +53,15 @@ pnpm db:generate    # drizzle-kit 生成迁移（schema 变更后必跑）
   - `upstream`：反代到内网上游（HTML 改写 + `<base>` + fetch/XHR/script 猴补丁 + 路径穿越双查 + `duplex:'half'` + SSE 零缓冲）
   - `html`：门户托管静态页（`DATA_DIR/appsites/<id>/`），支持简单 HTML 粘贴接入与 .neon-aap html 包
   - `package`：.neon-aap Python 包。`invoked` 经「统一执行入口」`POST /api/apps/:id/run` 拉起一次性进程运行；`persistent` 首次访问 `/app/<id>/` 时由平台拉起长驻进程并反代（HTTP 与 WebSocket 同通道，同一套门禁/限流；空闲回收 `SANDBOX_IDLE_RECYCLE_SECONDS` 默认 300s 可调、崩溃自动重启上限 3 次、并发执行上限 `SANDBOX_MAX_CONCURRENT_RUNS`、全局进程数上限 `SANDBOX_MAX_PERSISTENT`（默认 12，超限回收最久未用进程腾位））。反代转发前剥 `/app/<id>` 前缀（包路由挂根），前缀经 `x-forwarded-prefix` 下发、站内相对 `Location` 镜像回写；门户卡片直跳 `/app/<id>/`（`/open/<id>` 保留为兼容重定向页）
-- **用户包 iframe 沙箱（PRD G1 落地）**：归属者非管理员的 html/package 应用，入口渲染为门户外壳页 + `<iframe sandbox="allow-scripts …">`（**无 allow-same-origin**）加载 `/app/<id>/raw/…`；包内容运行在 opaque origin——读 `/api` 受 CORS 拦、写 `/api` 受 CSRF（Origin: null）拦，无同源 cookie 面；统一页面元素挂在外壳层（包代码不可触碰）；管理员自建应用保持既往直出行为
+- **用户包 iframe 沙箱（PRD G1 落地）**：归属者非管理员的 html/package 应用，入口渲染为门户外壳页 + `<iframe sandbox="allow-scripts …">`（**无 allow-same-origin**）加载 `/app/<id>/raw/…`；包内容运行在 opaque origin——读 `/api` 受 CORS 拦、写 `/api` 受 CSRF（Origin: null）拦，无同源 cookie 面；统一页面元素挂在外壳层（包代码不可触碰）；管理员自建应用保持既往直出行为。**raw 通道响应强制覆盖 `Content-Security-Policy: sandbox allow-scripts …; object-src 'none'; base-uri 'none'`（RAW_SANDBOX_CSP，HTTP 托管与 persistent 反代两路同一份）**——顶层导航直达 raw URL 同样被关进 opaque origin，iframe 不再是唯一隔离点（2026-09-19 审计 P0）；raw 判定锚定段边界 `^raw(?:/|$)`，`rawfoo` 类路径不再误判直出。
 - **审核门禁（G3 落地）**：`canAccess` 对 `reviewStatus` 为 pending/rejected 的应用仅放行归属者与管理员；非私有应用推未审新版先置 `enabled=false` 下线，审核通过恢复（「已公开应用推新版即时生效」的绕过路径已封堵）
-- WebSocket：HTTP 与 HTTPS server 均挂 `upgrade` → 路径匹配 → 会话鉴权 → 三态门禁 → TCP 管道；`persistent` 沙箱应用的 WS 经同一门禁透传到沙箱端口（与 HTTP 反代同路径语义；沙箱外壳 raw 通道同理剥除）。
+- WebSocket：HTTP 与 HTTPS server 均挂 `upgrade` → 路径匹配 → 会话鉴权 → 三态门禁 → TCP 管道；`persistent` 沙箱应用的 WS 经同一门禁透传到沙箱端口（与 HTTP 反代同路径语义：**转发前剥 `/app/<id>` 前缀并下发 `x-forwarded-prefix`**，raw 通道剥除 raw 段——2026-09-19 审计修复前 WS 未剥前缀，persistent 应用 WS 不可用）。
 - **安全加固（2026-09-14 批）**：网关错误页全参数 HTML 转义 + `/app/:id` isSlug 校验（防反射/存储 XSS，线上实锤项）；托管应用越界判断改 `path.relative`（防 `..%2F兄弟目录` 跨用户读文件，线上实锤项）；`display_name` 剥 HTML 敏感字符 + 限长；persistent 沙箱响应头套用 `RESP_STRIP`（防 cookie tossing / CSP 覆写）并逐请求注入签名身份头；persistent 崩溃重启计数随条目继承（`MAX_RESTARTS` 真正生效防 CrashLoop）；invoked stdout/stderr 捕获 512KB 上限 + 执行排队上限 64（超出 429 `SANDBOX_BUSY`）。
 - 限流：真令牌桶双维度（每用户 + 每 IP 兜底），`RATE_USER_PER_MIN` / `RATE_IP_PER_MIN`；IP 维度按 `TRUST_PROXY` 解析且 HTTP 与 WS upgrade 同语义（开启取 XFF 最右一跳，未开启用 socket 地址，防伪造 XFF 绕过限流）。
 - 可见性 `visibility`：
   - `public` 全员（含匿名）
   - `login` 全部登录用户
-  - `restricted` 登录 + 命中 `app_acl`（分组或账号）任一；ACL 为空 = 全部登录用户；归属者与管理员恒可见
+  - `restricted` 登录 + 命中 `app_acl`（分组或账号）任一；ACL 为空 = 全部登录用户；归属者与管理员恒可见；**PUT 更新应用会实际落 ACL**（未提交的一侧保留现值，变更记 `app.acl.update` 审计——2026-09-19 审计前 PUT 静默丢弃 ACL）
   - `private` 仅归属者（用户自建应用默认；门户对非归属者隐藏卡片）
 - passUser 身份注入：`X-AAP-Identity`（base64url JSON：uid/kind/subject/aud/jti/iat/exp）+ `X-AAP-Identity-Sig`（HMAC-SHA256，密钥 `AAP_SIGN_SECRET`）。应用侧验签参考 `gateway/identity.ts` 的 `verifyIdentity`（aud 与 (kind,uid) 契约必查）。客户端自带的身份头在代理入口一律剥除（HTTP/WS/沙箱反代同一张剥离表），仅网关签名注入的可信。
 - 统一页面元素：HTML 响应自动注入 `/portal-chrome.js`（应用门户 / 个人中心 / 退出登录，带会话态显示与回跳）；幂等、失败静默。覆盖三条通道：HTML 托管直出、persistent 反代直连（HTML 缓冲注入，2MB 上限）、沙箱外壳层（包代码不可触碰，raw 通道不重复注入）。包作者须预留右上角空间且不得自建登录。
@@ -80,7 +80,7 @@ client = OpenAI(base_url="http://<host>:8080/v1", api_key="aapk_…")
 - **流式（C1）**：SSE 零缓冲透传，自动注入 `stream_options.include_usage` 捕获末帧 usage；不中途掐断。
 - **超时（可配）**：`LLM_TTFB_TIMEOUT_SECONDS`（流式首字节，默认 15s，超时切候选；推理型模型首字节慢可调大）与 `LLM_TOTAL_TIMEOUT_SECONDS`（非流式整体，默认 120s）；流式闲置断开 `LLM_STREAM_IDLE_TIMEOUT`（默认 60s）。
 - **计量（C5）**：`llm_ledger` append-only（usage 负 delta / grant 正 / adjust 正），用户归因来自应用转发的身份头（验签 `AAP_SIGN_SECRET`，aud=appId）；无头时仅应用级计量。计费倍率取**实际服务的候选**上游（同模型各路由 multiplier 可不同）。
-- **预检（C6）**：请求前按 `max_tokens×倍率` 原子递减 `llm_balance_cache`，不足 → `402 INSUFFICIENT_BALANCE`；响应后按实际用量校正；**全候选失败/上游 4xx/流式中断等无用量路径即时全额退回预估扣减**；结算循环每分钟对账（重算近期活跃用户，吸收崩溃漂移），**对账重算补减进程内在途预估**（防预检扣减被周期性抹除）。流式转发有闲置超时（`LLM_STREAM_IDLE_TIMEOUT`，默认 60s 无新字节即断开并按已收 usage 结算），防上游挂起占满连接。
+- **预检（C6）**：请求前按 `max_tokens×倍率` 原子递减 `llm_balance_cache`，不足 → `402 INSUFFICIENT_BALANCE`；响应后按实际用量校正；**全候选失败/上游 4xx/流式中断等无用量路径即时全额退回预估扣减**；结算循环每分钟对账（重算近期活跃用户，吸收崩溃漂移），**对账重算补减进程内在途预估**（防预检扣减被周期性抹除）。流式转发有闲置超时（`LLM_STREAM_IDLE_TIMEOUT`，默认 60s 无新字节即断开并按已收 usage 结算），防上游挂起占满连接。**例外（2026-09-19 审计 P1-7 修复）：内容已流出但无 usage 帧（客户端断连/上游不回 include_usage）不再全额退回**——prompt 按请求体估算（字符数/4）、completion 按已转发字节数/4 估算入账；流末无换行符的 usage 残行也会补解析，真实值优先于估算。
 - **无归因调用默认拒绝**：`/v1/chat/completions` 未携带可验签身份头时默认 `403 ATTRIBUTION_REQUIRED`（否则任何持 app token 者可绕过全部余额闸门免费调用，线上实锤项）；可信内网应用可由管理员将计费设置 `LLM_UNATTRIBUTED_POLICY` 切为 `allow`（仅计量不计费）。
 - **用户归因**：应用把门户注入的身份头原样转发给网关即可。客户端自带的 `x-aap-identity*` 请求头在网关侧一律剥除（HTTP 与 WS 同语义），只认可信注入的签名头。
 - **沙箱默认模型与生成上限**：`aap.llm.chat` 不指定 model 时按规范 §3.1 取 `LLM_DEFAULT_MODEL` 设置（计费组），未设置取模型目录排序第一个；目录为空返回可读 400。生成上限 `LLM_SANDBOX_MAX_TOKENS`（计费组）：包未显式指定 max_tokens 时注入，**0 = 不限制**（默认，模型自然收尾；推理型模型思考消耗大，包内硬编码上限会把 JSON 截半截——llm-proofread 实测）。
@@ -89,8 +89,8 @@ client = OpenAI(base_url="http://<host>:8080/v1", api_key="aapk_…")
 ## 6. 账号与通知通道
 
 - 注册两步（资料 → 邮箱验证码），验证码通道 `MAIL_PROVIDER`：`smtp`（五项配置）或 `resend`（仅需 API Key，`RESEND_FROM` 留空用沙箱发件人）；都未配置时为日志兜底（验证码打到服务端日志，内网可离线）。
-- 防滥用：注册/找回/绑定全程 PoW + 可选 Turnstile；同通道 60s 限 1 条 + 24h 上限；同 IP 24h 注册 ≤5。**找回验证码错猜 ≥5 次（10 分钟窗）作废该邮箱全部待用码**，错猜计入登录失败队列（联动 PoW 门槛与 IP 自动封禁）；重新发码即恢复全新尝试额度。
-- MFA：TOTP（±1 窗 + 计数器重放拒绝）+ Passkey（WebAuthn）+ 恢复码（10 枚一次性）+ 步升认证（密码或因子重验，`MFA_STEPUP_TTL` 内免重验）；管理员强制启用。**TOTP 登录/步升验证错猜 ≥5 次（10 分钟窗）作废当前会话**（`MFA_TOO_MANY_ATTEMPTS`），防持密码会话在线穷举第二因子。**绑定新因子（TOTP enroll/confirm、Passkey 注册）需步升认证**（防被劫持会话静默绑新因子实现持久化）；登录即授予步升窗口（密码/Passkey/邮箱码本身就是刚验证过的因子，强制绑 MFA 流程因此不被卡）。
+- 防滥用：注册/找回/绑定全程 PoW + 可选 Turnstile；同通道 60s 限 1 条 + 24h 上限；同 IP 24h 注册 ≤5（**计数含已完成注册**——registrations 完成时置 `completed_at` 保留行而非删行，完成行超 24h 清、未完成行按 TTL 清；2026-09-19 审计前删行即释放名额，上限形同虚设）。**找回验证码错猜 ≥5 次（10 分钟窗）作废该邮箱全部待用码**，错猜计入登录失败队列（联动 PoW 门槛与 IP 自动封禁）；重新发码即恢复全新尝试额度。**找回密码发码的 60s 重发/日上限命中时对外静默 200**（与不存在的邮箱响应体完全一致，ghost 路径补等量 scrypt 拉齐时序量级）——429 差异曾是确定性账号枚举 oracle（2026-09-19 审计修复）。
+- MFA：TOTP（±1 窗 + 计数器重放拒绝，写回带 `last_used_counter < ?` 条件护栏防并发一码双用）+ Passkey（WebAuthn）+ 恢复码（10 枚一次性）+ 步升认证（密码或因子重验，`MFA_STEPUP_TTL` 内免重验）；管理员强制启用。**TOTP 登录/步升验证错猜 ≥5 次（10 分钟窗）作废当前会话**（`MFA_TOO_MANY_ATTEMPTS`），**并叠加账号维度持久计数（login_attempts 表 `mfa:<uid>` 命名空间，跨会话合计，成功清零，ip 列写哨兵不污染 IP 封禁面）**——单会话作废后重新登录不再重置额度（2026-09-19 审计修复）。**改密要求完全登录态**（`authState==='full'`，半登录态 403）。**强制流程服务端门禁（forceFlowGate）**：`mustChangePassword` 或「本地 admin 未绑 MFA」（OIDC 管理员委托 IdP 豁免）的会话除白名单端点（me/logout/change-password/mfa/*/step-up/*/portal/bootstrap）外一律 403 `FORCE_CHANGE_PASSWORD`/`FORCE_ENROLL_MFA`；登录/注册响应与 /auth/me 统一返回 `mustEnrollMfa`。**绑定新因子（TOTP enroll/confirm、Passkey 注册）需步升认证**（防被劫持会话静默绑新因子实现持久化）；登录即授予步升窗口（密码/Passkey/邮箱码本身就是刚验证过的因子，强制绑 MFA 流程因此不被卡）。
 - 防爆破双维度：IP 维度之外增加**账号维度**失败计数（`login_attempts.user_key`），同账号跨 IP 分布式撞库同样触发 PoW 要求。邀请码消费在注册事务内带 `usedBy IS NULL` 条件（防并发双花）。
 - OIDC SSO：配置 Issuer/ClientId/Secret 即启用（重启生效）；`OIDC_ADMIN_SUBJECTS` 首登提升管理员；待批准账号重复登录干净回到待批提示（不下发即刻失效的会话）。
 

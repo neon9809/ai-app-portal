@@ -200,3 +200,57 @@ export const sessionMiddleware: RequestHandler = (req, _res, next) => {
   req.user = loadSessionByToken(token);
   next();
 };
+
+// ---------- 强制流程门禁（F3/A3：强制改密 / admin 强制绑 MFA） ----------
+
+/** admin 强制绑 MFA 判定：仅本账（local）用户。
+ *  OIDC 账号 MFA 委托 IdP（ADR），其 mfaEnabled 默认 false，
+ *  纳入判定会把 OIDC 管理员锁死在绑定页（终审 P1-6c），故排除。 */
+export function mustEnrollMfaFor(u: { kind: string; role: string; mfaEnabled: boolean }): boolean {
+  return u.kind === 'local' && u.role === 'admin' && !u.mfaEnabled;
+}
+
+/** 门禁白名单：强制流程自身所需端点 + 状态读取。
+ *  匿名可读端点（portal bootstrap/品牌等）不要求登录，但浏览器带会话 cookie
+ *  访问时同样放行，否则强制流程页面连品牌信息都拿不到。 */
+const FORCE_GATE_ALLOW: RegExp[] = [
+  /^\/api\/auth\/me$/,
+  /^\/api\/auth\/logout$/,
+  /^\/api\/auth\/change-password$/,
+  /^\/api\/auth\/mfa(\/|$)/,
+  /^\/api\/auth\/step-up(\/|$)/,
+  /^\/api\/portal\/bootstrap$/,
+];
+
+/**
+ * 强制流程门禁：mustChangePassword 或（local admin 且未绑 MFA）的会话，
+ * 除白名单端点外一律 403（契约 FORCE_CHANGE_PASSWORD / FORCE_ENROLL_MFA）。
+ * 挂在 /api 中间件链（sessionMiddleware 之后、业务路由之前）；req.user 的
+ * mustChangePassword/mfaEnabled/role 由 loadSessionByToken 装载。
+ */
+export const forceFlowGate: RequestHandler = (req, res, next) => {
+  const u = req.user;
+  if (!u) {
+    next();
+    return;
+  }
+  const mustEnroll = mustEnrollMfaFor(u);
+  if (!u.mustChangePassword && !mustEnroll) {
+    next();
+    return;
+  }
+  const p = (req.originalUrl ?? req.url).split('?')[0]!;
+  if (FORCE_GATE_ALLOW.some((re) => re.test(p))) {
+    next();
+    return;
+  }
+  if (u.mustChangePassword) {
+    res.status(403).json({
+      error: { code: 'FORCE_CHANGE_PASSWORD', message: '请先修改密码后再继续操作', action: 'change-password' },
+    });
+    return;
+  }
+  res.status(403).json({
+    error: { code: 'FORCE_ENROLL_MFA', message: '管理员账号须先绑定多因子认证', action: 'mfa' },
+  });
+};

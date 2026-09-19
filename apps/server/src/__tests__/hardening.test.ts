@@ -18,7 +18,7 @@ import AdmZip from 'adm-zip';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { eq } from 'drizzle-orm';
-import { setupTestDb, teardownTestDb } from './testkit.js';
+import { sessionCookieFor, setupTestDb, teardownTestDb } from './testkit.js';
 import { closeDb, getDb, getSqlite } from '../db/index.js';
 import { getSetting, seedSettings, setSetting } from '../lib/settings.js';
 import { createApp } from '../app.js';
@@ -78,15 +78,16 @@ beforeAll(async () => {
   base = `http://127.0.0.1:${port}`;
 
   // admin / owner / other 三用户
-  const a = getDb().insert(users).values({ kind: 'local', username: 'admin', role: 'admin', createdAt: Date.now() }).run();
-  await writeLocalCredentials(Number(a.lastInsertRowid), 'admin-password');
+  // mfaEnabled: true——本文件用例与强制绑 MFA 门禁（forceFlowGate）无关，置位避免误拦；
+  // 相应 HTTP 登录只会得到半登录态，故 admin 会话直建 full 态（见 testkit.sessionCookieFor）
+  const a = getDb().insert(users).values({ kind: 'local', username: 'admin', role: 'admin', mfaEnabled: true, createdAt: Date.now() }).run();
   const o = getDb().insert(users).values({ kind: 'local', username: 'pkgowner', role: 'user', createdAt: Date.now() }).run();
   ownerId = Number(o.lastInsertRowid);
   await writeLocalCredentials(ownerId, 'owner-password');
   const t = getDb().insert(users).values({ kind: 'local', username: 'other', role: 'user', createdAt: Date.now() }).run();
   await writeLocalCredentials(Number(t.lastInsertRowid), 'other-password');
 
-  adminCookie = await login('admin', 'admin-password');
+  adminCookie = sessionCookieFor(Number(a.lastInsertRowid));
   ownerCookie = await login('pkgowner', 'owner-password');
   otherCookie = await login('other', 'other-password');
 }, 30_000);

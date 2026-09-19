@@ -10,14 +10,14 @@ import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import AdmZip from 'adm-zip';
 import { WebSocket } from 'ws';
-import { setupTestDb, teardownTestDb } from './testkit.js';
+import { sessionCookieFor, setupTestDb, teardownTestDb } from './testkit.js';
 import { closeDb, getDb } from '../db/index.js';
 import { seedSettings, setSetting } from '../lib/settings.js';
 import { createApp } from '../app.js';
 import { loadConfig } from '../config/index.js';
 import { handleUpgrade } from '../gateway/wsproxy.js';
 import { appSiteDir } from '../gateway/staticApp.js';
-import { ensurePersistent, persistentPort, stopAllPersistent } from '../lib/sandbox.js';
+import { ensurePersistent, persistentPort, stopAllPersistent, stopPersistentFor } from '../lib/sandbox.js';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
@@ -58,17 +58,12 @@ beforeAll(async () => {
   // 管理员登录
   getDb()
     .insert((await import('../db/schema.js')).users)
-    .values({ kind: 'local', username: 'admin', name: '管理员', role: 'admin', createdAt: Date.now() })
+    .values({ kind: 'local', username: 'admin', name: '管理员', role: 'admin', mfaEnabled: true, createdAt: Date.now() })
     .run();
   const { writeLocalCredentials } = await import('../lib/bootstrap.js');
   const adminId = getDb().select().from((await import('../db/schema.js')).users).get()!.id;
-  await writeLocalCredentials(adminId, 'admin-password');
-  const login = await fetch(`${base}/api/auth/login`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', origin: base },
-    body: JSON.stringify({ username: 'admin', password: 'admin-password' }),
-  });
-  adminCookie = cookieOf(login);
+  // 直建 full 会话（mfaEnabled=true 时 HTTP 登录只给半登录态）
+  adminCookie = sessionCookieFor(adminId);
 });
 
 afterAll(() => {
@@ -339,6 +334,122 @@ HTTPServer(("127.0.0.1", int(os.environ["PORT"])), Handler).serve_forever()
     expect(received).toBe('persist');
     ws.close();
   });
+
+  it('persistent WS 路径语义（回归：曾原样含 /app/<id> 前缀转发）：剥前缀 + x-forwarded-prefix；raw 通道剥 raw 段', async () => {
+    // 沙箱在 WS 握手成功时首帧回报 self.path 与 x-forwarded-prefix，随后进入回声循环
+    const WS_PATH_MOD = `
+import base64
+import hashlib
+import json
+import os
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+
+class Handler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, *args):
+        pass
+
+    def do_GET(self):
+        key = self.headers.get("Sec-WebSocket-Key")
+        if key:
+            accept = base64.b64encode(hashlib.sha1((key + GUID).encode()).digest()).decode()
+            self.send_response(101)
+            self.send_header("Upgrade", "websocket")
+            self.send_header("Connection", "Upgrade")
+            self.send_header("Sec-WebSocket-Accept", accept)
+            self.end_headers()
+            info = json.dumps({"path": self.path, "prefix": self.headers.get("X-Forwarded-Prefix")}).encode()
+            self.wfile.write(bytes([0x81, len(info)]) + info)
+            self.wfile.flush()
+            try:
+                while True:
+                    hdr = self.rfile.read(2)
+                    if len(hdr) < 2:
+                        break
+                    opcode = hdr[0] & 0x0F
+                    length = hdr[1] & 0x7F
+                    if length == 126:
+                        length = int.from_bytes(self.rfile.read(2), "big")
+                    elif length == 127:
+                        length = int.from_bytes(self.rfile.read(8), "big")
+                    if hdr[1] & 0x80:
+                        mask = self.rfile.read(4)
+                        data = bytes(b ^ mask[i % 4] for i, b in enumerate(self.rfile.read(length)))
+                    else:
+                        data = self.rfile.read(length)
+                    self.wfile.write(bytes([0x80 | opcode, len(data)]) + data)
+                    self.wfile.flush()
+            except Exception:
+                pass
+            return
+        body = b'{"ok": true}'
+        self.send_response(200)
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+HTTPServer(("127.0.0.1", int(os.environ["PORT"])), Handler).serve_forever()
+`;
+    const dataBase64 = zipPkg({
+      'manifest.json': JSON.stringify({
+        name: 'persistpath', display_name: 'PersistPath', version: '1.0.0',
+        type: 'python', entry: 'mod.py', runtime: 'persistent', capabilities: [], network: [],
+      }),
+      'mod.py': WS_PATH_MOD,
+    });
+    const submit = await fetch(`${base}/api/apps/submit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: base, cookie: adminCookie },
+      body: JSON.stringify({ filename: 'persistpath.neon-aap', dataBase64 }),
+    });
+    expect(submit.status).toBe(200);
+
+    try {
+      // HTTP 预热拉起沙箱（首次拉起最多 ~10s），确保后续 WS 首连即通
+      let warmed = false;
+      for (let i = 0; i < 30; i++) {
+        const res = await fetch(`${base}/app/persistpath/`, { headers: { cookie: adminCookie } });
+        if (res.status === 200) {
+          warmed = true;
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 500));
+      }
+      expect(warmed).toBe(true);
+
+      const gwPort = (gw.address() as AddressInfo).port;
+      const wsHandshake = (path: string): Promise<{ path: string; prefix: string | null }> =>
+        new Promise((resolve, reject) => {
+          const ws = new WebSocket(`ws://127.0.0.1:${gwPort}${path}`, { headers: { cookie: adminCookie } });
+          const t = setTimeout(() => reject(new Error('ws timeout')), 8000);
+          ws.on('message', (d) => {
+            clearTimeout(t);
+            ws.close();
+            resolve(JSON.parse(d.toString()) as { path: string; prefix: string | null });
+          });
+          ws.on('error', reject);
+        });
+
+      // 普通通道：沙箱看到剥前缀后的根路径（query 保留），前缀经头下发
+      const plain = await wsHandshake('/app/persistpath/ws/chat?q=1');
+      expect(plain.path).toBe('/ws/chat?q=1');
+      expect(plain.prefix).toBe('/app/persistpath');
+
+      // raw 通道：先剥 /app/<id> 再剥 raw 段 → /ws
+      const raw = await wsHandshake('/app/persistpath/raw/ws');
+      expect(raw.path).toBe('/ws');
+      expect(raw.prefix).toBe('/app/persistpath');
+    } finally {
+      // 清理本用例拉起的 persistent 进程：后序「全局上限」用例对存量进程数有假设
+      //（SANDBOX_MAX_PERSISTENT=1 时 makeRoomForPersistent 只回收一个 LRU）
+      stopPersistentFor('persistpath');
+    }
+  }, 20_000);
 
   it('persistent 全局上限（审计 F3）：超限回收最久未用进程，腾位后新应用可拉起', async () => {
     if (!pythonOk) return;

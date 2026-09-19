@@ -209,6 +209,17 @@ adminAppsRouter.put(
     if (body.sort !== undefined) patch.sort = body.sort;
 
     getDb().update(apps).set(patch).where(eq(apps.id, id)).run();
+    // ACL 受众更新：任一侧提交即生效，未提交的一侧保留现有值
+    //（回归：PUT 曾从不写 ACL，restricted 收窄受众「保存成功」实际无效）
+    if (body.allowedGroupIds !== undefined || body.allowedUserIds !== undefined) {
+      const current = getAcl(id);
+      const next = {
+        allowGroupIds: body.allowedGroupIds ?? current.allowGroupIds,
+        allowUserIds: body.allowedUserIds ?? current.allowUserIds,
+      };
+      setAcl(id, next);
+      audit(`${req.user!.kind}:${req.user!.id}`, req.clientIp ?? null, 'app.acl.update', { id, ...next });
+    }
     audit(`${req.user!.kind}:${req.user!.id}`, req.clientIp ?? null, 'app.update', { id });
     void probeAll();
     res.json({ ok: true });

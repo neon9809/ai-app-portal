@@ -13,7 +13,7 @@ import { type AapConfig, config } from './config/index.js';
 import './types.js';
 import { applySecurityHeaders } from './lib/securityHeaders.js';
 import { getClientIp } from './lib/security.js';
-import { sessionMiddleware } from './lib/session.js';
+import { sessionMiddleware, forceFlowGate } from './lib/session.js';
 import { csrfOriginCheck } from './lib/csrf.js';
 import { healthRouter } from './routes/health.js';
 import { portalRouter } from './routes/portal.js';
@@ -67,6 +67,10 @@ export function createApp(cfg: AapConfig = config): Express {
   });
 
   app.use('/api', csrfOriginCheck);
+
+  // 强制流程门禁（F3/A3）：mustChangePassword / admin 未绑 MFA 的会话，
+  // 除白名单（me/logout/change-password/mfa/step-up/bootstrap）外一律 403
+  app.use('/api', forceFlowGate);
 
   // ACME HTTP-01 挑战应答（80/HTTP 端口直达本服务或反代转发均可）
   app.get('/.well-known/acme-challenge/:token', (req, res) => {

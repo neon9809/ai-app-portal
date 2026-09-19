@@ -32,6 +32,7 @@ import {
 } from '../lib/passkey.js';
 import { audit } from '../lib/audit.js';
 import { getSetting } from '../lib/settings.js';
+import { clearMfaFailures, mfaFailuresInWindow, recordMfaFailure } from '../lib/security.js';
 
 export const mfaRouter = Router();
 
@@ -49,8 +50,11 @@ function requireTotpBound(userId: number): void {
 }
 
 // ---------- TOTP 错猜节流 ----------
-// 6 位码 10^6 空间，无节流时持密码会话可在线穷举绕过第二因子：
-// 同一会话 10 分钟窗口内错猜 ≥5 次 → 会话作废，须重新走完整登录。
+// 6 位码 10^6 空间，无节流时持密码会话可在线穷举绕过第二因子。双维度：
+//  - 会话级（内存）：同一会话 10 分钟内错猜 ≥5 次 → 会话作废，须重新登录；
+//  - 账号级（login_attempts 持久化，subject='mfa:<userId>'，重启不丢）：
+//    跨会话合计错猜 ≥5 次 → 窗口内直接拒绝该账号的 TOTP 验证（终审 P1-3，
+//    堵「删会话后持密码重新登录即获全新额度」的跨会话穷举）；成功验证清零。
 
 const TOTP_FAIL_LIMIT = 5;
 const TOTP_FAIL_WINDOW_MS = 10 * 60_000;
@@ -71,9 +75,17 @@ function recordTotpFail(sessionId: string): number {
 }
 
 async function verifyTotpGuarded(req: Request, u: SessionUser, token: string): Promise<void> {
+  const acctKey = `mfa:${u.id}`;
+  // 账号维度预检：窗口内已累计 ≥5 次错猜（跨会话合计）→ 直接拒绝，
+  // 恢复码兜底同样在窗口内暂停（防绕过节流）
+  if (mfaFailuresInWindow(acctKey) >= TOTP_FAIL_LIMIT) {
+    audit(`user:${u.id}`, req.clientIp ?? null, 'mfa.totp.throttled', { scope: 'account' });
+    throw new HttpError(429, 'MFA_TOO_MANY_ATTEMPTS', '验证码错误次数过多，请稍后再试');
+  }
   try {
     await verifyTotpForLogin(u.id, token, req.clientIp ?? null);
   } catch (err) {
+    recordMfaFailure(acctKey);
     const fails = recordTotpFail(u.sessionId);
     if (fails >= TOTP_FAIL_LIMIT) {
       getDb().delete(sessions).where(eq(sessions.tokenHash, u.sessionId)).run();
@@ -82,7 +94,9 @@ async function verifyTotpGuarded(req: Request, u: SessionUser, token: string): P
     }
     throw err;
   }
+  // 成功：会话级与账号级计数一并清零（防正常用户被误锁）
   totpFails.delete(u.sessionId);
+  clearMfaFailures(acctKey);
 }
 
 function loadUserRow(userId: number) {

@@ -11,8 +11,8 @@ import { closeDb, getDb } from '../db/index.js';
 import { seedSettings, setSetting } from '../lib/settings.js';
 import { createApp } from '../app.js';
 import { loadConfig } from '../config/index.js';
-import { apps, llmBalanceCache, users } from '../db/schema.js';
-import { eq } from 'drizzle-orm';
+import { apps, llmBalanceCache, llmLedger, users } from '../db/schema.js';
+import { and, eq } from 'drizzle-orm';
 import {
   createAppToken,
   createRoute,
@@ -274,6 +274,71 @@ describe('沙箱默认模型（LLM_DEFAULT_MODEL，规范 §3.1「不填用平�
     setSetting('LLM_DEFAULT_MODEL', '  ');
     expect(resolveDefaultModel()).toBe('dead-model');
     setSetting('LLM_DEFAULT_MODEL', '');
+  });
+});
+
+describe('流式无 usage 帧入账兜底（审计 P1-7：防断连免单）', () => {
+  const U7 = 507;
+
+  const streamChat = async (model: string): Promise<{ status: number; text: string }> => {
+    const res = await fetch(`http://127.0.0.1:${gwPort}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...AUTH, ...identityHeaders(U7) },
+      body: JSON.stringify({ model, messages: [{ role: 'user', content: 'hi' }], stream: true, max_tokens: 30 }),
+    });
+    return { status: res.status, text: await res.text() };
+  };
+
+  it('上游流式回内容但不回 usage：按估算入账（token>0，不全额退回预估）', async () => {
+    const noUsage = await upServer((_q, res) => {
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.write('data: {"choices":[{"delta":{"content":"hello "}}]}\n\n');
+      res.write('data: {"choices":[{"delta":{"content":"world"}}]}\n\n');
+      res.write('data: [DONE]\n\n');
+      res.end();
+    });
+    okUpstreams.push(noUsage.server);
+    const upId = createUpstream('无usage上游', noUsage.baseUrl, 'sk-nousage');
+    createRoute({ model: 'nousage-model', upstreamId: upId, upstreamModel: 'nu-up', multiplier: 100 });
+
+    grantTokens(U7, 100_000, 'p1-7', 1);
+    const before = balanceOf(U7);
+    const { status, text } = await streamChat('nousage-model');
+    expect(status).toBe(200);
+    expect(text).toContain('hello');
+
+    // 账本按估算记实际 token（prompt=请求估算，completion=转发字节/4），均 > 0
+    const row = getDb()
+      .select()
+      .from(llmLedger)
+      .where(and(eq(llmLedger.userId, U7), eq(llmLedger.model, 'nousage-model'), eq(llmLedger.kind, 'usage')))
+      .get();
+    expect(row).toBeTruthy();
+    expect(row!.promptTokens!).toBeGreaterThan(0);
+    expect(row!.completionTokens!).toBeGreaterThan(0);
+    // multiplier=100 → cost=prompt+completion；settle 后余额按实际扣减而非全额退回
+    expect(balanceOf(U7)).toBe(before - (row!.promptTokens! + row!.completionTokens!));
+    expect(balanceOf(U7)).toBeLessThan(before);
+  });
+
+  it('usage 帧无结尾换行（流末残行）：仍能捕获真实 usage 入账', async () => {
+    const rawEnd = await upServer((_q, res) => {
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.write('data: {"choices":[{"delta":{"content":"ok"}}]}\n\n');
+      // usage 帧后无 \n，直接结束流
+      res.end('data: {"choices":[],"usage":{"prompt_tokens":11,"completion_tokens":13}}');
+    });
+    okUpstreams.push(rawEnd.server);
+    const upId = createUpstream('残行usage上游', rawEnd.baseUrl, 'sk-rawend');
+    createRoute({ model: 'rawend-model', upstreamId: upId, upstreamModel: 'raw-up', multiplier: 100 });
+
+    grantTokens(U7, 100_000, 'p1-7b', 1);
+    const before = balanceOf(U7);
+    const { status, text } = await streamChat('rawend-model');
+    expect(status).toBe(200);
+    expect(text).toContain('ok');
+    // 真实 usage 11+13=24 → 按真实值扣 24（而非估算值/全额退回）
+    expect(balanceOf(U7)).toBe(before - 24);
   });
 });
 
