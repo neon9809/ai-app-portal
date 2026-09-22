@@ -499,6 +499,7 @@ interface PkgPreview {
   runtime: string | null;
   capabilities: string[];
   network: string[];
+  requirements?: string[];
   signature: string;
   exists: boolean;
   existingKind: string | null;
@@ -519,7 +520,10 @@ function AppsTab(): ReactNode {
 
   const groupsQ = useQuery({ queryKey: ['admin-groups'], queryFn: () => api<{ groups: GroupRow[] }>('/api/admin/groups') });
   const usersQ = useQuery({ queryKey: ['admin-users'], queryFn: () => api<{ users: PublicUser[] }>('/api/admin/users') });
-  const appsQ = useQuery({ queryKey: ['admin-apps'], queryFn: () => api<{ apps: AdminApp[] }>('/api/admin/apps') });
+  const appsQ = useQuery({ queryKey: ['admin-apps'], queryFn: () => api<{ apps: AdminApp[]; signSecret?: string }>('/api/admin/apps') });
+  // passUser 开关实时跟随表单；勾选时展示身份签名密钥供上游应用复制
+  const passUserOn = Form.useWatch('passUser', form);
+  const signSecret = appsQ.data?.signSecret ?? '';
 
   const groupOptions = (groupsQ.data?.groups ?? []).map((g) => ({ value: g.id, label: g.name }));
   const userOptions = (usersQ.data?.users ?? []).map((u) => ({ value: u.id, label: `${u.name}（${u.username ?? u.id}）` }));
@@ -799,6 +803,9 @@ function AppsTab(): ReactNode {
                   description={
                     <div style={{ fontSize: 12 }}>
                       <div>能力：{pkgPreview.capabilities.length ? pkgPreview.capabilities.join('、') : '无'}；出网白名单：{pkgPreview.network.length ? pkgPreview.network.join('、') : '无'}</div>
+                      {pkgPreview.requirements?.length ? (
+                        <div>pip 依赖（接入时自动安装到应用目录）：{pkgPreview.requirements.join('、')}</div>
+                      ) : null}
                       {pkgPreview.env?.length ? (
                         <div>
                           环境变量：{pkgPreview.env.map((v) => `${v.name}${v.secret ? '（密钥）' : ''}${v.required ? '' : '（可选）'}`).join('、')}——接入后在应用列表「环境变量」中配置
@@ -847,6 +854,24 @@ function AppsTab(): ReactNode {
               <Form.Item name="passUser" label="注入用户身份" valuePropName="checked" extra="向应用转发 X-AAP-Identity 签名头（自研应用识别登录用户）">
                 <Switch />
               </Form.Item>
+              {passUserOn ? (
+                <Form.Item
+                  label="身份签名密钥"
+                  extra=".aap 包沙箱已自动注入 AAP_SIGN_SECRET，无需配置；接入上游应用时复制此值到其环境变量 AAP_SIGN_SECRET。后台轮换后需重启应用生效。"
+                >
+                  <Space.Compact style={{ width: '100%' }}>
+                    <Input readOnly value={signSecret} style={{ fontFamily: 'monospace', fontSize: 12 }} />
+                    <Button
+                      onClick={() => {
+                        void navigator.clipboard?.writeText(signSecret);
+                        message.success('已复制');
+                      }}
+                    >
+                      复制
+                    </Button>
+                  </Space.Compact>
+                </Form.Item>
+              ) : null}
               <Form.Item
                 name="urlSecret"
                 label="上游凭据（可选）"

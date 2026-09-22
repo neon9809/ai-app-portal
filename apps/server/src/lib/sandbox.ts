@@ -14,14 +14,15 @@ import path from 'node:path';
 import { eq } from 'drizzle-orm';
 import { config } from '../config/index.js';
 import { getDb } from '../db/index.js';
-import { users } from '../db/schema.js';
+import { apps, users } from '../db/schema.js';
 import { appSiteDir } from '../gateway/staticApp.js';
 import { signIdentity } from '../gateway/identity.js';
 import type { SessionUser } from '../types.js';
 import { getAppLlmProvision } from './llm.js';
-import { getSettingInt } from './settings.js';
+import { getSetting, getSettingInt } from './settings.js';
 import { HttpError } from './httpError.js';
 import { envValues as appEnvValues } from './appEnv.js';
+import { pyDepsDir } from './pydeps.js';
 
 const PYTHON_BIN = process.env.PYTHON_BIN || 'python3';
 // src/lib → 根目录需上溯 4 级；Docker 内可用 AAP_RUNNER 覆盖为 /out/aap-sdk/... 
@@ -89,18 +90,34 @@ function sandboxSpawnUser(): { uid?: number; gid?: number } {
   return out;
 }
 
-function baseEnv(appId: string, extra: Record<string, string> = {}): Record<string, string> {
+export function baseEnv(appId: string, extra: Record<string, string> = {}): Record<string, string> {
   const provision = getAppLlmProvision(appId);
   const env: Record<string, string> = {};
   for (const k of SANDBOX_ENV_KEYS) {
     const v = process.env[k];
     if (v !== undefined) env[k] = v;
   }
+  // passUser 应用本地验签密钥（app-develop.skill §三：应用可自行校验代理注入的
+  // x-aap-identity 头按用户隔离数据）。AAP_ 前缀保留名上传时已拒声明，包覆盖不了；
+  // 轮换/开关 passUser 后由管理端 stopPersistentFor/stopAllPersistent 触发重启生效。
+  const passUser = getDb()
+    .select({ passUser: apps.passUser })
+    .from(apps)
+    .where(eq(apps.id, appId))
+    .get()?.passUser;
+  const signSecret = passUser ? getSetting('AAP_SIGN_SECRET') : null;
+  // 包第三方依赖（声明制 v0.2.6，上传时装入 .deps）+ native/FPK 启动自检补装的
+  // 预置框架目录（AAP_PREINSTALLED_PYTHONPATH，start.sh 导出）：包进程 sys.path 前置，
+  // 目录不存在时无副作用
+  const preinstalled = process.env.AAP_PREINSTALLED_PYTHONPATH;
+  const pythonPath = [preinstalled, pyDepsDir(appId)].filter(Boolean).join(path.delimiter);
   return {
     ...env,
     AAP_APP_ID: appId,
     AAP_PLATFORM: `http://127.0.0.1:${config.port}`,
     ...(provision ? { AAP_TOKEN: provision.token } : {}),
+    ...(signSecret ? { AAP_SIGN_SECRET: signSecret } : {}),
+    PYTHONPATH: pythonPath,
     AAP_PACKAGE_DIR: appSiteDir(appId),
     AAP_DB_PATH: path.join(appSiteDir(appId), 'app.sqlite'),
     AAP_STORAGE_DIR: path.join(appSiteDir(appId), 'storage'),

@@ -13,11 +13,14 @@
 from __future__ import annotations
 
 import base64
+import hashlib
+import hmac
 import json
 import logging
 import os
 import re
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
@@ -63,28 +66,49 @@ def get_identity() -> tuple[str, str] | None:
     return (p, s) if p and s else None
 
 
+def _identity() -> dict | None:
+    """解析并本地验签身份头（skill v0.2.5：passUser 沙箱自动注入 AAP_SIGN_SECRET）。
+    校验 HMAC-SHA256、exp 未过期、aud 与本应用 id 一致；jti 防重放由平台网关承担
+    （客户端自带身份头在代理入口一律剥除，进沙箱的均出自网关之手）。
+    平台未注入密钥（旧部署）时退化为仅解码；验签失败按无身份处理（shared/访客）。"""
+    p = request.headers.get("x-aap-identity", "")
+    if not p:
+        return None
+    try:
+        pad = "=" * (-len(p) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(p + pad))
+    except Exception as err:  # noqa: BLE001
+        logger.warning("身份解码失败: %s", err)
+        return None
+    secret = os.environ.get("AAP_SIGN_SECRET", "")
+    if secret:
+        expect = hmac.new(secret.encode(), p.encode(), hashlib.sha256).hexdigest()
+        got = request.headers.get("x-aap-identity-sig", "")
+        if not got or not hmac.compare_digest(expect.encode(), got.encode()):
+            logger.warning("身份验签失败，按无身份处理")
+            return None
+        exp = payload.get("exp")
+        if not isinstance(exp, (int, float)) or exp < time.time() * 1000:
+            return None
+        app_id = os.environ.get("AAP_APP_ID", "")
+        if app_id and payload.get("aud") != app_id:
+            return None
+    return payload
+
+
 def get_user_key() -> str:
     """user_key = kind:uid（平台身份契约：按 (kind, uid) 隔离账号数据）。
-    无身份头（passUser 未开启/匿名）时落 shared 空间，前端会提示。"""
-    p = request.headers.get("x-aap-identity", "")
-    if p:
-        try:
-            pad = "=" * (-len(p) % 4)
-            payload = json.loads(base64.urlsafe_b64decode(p + pad))
-            return f"{payload.get('kind', 'user')}:{payload.get('uid', '?')}"
-        except Exception as err:  # noqa: BLE001
-            logger.warning("身份解码失败: %s", err)
+    无有效身份头（passUser 未开启/匿名/验签失败）时落 shared 空间，前端会提示。"""
+    payload = _identity()
+    if payload:
+        return f"{payload.get('kind', 'user')}:{payload.get('uid', '?')}"
     return "shared"
 
 
 def current_name() -> str:
-    p = request.headers.get("x-aap-identity", "")
-    if p:
-        try:
-            pad = "=" * (-len(p) % 4)
-            return json.loads(base64.urlsafe_b64decode(p + pad)).get("name") or "用户"
-        except Exception:  # noqa: BLE001
-            pass
+    payload = _identity()
+    if payload:
+        return payload.get("name") or "用户"
     return "访客"
 
 

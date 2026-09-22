@@ -1,7 +1,7 @@
 {
   "name": "ip-analyzer",
   "display_name": "IP 安全分析",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "type": "python",
   "entry": "mod.py",
   "runtime": "persistent",
@@ -10,6 +10,7 @@
   "author": "Neon（移植自 neon9809/ip-analyzer）",
   "capabilities": ["db"],
   "network": ["api.abuseipdb.com", "ipinfo.io"],
+  "requirements": ["flask>=3.0"],
   "env": {
     "ABUSEIPDB_API_KEY": {
       "required": true,

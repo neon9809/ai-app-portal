@@ -56,6 +56,7 @@ Neon 的 OSS 项目：自托管 AI 应用网关 + 门户，中文名「AI应用�
 
 - payload 必含：`aud`（目标工具 id，防身份头转发到其他上游重放）、`jti`（一次性随机串）、`iat/exp`（10 分钟 TTL）、`kind`+`uid`（**本地账号与 OIDC 分表自增，仅按 uid 隔离会同号串号——必须 (kind, uid) 联合或用 subject**）
 - 消费端校验：签名（timingSafeEqual）、exp、aud 与自身 id 一致
+- **验签密钥自动下发（2026-09-22）**：勾选 passUser 的 .aap 包，沙箱 env 自动注入 `AAP_SIGN_SECRET`（全局身份签名密钥；`AAP_` 保留名上传即拒声明，包不可覆盖）。轮换密钥（stopAllPersistent）或切换 passUser 开关（stopPersistentFor）自动停起 persistent 进程，下次访问以新 env 拉起。上游（external）应用无沙箱：管理后台应用表单勾选 passUser 时展示密钥供复制配置
 - passUser 同时是 **LLM 网关用户级计量的归因通道**（身份头随请求链进网关，用户级 token 归因零成本）
 
 ## 四、LLM 网关 + 计费（C/D 域核心设计）
@@ -90,7 +91,7 @@ PoW 登录 proof-of-work、登录失败计数、IP 封禁（累犯时长倍增�
 - **网络出口 = 平台出站代理**：逐请求核对 manifest 域名白名单放行——**白名单执行点在代理不在沙箱**（防 DNS rebinding/直连 IP 绕过）
 - **SDK 存根三件套**：`llm.chat()`（走 LLM 网关，计入调用者 token 池）；`db.*`（**每包独立 SQLite，支持包内完整 SQL**——execute/query + ? 占位参数；平台业务表与其他包物理隔离不可访问，容量限额）；`storage.*`（每包独立配额空间）
 - 生命周期：上传→校验→私有可用；公开须审核；版本更新=重新审核；ed25519 签名已实装（信任公钥命中免审，G4，工具 `packages/aap-sdk/sign-aap.mjs`）；举报/下架/全事件审计
-- 第一版刻意收窄：不做任意 pip 依赖、跨包调用、任意 SQL。先跑通「造工具→自用→审核上架」循环
+- 第一版刻意收窄：不做跨包调用、任意 SQL；**pip 依赖 2026-09-22 起走声明制**（manifest.requirements，上传时 `pip install --only-binary=:all: --target .deps` 装入应用数据目录、沙箱 PYTHONPATH 前置、失败=上传被拒；PIP_INDEX_URL 设置支持镜像；native/FPK start.sh 启动自检补装预置 flask，docker 镜像本就预装 py3-flask）
 
 ## 七、管理面板体验（P0 验收硬指标）
 

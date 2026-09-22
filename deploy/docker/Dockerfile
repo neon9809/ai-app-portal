@@ -42,7 +42,10 @@ RUN --mount=type=cache,id=pnpm-store,target=/root/.local/share/pnpm/store \
 # ---------- 运行阶段 ----------
 FROM node:22-alpine
 RUN sed -i 's#https://dl-cdn.alpinelinux.org#https://mirrors.cloud.tencent.com#g' /etc/apk/repositories \
- && apk add --no-cache tini python3 py3-flask \
+ && apk add --no-cache tini python3 py3-pip py3-flask \
+ # py3-pip：.neon-aap 声明制依赖（manifest.requirements）上传时 pip --target 安装必需
+ # （alpine 的 python3 不带 pip）；musl 仅能装 wheel，无 musllinux wheel 的 C 扩展包
+ # 会在上传时报错——属预期行为
  # 沙箱可选降权：预建非特权用户；运行时加 SANDBOX_UID=10001 SANDBOX_GID=10001 生效
  # （需保证数据卷对 10001 可写，如：docker run 时对挂载目录 chown 10001:10001）
  && addgroup -g 10001 aap && adduser -D -u 10001 -G aap aap

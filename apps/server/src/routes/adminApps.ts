@@ -17,9 +17,11 @@ import { writeHtmlApp, storePackageFiles, validateManifest, appSiteDir } from '.
 import { checkPackageSignature, type SignatureCheck, type SignatureObj } from '../lib/signing.js';
 import { ensureAutoProvisionedToken } from '../lib/llm.js';
 import { encryptSecret } from '../lib/cryptoSecrets.js';
-import { getSettingBool } from '../lib/settings.js';
+import { getSettingBool, getSetting } from '../lib/settings.js';
 import { audit } from '../lib/audit.js';
 import { probeAll } from '../gateway/health.js';
+import { stopPersistentFor } from '../lib/sandbox.js';
+import { installPyDeps } from '../lib/pydeps.js';
 
 export const adminAppsRouter = Router();
 
@@ -84,6 +86,9 @@ adminAppsRouter.get(
   '/admin/apps',
   h(async (_req, res) => {
     res.json({
+      // passUser 身份链验签密钥（同「安全 → 高级项」AAP_SIGN_SECRET）：前端在应用
+      // 表单勾选 passUser 时展示，供上游应用复制配置；沙箱侧由 baseEnv 自动注入
+      signSecret: getSetting('AAP_SIGN_SECRET') ?? '',
       apps: listApps().map((a) => {
         const acl = getAcl(a.id);
         return {
@@ -196,7 +201,12 @@ adminAppsRouter.put(
       if (!VISIBILITIES.has(body.visibility)) throw new HttpError(400, 'INVALID_VISIBILITY', '访问策略必须是 public/login/member');
       patch.visibility = body.visibility;
     }
-    if (body.passUser !== undefined) patch.passUser = body.passUser;
+    if (body.passUser !== undefined) {
+      // 开关变化即停掉 persistent 进程：沙箱 env 里的 AAP_SIGN_SECRET 随下次访问
+      // 以新配置重新拉起（env 是 spawn 时定格的）
+      if (body.passUser !== existing.passUser) stopPersistentFor(id);
+      patch.passUser = body.passUser;
+    }
     if (body.upstream !== undefined) {
       parseUpstream(body.upstream);
       patch.upstream = body.upstream;
@@ -345,6 +355,7 @@ adminAppsRouter.post(
         runtime: manifest.type === 'python' ? manifest.runtime : null,
         capabilities: manifest.capabilities,
         network: manifest.network,
+        requirements: manifest.requirements,
         env: Object.entries(manifest.env).map(([name, s]) => ({
           name,
           required: s.required,
@@ -410,6 +421,17 @@ adminAppsRouter.post(
     }
     const visibility = body.visibility ?? 'private';
     if (!VISIBILITIES.has(visibility)) throw new HttpError(400, 'INVALID_VISIBILITY', '访问策略非法');
+
+    // 声明制依赖安装（skill v0.2.6）：失败 = 上传失败（清理正式目录重传），
+    // 不带病上线；安装耗时随依赖规模（超时 300s 在 pydeps 内兜底）
+    if (manifest.type === 'python') {
+      try {
+        await installPyDeps(manifest.name, manifest.requirements);
+      } catch (err) {
+        fs.rmSync(appSiteDir(manifest.name), { recursive: true, force: true });
+        throw err;
+      }
+    }
 
     const now = Date.now();
     const isHtml = manifest.type === 'html';

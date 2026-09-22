@@ -37,7 +37,7 @@ pnpm db:generate    # drizzle-kit 生成迁移（schema 变更后必跑）
 1. **env（`apps/server/src/config`）**：端口、路径、一次性初值（如 `ADMIN_INITIAL_PASSWORD`、`TRUST_PROXY`）。启动读一次。
 2. **settings 表（`lib/settings.ts` 的 `SETTING_DEFS`）**：运行时可调策略。首启用 `initial()`（通常取 env）做种子；管理后台改值即时生效。每项有 `group`（管理面板分组）/ `secret`（只写不读，回显 `********`）/ `advanced`（高级项折叠）/ `defaultsWork`（「默认值即可跑」标注）。
 
-密钥查看：secret 型默认不可读；`GET /api/admin/secrets/:key` 可查看（记审计），管理界面同路径有「查看」按钮——自研应用接入验签（`AAP_SIGN_SECRET`）从这里取。
+密钥查看：secret 型默认不可读；`GET /api/admin/secrets/:key` 可查看（记审计），管理界面同路径有「查看」按钮——自研应用接入验签（`AAP_SIGN_SECRET`）从这里取。passUser 应用免手动取值：勾选「注入用户身份」的 .aap 包沙箱自动注入 `AAP_SIGN_SECRET`（baseEnv）；上游应用在管理后台应用表单勾选 passUser 时直接显示复制。后台轮换密钥（stopAllPersistent）或切换 passUser 开关（stopPersistentFor）自动停起 persistent 进程，下次访问以新配置拉起。
 
 主要分组：站点与品牌 / 注册与账号 / 人机验证 / 通知通道（验证码发信：SMTP 或 Resend）/ 证书与 HTTPS / 安全与限流 / 应用网关 / 计费。
 
@@ -63,7 +63,7 @@ pnpm db:generate    # drizzle-kit 生成迁移（schema 变更后必跑）
   - `login` 全部登录用户
   - `restricted` 登录 + 命中 `app_acl`（分组或账号）任一；ACL 为空 = 全部登录用户；归属者与管理员恒可见；**PUT 更新应用会实际落 ACL**（未提交的一侧保留现值，变更记 `app.acl.update` 审计——2026-09-19 审计前 PUT 静默丢弃 ACL）
   - `private` 仅归属者（用户自建应用默认；门户对非归属者隐藏卡片）
-- passUser 身份注入：`X-AAP-Identity`（base64url JSON：uid/kind/subject/aud/jti/iat/exp）+ `X-AAP-Identity-Sig`（HMAC-SHA256，密钥 `AAP_SIGN_SECRET`）。应用侧验签参考 `gateway/identity.ts` 的 `verifyIdentity`（aud 与 (kind,uid) 契约必查）。客户端自带的身份头在代理入口一律剥除（HTTP/WS/沙箱反代同一张剥离表），仅网关签名注入的可信。
+- passUser 身份注入：`X-AAP-Identity`（base64url JSON：uid/kind/subject/aud/jti/iat/exp）+ `X-AAP-Identity-Sig`（HMAC-SHA256，密钥 `AAP_SIGN_SECRET`）。应用侧验签参考 `gateway/identity.ts` 的 `verifyIdentity`（aud 与 (kind,uid) 契约必查）。验签密钥自动下发：passUser 的 .aap 包沙箱 env 注入 `AAP_SIGN_SECRET`，上游应用在应用表单勾选时显示复制（详见 §3 密钥查看）。客户端自带的身份头在代理入口一律剥除（HTTP/WS/沙箱反代同一张剥离表），仅网关签名注入的可信。
 - 统一页面元素：HTML 响应自动注入 `/portal-chrome.js`（应用门户 / 个人中心 / 退出登录，带会话态显示与回跳）；幂等、失败静默。覆盖三条通道：HTML 托管直出、persistent 反代直连（HTML 缓冲注入，2MB 上限）、沙箱外壳层（包代码不可触碰，raw 通道不重复注入）。包作者须预留右上角空间且不得自建登录。
 
 ## 5. LLM 网关（/v1/*，M2）
@@ -118,6 +118,7 @@ client = OpenAI(base_url="http://<host>:8080/v1", api_key="aapk_…")
 - **沙箱隔离现状**：`.neon-aap` Python 进程的受控出网通道是平台 egress 代理（manifest 白名单 + IP 黑名单**逐跳**校验，`routes/aap.ts`）；runner 内置 **Python 层出站守卫**（`connect` 仅放行 `AAP_PLATFORM`，直连其余地址/Unix socket 报错，`AAP_NET_GUARD=0` 关闭）；子进程环境变量走白名单（`lib/sandbox.ts` 的 `SANDBOX_ENV_KEYS`）；invoked 执行有全局并发上限（`SANDBOX_MAX_CONCURRENT_RUNS`，默认 8，超出排队防进程炸弹）；persistent 有全局进程数上限（`SANDBOX_MAX_PERSISTENT`，默认 12，超限回收最久未用进程——任务状态应落 aap.db，重拉无损）；**persistent 空闲回收时长可配**（`SANDBOX_IDLE_RECYCLE_SECONDS`，默认 300s，最小 30s，管理端改完即时生效）；沙箱以预建的 aap 用户（10001）**默认降权运行**（compose `SANDBOX_UID`/`SANDBOX_GID` 已默认启用；存量部署升级时需一次性迁移数据卷属主 `chown -R 10001:10001 <data>/appsites`，新上传包目录由平台自动放宽权限）。**开放注册 + 允许用户上传包的部署必须保持降权**，否则任意注册用户可读全站凭据哈希与 master.key（二轮渗透实测）。配套收紧：平台库 `app.db/-wal/-shm` 由 initDb 即时收紧为 0600 并挂周期兜底（checkpoint 重建后仍保持），`master.key` 0600——沙箱 uid 对两者均不可读。**进程级禁网、CPU/内存限额与 ns/cgroups 硬隔离仍未实装**（Python 层守卫属纵深防御，非硬保证），第三方包必须先经审核流（G3）再放开可见性。
 - **应用环境变量 / 机密（G6）**：包在 manifest `env` 声明变量（required/secret/pattern/default，保留名黑名单防劫持 `AAP_*`/`PORT`/代理变量等平台注入面，`parseEnvSpec`），归属者/管理员经 `GET/PUT /api/apps/:id/env` 填值（`app_env_vars` 表 AES-256-GCM 加密落盘，secret 只写不读仅回尾 4 位 hint，审计只记名不记值）。除机密外，env 亦是**应用级默认配置**的承载（如 llm-proofread 的 `PROOFREAD_PROMPT`/`COHERENCE_PROMPT`：归属者配置对所有用户生效，用户个人设置可覆盖）；`baseEnv()` 在 invoked/persistent 沙箱启动时注入（未配置非机密变量回退声明 default）；必填缺配在执行（400 ENV_MISSING）/拉起（503 错误页）时明确拦截；persistent 配置变更后自动重启进程。入口：管理后台·应用管理与用户中心·我的应用的「环境变量」弹窗。规范见 `ai-app-portal-docs/app-develop.skill-v0.2.md` §1.1。
 - 包上传安全语义：用户提交（`POST /api/apps/submit`）与执行（`/api/apps/:id/run`）均要求登录；正式目录的写入/删除一律在归属校验与同名查重之后（admin 上传 409 不触碰既有站点目录）；临时目录按请求唯一命名；15MB 包体 JSON 在鉴权之后解析（匿名大包 DoS 面收敛）。
+- **python 包第三方依赖（skill v0.2.6 声明制）**：manifest `requirements` 声明（`parseRequirements` 仅收「名称[extras]+版本约束」，拒 URL/本地路径/-r，上限 32 条），**上传/更新时服务端 `pip install --only-binary=:all: --target <appsites>/<id>/.deps`**（`lib/pydeps.ts`，超时 300s；失败=上传被拒并清理正式目录，不带病上线）；沙箱 `baseEnv` 注入 `PYTHONPATH=.deps`（native/FPK `start.sh` 自检补装的预置框架目录经 `AAP_PREINSTALLED_PYTHONPATH` 前置——docker 镜像预装 py3-flask 无此环节）。安装源走「应用网关 → pip 索引源」设置（`PIP_INDEX_URL`，默认官方 PyPI）；新版本不再声明的依赖更新时自动清除；`.deps` 在数据卷应用目录下，容器重建/升级不丢。审核预览页照单展示依赖清单。
 - **egress 出站代理（P0-3 修复）**：白名单域名经 `dns.lookup` 解析后对全部 A/AAAA 复核私网/保留段黑名单（环回/RFC1918/169.254 链路本地/CGNAT/ULA 等，防 `*.nip.io` 类 DNS 绕过，线上实锤项）；IP 字面量与 localhost/.local/.internal 仍一律拒绝；出站失败详情只进服务端日志不回传调用者（防内网探测 oracle）。残留风险：解析与请求间存在理论 TOCTOU 窗口，容器形态网络隔离补齐后消除。 **内网部署例外**：管理员可在「应用网关 → 内网出站白名单」（`EGRESS_INTRANET_ALLOWLIST`）配置域名/IP/IPv4 CIDR，命中即完全放行（管理员权威高于包声明，无需包 manifest 重复声明；CIDR 区间无法逐 IP 声明）；169.254 链路本地无条件拒绝。未命中时包 manifest 照常生效、内网目标照常拒绝。**自定义请求头转发**：`aap.http.fetch(url, timeout, headers)` 支持包传自定义头（第三方 API 鉴权场景，密钥经门户环境变量注入）；≤16 个、值 ≤4KB，Host/Connection/Content-Length/Proxy-* 等逐跳与托管头剥除；响应 `{"status": 上游状态码, "body": 文本≤500KB}`。
 - **敏感配置加密**：settings 的 secret 型配置（`AAP_SIGN_SECRET`/`SMTP_PASS`/`RESEND_API_KEY`/`OIDC_CLIENT_SECRET`）落盘前 AES-256-GCM 加密（`enc:` 前缀自描述；存量明文读取兼容，后台再次保存即转密文）。
 - **传输与跳转**：HTTPS 实际启用时全站挂 HSTS（2 年，主域）；HTTP→HTTPS 跳转目标只认 `ACME_DOMAIN`（不反射请求 Host，防直达源 IP 场景的钓鱼/缓存投毒组件）；**loopback Host（127.0.0.1/localhost/::1）豁免跳转**——沙箱 runner 与 FPK 统一网关的平台内部 POST 调用若被 302 到公网域名，跟随重定向会降级为 GET 打断全部沙箱出站（llm-proofread 实测）。

@@ -260,6 +260,9 @@ export const SETTING_DEFS: Record<string, SettingDef> = {
   UPLOAD_MIN_FREE_MB: {
     label: '上传磁盘水位（MB）',
     group: '应用网关', type: 'int', desc: '数据卷剩余空间低于该值（MB）时拒绝新包上传，防解压写满盘拖垮整站；0 = 不检查', initial: () => '512', defaultsWork: true, advanced: true },
+  PIP_INDEX_URL: {
+    label: 'pip 索引源',
+    group: '应用网关', type: 'string', desc: 'python 包第三方依赖（manifest.requirements）安装源；留空用官方 PyPI，国内建议镜像（如 https://pypi.tuna.tsinghua.edu.cn/simple）', initial: () => '', defaultsWork: true, advanced: true },
   SANDBOX_IDLE_RECYCLE_SECONDS: {
     label: 'persistent 空闲回收（秒）',
     group: '应用网关', type: 'int', desc: '持久服务进程无访问多久后回收（下次访问重新拉起；任务型应用的状态应落 aap.db 不受影响）。最小 30', initial: () => '300', defaultsWork: true },

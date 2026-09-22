@@ -4,6 +4,14 @@
 better-sqlite3），解压即跑，**不需要 Docker、不需要安装 Node**。
 唯一外部依赖是 `python3`（沙箱运行时；飞牛 fnOS / Debian 系系统自带）。
 
+> 平台预置 Python 框架（flask）由 `start.sh` 启动时自检补装到数据目录
+> `python-libs/`（需要宿主 python3 带 pip——缺 pip 时脚本会先尝试 ensurepip，
+> 仍不行请 `apt install python3-pip`；需要宿主可访问 pip 源，可用环境变量
+> `PIP_INDEX_URL` 指定国内镜像；补装失败不阻断启动，flask 类 persistent 包会
+> 503 并在日志留线索）。
+> .neon-aap 包自身的第三方依赖走 manifest `requirements` 声明制，上传时自动
+> 安装（同样经宿主 pip，装到应用数据目录，平台升级不丢）。
+
 ## 快速开始
 
 ```bash

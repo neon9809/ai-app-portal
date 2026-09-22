@@ -1,7 +1,7 @@
 {
   "name": "llm-proofread",
   "display_name": "文语校对",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "type": "python",
   "entry": "mod.py",
   "runtime": "persistent",
@@ -13,6 +13,9 @@
     "db"
   ],
   "network": [],
+  "requirements": [
+    "flask>=3.0"
+  ],
   "env": {
     "PROOFREAD_PROMPT": {
       "required": false,

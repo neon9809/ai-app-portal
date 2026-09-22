@@ -38,6 +38,8 @@ docker pull --platform "$PLATFORM" "$IMG" || {
 }
 
 echo "③ 容器内构建（glibc 产物）"
+# 残留清理：out-$ARCH 非空会让容器内 pnpm deploy 报 ERR_PNPM_DEPLOY_DIR_NOT_EMPTY
+rm -rf "$DIST/out-$ARCH"
 docker run --rm --platform "$PLATFORM" \
   -v "$SRC:/app" -v "$DIST/out-$ARCH:/out-native" \
   "$IMG" bash /app/deploy/native/build-inside.sh

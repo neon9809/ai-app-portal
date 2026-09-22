@@ -182,6 +182,30 @@ const RESERVED_ENV_NAMES = new Set(
 );
 
 export const MAX_ENV_VARS = 16;
+export const MAX_REQUIREMENTS = 32;
+
+/** manifest.requirements —— pip 依赖声明（skill v0.2.6 声明制）：上传时平台安装到
+ *  应用 .deps 目录，沙箱 PYTHONPATH 前置。仅接受「名称[extras] + 版本约束」形态，
+ *  显式拒 URL(@)/本地路径/-r/-e（缩小安装期指令面）；配合 --only-binary=:all:
+ *  只装 wheel，安装期不执行 sdist setup.py 任意代码。 */
+export function parseRequirements(value: unknown): string[] {
+  if (value == null) return [];
+  if (!Array.isArray(value)) throw new Error('manifest.requirements 必须是字符串数组');
+  if (value.length > MAX_REQUIREMENTS) throw new Error(`manifest.requirements 最多声明 ${MAX_REQUIREMENTS} 条依赖`);
+  const out: string[] = [];
+  for (const v of value) {
+    const s = String(v).trim();
+    const req =
+      /^[A-Za-z0-9][A-Za-z0-9._-]*(\[[A-Za-z0-9,._-]*\])?(\s*(===|==|!=|<=|>=|~=|<|>)\s*[A-Za-z0-9.!+*]+(\.[A-Za-z0-9.!+*]+)*(,\s*(===|==|!=|<=|>=|~=|<|>)\s*[A-Za-z0-9.!+*]+(\.[A-Za-z0-9.!+*]+)*)*)?$/.exec(
+        s,
+      );
+    if (!req) {
+      throw new Error(`manifest.requirements 条目非法（仅支持 名称[extras] + 版本约束，不支持 URL / 本地路径）: ${s}`);
+    }
+    if (!out.includes(s)) out.push(s);
+  }
+  return out;
+}
 
 /** 解析并校验 manifest.env 声明；支持两种写法：
  *  "NAME": "描述"（速记，required=true） 或 "NAME": { required, secret, description, pattern, default } */
@@ -243,6 +267,7 @@ export function validateManifest(m: Record<string, unknown>): {
   network: string[];
   route: string | null;
   env: Record<string, ManifestEnvVar>;
+  requirements: string[];
 } {
   const name = String(m.name ?? '');
   const type = String(m.type ?? '');
@@ -261,6 +286,8 @@ export function validateManifest(m: Record<string, unknown>): {
   }
   const network = Array.isArray(m.network) ? m.network.map(String) : [];
   const route = m.route ? String(m.route) : null;
+  if (type !== 'python' && m.requirements != null) throw new Error('manifest.requirements 仅 python 包支持');
+  const requirements = parseRequirements(m.requirements);
   // display_name 会出现在门户卡片与网关错误页：限长并剥除 HTML 敏感字符（纵深，
   // 输出侧另有 escapeHtml 兜底）
   const displayName = String(m.display_name ?? name)
@@ -278,6 +305,7 @@ export function validateManifest(m: Record<string, unknown>): {
     network,
     route,
     env: parseEnvSpec(m.env),
+    requirements,
   };
 }
 

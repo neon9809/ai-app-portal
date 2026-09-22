@@ -6,7 +6,11 @@ description: "当用户要求开发、打包或重构 .neon-aap 应用（AI应�
 # app-develop.skill.md
 
 > AI应用门户（ai-app-portal）应用开发规范 · 供开发 Agent 使用
-> 版本 v0.2.4（2026-09）· 配套平台 PRD v0.3+
+> 版本 v0.2.6（2026-09）· 配套平台 PRD v0.3+
+>
+> **v0.2.6 变更**：manifest 新增 `requirements` 字段（§1.2 pip 依赖声明，声明制=审批依据）——超出标准库+平台预置框架的第三方库在 manifest 列出，**上传时平台自动 `pip install`**（只装 wheel）到应用私有目录，沙箱内直接 import，失败=上传被拒；版本更新不再声明的依赖自动清除。新平台增设「pip 索引源」设置（PIP_INDEX_URL，国内镜像）。native/FPK 形态启动时自检补装预置框架 flask（此前仅 docker 镜像预装，宿主缺 flask 时 persistent 包静默 503 崩溃循环——llm-proofread 实测案例）。§一/§五 同步。
+>
+> **v0.2.5 变更**：passUser 应用身份验签密钥自动下发——勾选「注入用户身份」的 .aap 包，沙箱环境变量自动注入 `AAP_SIGN_SECRET`（平台全局身份签名密钥；`AAP_` 保留名，manifest.env 不可声明覆盖），persistent 应用可直接本地验签 `x-aap-identity` 头按用户隔离数据（§二 persistent、§五）；后台轮换密钥或切换 passUser 开关会自动停起 persistent 进程，改完即生效。上游（external）应用接入时在管理后台应用表单复制 `AAP_SIGN_SECRET` 自行配置。
 >
 > **v0.2.4 变更**：补 skill frontmatter（可安装自动触发）；原 §五硬性约束与 §七自检清单**合并为单一清单**（同一规则不再多处复述）；原 §八 aap-dev 按当前实装收窄（run + mock；serve/--llm real/--submit 随平台 M4 提供，勿当作已可用）；坑清单精简为带症状增量的条目；全文重编号（原§八→§七、原§九→§八）。
 >
@@ -53,6 +57,7 @@ description: "当用户要求开发、打包或重构 .neon-aap 应用（AI应�
     "ABUSEIPDB_API_KEY": { "required": true, "secret": true, "pattern": "^[a-f0-9]{80}$", "description": "AbuseIPDB 密钥" },
     "MAX_CONCURRENCY": { "required": false, "default": "4", "description": "并发上限" }
   },
+  "requirements": ["flask>=3.0"],    // pip 依赖声明（v0.2.6，见 §1.2；只作标准库+预置框架则省略）
   "route": "stock-summary"           // 仅 persistent：门户内的路由前缀 /app/stock-summary/
 }
 ```
@@ -83,6 +88,20 @@ description: "当用户要求开发、打包或重构 .neon-aap 应用（AI应�
 
 **行为与纪律**：
 - 值由**归属者/管理员**上传后在门户「环境变量」里填（用户中心·我的应用 / 管理后台·应用管理都有入口）；沙箱每次启动时注入为进程环境变量，代码里直接 `os.environ["变量名"]` 读。
+
+### 1.2 requirements——pip 依赖声明（v0.2.6）
+
+代码需要的第三方库（超出标准库 + 平台预置框架的部分）**在 manifest `requirements` 里声明，上传时平台自动安装**到应用私有目录，沙箱内直接 `import`，不允许任何形式的运行时自装：
+
+```jsonc
+"requirements": ["flask>=3.0", "requests==2.32.3", "beautifulsoup4"]
+```
+
+- **声明制 = 审批依据**：与 `capabilities`/`network` 同一哲学，管理员审核时照单看依赖；改依赖 = 重新提审。
+- **写法**：标准 pip 需求串（`名称[extras] 版本约束`）；**建议带版本上限或精确版本**（不带约束 = 安装当时最新版，升级后行为可能变）。不支持 URL / 本地路径 / `-r`（上传即拒）。
+- **安装时机**：上传/版本更新时平台执行 `pip install --only-binary=:all: --target <应用目录>/.deps`；**失败 = 上传被拒**，错误原样返回（网络/镜像源问题调平台「pip 索引源」设置）。
+- **只装 wheel**：无预编译 wheel 的源码包（含需编译 C 扩展且平台无对应 wheel 的）装不了，上传时会明确报错——换纯 Python 等价库或联系管理员。
+- 版本更新不再声明的依赖会被清掉；依赖装在应用数据目录下，平台升级/重建不影响。
 - persistent 应用修改配置后会自动重启进程（下次访问生效）；invoked 天然每次生效。
 - **保留名不可声明**：`AAP_*`、`PORT`、`PATH`、`HOME`、`HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`、`PYTHON*`、`SSL_CERT_*`、`SANDBOX_*`、`NODE_OPTIONS` 等（平台注入面，声明即上传失败）。
 - 单包最多 16 个变量；值长度 ≤ 8192 字符；日志纪律同样适用——**不要把环境变量值打进 `aap.log`**。
@@ -115,6 +134,7 @@ description: "当用户要求开发、打包或重构 .neon-aap 应用（AI应�
   - 页面里所有静态资源用**相对路径**（`./static/x.css`），不要写 `/static/x.css`
   - 支持 `X-Forwarded-Prefix` 请求头：用它拼绝对路径更稳
   - **不要依赖 Cookie**：门户剥离沙箱响应的 Set-Cookie（防 cookie tossing），会话态走 `aap.db` + 身份头（§五.8）
+- **按用户隔离数据（passUser，v0.2.5）**：接入时勾选「注入用户身份」的包，代理逐请求注入 `x-aap-identity` / `x-aap-identity-sig` 签名头（payload 含 `uid/kind/subject/aud/jti/exp`），同时沙箱环境变量自动注入 `AAP_SIGN_SECRET`——用它重算 HMAC 并 `timingSafeEqual` 比对验签（校验 `exp` 未过期、`aud` 等于本包 `AAP_APP_ID`），通过后以 `(kind, uid)` 或 `subject` 作账号键。账号键不要只用 `uid`（本地/OIDC 分号段）
 - 监听端口由平台通过环境变量注入（`PORT`），bind 到 `127.0.0.1`，**不要自己挑端口**
 - 进程无外网，出站走平台代理（见下文网络）
 
@@ -328,7 +348,7 @@ if __name__ == "__main__":
 
 **代码边界**
 
-- [ ] Python 包单文件 `mod.py`（persistent 可带静态资源目录）；只用标准库 + 平台预置框架，无 pip 依赖
+- [ ] Python 包单文件 `mod.py`（persistent 可带静态资源目录）；只用标准库 + 平台预置框架 + manifest `requirements` 声明的依赖（§1.2，上传时自动安装），无运行时自装
 - [ ] 无自建网络出口（无 socket / os.system / 子进程）：出站只经 `aap.http.fetch`，域名全部在 manifest `network` 里，上游状态码 `resp["status"]` 逐分支处理
 - [ ] invoked 出入参可 JSON 序列化（二进制存 storage 给链接）；长任务拆分或加进度说明（invoked 有超时）
 - [ ] 错误路径友好：失败返回 `{"error": "人类可读的中文说明"}`
@@ -338,7 +358,7 @@ if __name__ == "__main__":
 - [ ] invoked 无状态：跨请求状态一律落 `aap.db` / `aap.storage`
 - [ ] persistent 状态纪律：任务/结果/草稿/每用户配置落 `aap.db`，不依赖进程内存（空闲回收约 5 分钟，§二）
 - [ ] persistent：`PORT` 环境变量 + `127.0.0.1` 监听 + 相对路径 / `X-Forwarded-Prefix`（§二）
-- [ ] 按门户用户隔离数据时行键自带 user_key（persistent 从 `x-aap-identity` 头解码；invoked 看 input 调用者字段）
+- [ ] 按门户用户隔离数据时行键自带 user_key（persistent 从 `x-aap-identity` 头解码并用 `AAP_SIGN_SECRET` 验签；invoked 看 input 调用者字段）
 
 **日志（§3.5）**
 

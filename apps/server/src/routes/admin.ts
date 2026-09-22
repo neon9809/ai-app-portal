@@ -16,6 +16,7 @@ import { generatePassword } from '../lib/passwords.js';
 import { writeLocalCredentials } from '../lib/bootstrap.js';
 import { listSettingsForAdmin, updateSettingFromAdmin, SETTING_DEFS, getSetting } from '../lib/settings.js';
 import { audit } from '../lib/audit.js';
+import { stopAllPersistent } from '../lib/sandbox.js';
 import { createGroup, deleteGroup, groupMemberIds, listGroups, setGroupMembers, updateGroup } from '../lib/groups.js';
 import { status as tlsStatus } from '../gateway/tls.js';
 
@@ -169,6 +170,9 @@ adminRouter.put(
       if (!SETTING_DEFS[key]) throw new HttpError(400, 'UNKNOWN_SETTING', `未知配置项: ${key}`);
       updateSettingFromAdmin(key, String(body[key] ?? ''));
     }
+    // 轮换身份签名密钥后，passUser 沙箱 env 里还是旧密钥（spawn 时定格）：
+    // 全部停掉，下次访问以新密钥重新拉起
+    if (keys.includes('AAP_SIGN_SECRET')) stopAllPersistent();
     audit(`${req.user!.kind}:${req.user!.id}`, req.clientIp ?? null, 'config.update', { keys });
     res.json({ ok: true });
   }),

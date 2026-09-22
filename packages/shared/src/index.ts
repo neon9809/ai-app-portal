@@ -110,7 +110,7 @@ export interface AppCard {
 // ---------- 常量 ----------
 
 /** 平台版本（随根 package.json 同步） */
-export const AAP_VERSION = '0.1.1';
+export const AAP_VERSION = '0.1.2';
 
 /** 身份注入头（passUser；移植自参考实现，剥离单位指纹后更名） */
 export const IDENTITY_HEADER = 'x-aap-identity';

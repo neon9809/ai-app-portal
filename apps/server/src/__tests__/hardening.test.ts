@@ -25,7 +25,8 @@ import { createApp } from '../app.js';
 import { loadConfig } from '../config/index.js';
 import { appSiteDir, storePackageFiles, validateManifest, writeHtmlApp } from '../gateway/staticApp.js';
 import { egressHostGate, ipInAllowCidr, isPrivateIp, parseIntranetAllowlist } from '../routes/aap.js';
-import { identityEnv, loopbackPlatformPort, packageEntryPath } from '../lib/sandbox.js';
+import { baseEnv, identityEnv, loopbackPlatformPort, packageEntryPath } from '../lib/sandbox.js';
+import { installPyDeps } from '../lib/pydeps.js';
 import { handleUpgrade } from '../gateway/wsproxy.js';
 import { issueCode, verifyCode } from '../lib/verification.js';
 import { signIdentity, verifyIdentity } from '../gateway/identity.js';
@@ -342,6 +343,127 @@ describe('LLM 归因强制（P1-5）', () => {
     expect(v.ok).toBe(true);
     if (v.ok) expect(v.payload.uid).toBe(String(ownerId));
     expect(identityEnv('some-app', null).AAP_IDENTITY_PAYLOAD).toBeUndefined();
+  });
+});
+
+describe('passUser 沙箱 env 注入 AAP_SIGN_SECRET', () => {
+  function insertApp(id: string, passUser: boolean): void {
+    getDb().insert(apps).values({
+      id, name: id, visibility: 'private', kind: 'package', upstream: '',
+      ownerUserId: ownerId, passUser, createdAt: Date.now(), updatedAt: Date.now(),
+    }).run();
+  }
+
+  it('passUser 开启 → env 携带 AAP_SIGN_SECRET 且与平台设置一致；关闭 → 不注入', () => {
+    insertApp('env-pu-on', true);
+    insertApp('env-pu-off', false);
+    expect(baseEnv('env-pu-on').AAP_SIGN_SECRET).toBe(getSetting('AAP_SIGN_SECRET'));
+    expect(baseEnv('env-pu-off').AAP_SIGN_SECRET).toBeUndefined();
+  });
+
+  it('管理端应用列表返回 signSecret 供上游应用复制（仅 admin 路由可达）', async () => {
+    const res = await fetch(`${base}/api/admin/apps`, { headers: { cookie: adminCookie } });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { signSecret?: string };
+    expect(body.signSecret).toBe(getSetting('AAP_SIGN_SECRET'));
+  });
+
+  it('PUT 切换 passUser 即时生效且不报错（persistent 停起路径）', async () => {
+    const res = await fetch(`${base}/api/admin/apps/env-pu-on`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', origin: base, cookie: adminCookie },
+      body: JSON.stringify({ passUser: false }),
+    });
+    expect(res.status).toBe(200);
+    expect(baseEnv('env-pu-on').AAP_SIGN_SECRET).toBeUndefined();
+    getDb().delete(apps).where(eq(apps.id, 'env-pu-on')).run();
+    getDb().delete(apps).where(eq(apps.id, 'env-pu-off')).run();
+  });
+});
+
+describe('python 包声明制依赖（skill v0.2.6）', () => {
+  const savedBin = process.env.PYTHON_BIN;
+  let stubOut = '';
+
+  function writeStub(extra = ''): string {
+    const stubBin = path.join(dir, `stub-py-${Math.random().toString(36).slice(2)}.sh`);
+    fs.writeFileSync(stubBin, `#!/bin/sh\necho "$@" > '${stubOut}'\n${extra}`);
+    fs.chmodSync(stubBin, 0o755);
+    return stubBin;
+  }
+
+  afterAll(() => {
+    if (savedBin === undefined) delete process.env.PYTHON_BIN;
+    else process.env.PYTHON_BIN = savedBin;
+  });
+
+  it('manifest.requirements 解析：合法条目通过并去重；URL/本地路径/超限拒绝；仅 python 包支持', () => {
+    const m = (requirements: unknown, type = 'python') => validateManifest({ name: 'rq-x', type, entry: 'mod.py', requirements });
+    expect(m(['flask>=3.0', 'requests==2.32.3', 'PyYAML', 'flask>=3.0']).requirements).toEqual([
+      'flask>=3.0',
+      'requests==2.32.3',
+      'PyYAML',
+    ]);
+    expect(() => m(['git+https://github.com/x/y'])).toThrow(/非法/);
+    expect(() => m(['-r other.txt'])).toThrow(/非法/);
+    expect(() => m(['/tmp/evil'])).toThrow(/非法/);
+    expect(() => m(Array.from({ length: 33 }, (_, i) => `pkg${i}`))).toThrow(/最多/);
+    expect(() => m(['flask'], 'html')).toThrow(/仅 python/);
+  });
+
+  it('installPyDeps：按声明调 pip（--target .deps / -r）；失败抛 400 带尾部 stderr；空声明清 .deps 不再调 pip', async () => {
+    stubOut = path.join(dir, 'stub-cmds.txt');
+    process.env.PYTHON_BIN = writeStub();
+    await installPyDeps('deps-app', ['flask>=3.0']);
+    const args = fs.readFileSync(stubOut, 'utf8');
+    expect(args).toContain('--only-binary=:all:');
+    expect(args).toContain(path.join(appSiteDir('deps-app'), '.deps'));
+    expect(args).toContain('.deps-requirements.txt');
+
+    process.env.PYTHON_BIN = writeStub('echo pip boom >&2\nexit 1\n');
+    await expect(installPyDeps('deps-app', ['flask'])).rejects.toMatchObject({ status: 400, code: 'PIP_INSTALL_FAILED' });
+
+    fs.mkdirSync(path.join(appSiteDir('deps-app'), '.deps'), { recursive: true });
+    const callsBefore = fs.existsSync(stubOut) ? fs.readFileSync(stubOut, 'utf8') : '';
+    await installPyDeps('deps-app', []);
+    expect(fs.existsSync(path.join(appSiteDir('deps-app'), '.deps'))).toBe(false);
+    expect(fs.readFileSync(stubOut, 'utf8')).toBe(callsBefore);
+  });
+
+  it('baseEnv：PYTHONPATH 前置 AAP_PREINSTALLED_PYTHONPATH 且含 .deps', () => {
+    process.env.PYTHON_BIN = savedBin;
+    process.env.AAP_PREINSTALLED_PYTHONPATH = '/opt/py-libs';
+    try {
+      const p = baseEnv('env-pu-on').PYTHONPATH ?? '';
+      expect(p.startsWith('/opt/py-libs:')).toBe(true);
+      expect(p.endsWith(path.join(appSiteDir('env-pu-on'), '.deps'))).toBe(true);
+    } finally {
+      delete process.env.AAP_PREINSTALLED_PYTHONPATH;
+    }
+  });
+
+  it('上传带 requirements 的包：接入时自动安装到应用 .deps', async () => {
+    stubOut = path.join(dir, 'stub-cmds-upload.txt');
+    process.env.PYTHON_BIN = writeStub();
+    const res = await fetch(`${base}/api/admin/apps/package`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: base, cookie: adminCookie },
+      body: JSON.stringify({
+        filename: 'deps.neon-aap',
+        dataBase64: zipPkg({
+          'manifest.json': JSON.stringify({
+            name: 'deps-app-up', display_name: 'Deps', type: 'python', entry: 'mod.py', runtime: 'invoked',
+            requirements: ['flask>=3.0'],
+          }),
+          'mod.py': 'def handle(input, aap):\n    return {"ok": True}\n',
+        }).toString('base64'),
+      }),
+    });
+    expect(res.status).toBe(200);
+    const args = fs.readFileSync(stubOut, 'utf8');
+    expect(args).toContain(path.join(appSiteDir('deps-app-up'), '.deps'));
+    getDb().delete(apps).where(eq(apps.id, 'deps-app-up')).run();
+    fs.rmSync(appSiteDir('deps-app-up'), { recursive: true, force: true });
   });
 });
 
