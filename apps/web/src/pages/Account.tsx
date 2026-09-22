@@ -35,12 +35,16 @@ function useStepUp(): [ReactNode, () => Promise<boolean>] {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [resolveRef, setResolveRef] = useState<((ok: boolean) => void) | null>(null);
-  const [form] = Form.useForm();
+  // 两个 Tab 各自独立实例：共用一个实例时 Tabs 切换后两 Form 同时挂载，
+  // 提交会对隐藏 Tab 的必填字段一并校验，导致 TOTP 提交静默失败
+  const [passwordForm] = Form.useForm();
+  const [totpForm] = Form.useForm();
 
   const ensure = (): Promise<boolean> => {
     // 已在步升窗口内 → 直接放行
     if (me?.stepUpUntil && me.stepUpUntil > Date.now()) return Promise.resolve(true);
-    form.resetFields();
+    passwordForm.resetFields();
+    totpForm.resetFields();
     setOpen(true);
     return new Promise((resolve) => setResolveRef(() => resolve));
   };
@@ -89,7 +93,7 @@ function useStepUp(): [ReactNode, () => Promise<boolean>] {
             key: 'password',
             label: '密码',
             children: (
-              <Form form={form} onFinish={submitPassword} layout="vertical">
+              <Form form={passwordForm} onFinish={submitPassword} layout="vertical">
                 <Form.Item name="password" rules={[{ required: true, message: '请输入当前密码' }]}>
                   <Input.Password autoFocus />
                 </Form.Item>
@@ -105,7 +109,7 @@ function useStepUp(): [ReactNode, () => Promise<boolean>] {
                   key: 'totp',
                   label: 'TOTP',
                   children: (
-                    <Form form={form} onFinish={submitTotp} layout="vertical">
+                    <Form form={totpForm} onFinish={submitTotp} layout="vertical">
                       <Form.Item name="token" rules={[{ required: true, message: '请输入验证码' }]}>
                         <Input maxLength={6} placeholder="6 位验证码" />
                       </Form.Item>

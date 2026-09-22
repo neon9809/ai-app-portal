@@ -2,12 +2,15 @@ import http from 'node:http';
 import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { generate as totpGenerate } from 'otplib';
 
 /**
  * E2E 全局装配：
  *  - mock 上游应用（9911：HTML 标记页 + JSON 回显）
  *  - 门户服务（9910：tsx 起真实 server，临时数据目录，生产 web 构建产物）
  *  - 预置：初始管理员（已知密码）→ 登录 → 创建 demo 应用 → 开放注册
+ *    （P1-6 强制流程门禁后，管理端点须先走完 改密+绑 MFA 的强制流程；
+ *     配置完成后直写 DB 把 admin 还原为初始态，F3 仍验收首启向导 UI）
  */
 
 export const PORTAL = 'http://127.0.0.1:9910';
@@ -76,8 +79,34 @@ export async function setup(): Promise<void> {
   if (!login.ok) throw new Error(`初始管理员登录失败: ${login.status}`);
   const cookie = (login.headers.getSetCookie().find((c) => c.startsWith('aap_sid=')) ?? '').split(';')[0];
 
-  await api('PUT', '/api/admin/settings', { REGISTRATION_MODE: 'open' }, cookie);
-  await api(
+  // 记录初始 admin 行（用于配置后还原初始态，F3 继续验收首启向导）。
+  // better-sqlite3 须从 server 的 node_modules 解析（pnpm 严格布局），故 cwd 指向 apps/server。
+  const dbPath = path.join(RUN_DIR, 'data', 'app.db');
+  const runDb = (script: string, ...args: string[]): string =>
+    execFileSync('node', ['-e', script, dbPath, ...args], { cwd: path.join(__dirname, '../apps/server') }).toString();
+  const pristine = JSON.parse(
+    runDb(
+      "const D=require('better-sqlite3');const db=new D(process.argv[1],{readonly:true});" +
+        "const u=db.prepare('SELECT * FROM users WHERE username=?').get('admin');" +
+        "const c=db.prepare('SELECT password_hash FROM local_credentials WHERE user_id=?').get(u.id);" +
+        "console.log(JSON.stringify({...u,__password_hash:c.password_hash}))",
+    ),
+  ) as Record<string, unknown> & { __password_hash: string };
+
+  // 强制流程门禁（P1-6）：改密 → 步升 → 绑 TOTP，之后管理端点才放行
+  const cp = await api('POST', '/api/auth/change-password', { currentPassword: INIT_ADMIN_PASSWORD, newPassword: ADMIN_NEW_PASSWORD }, cookie);
+  if (cp.status !== 200) throw new Error(`改密失败: ${JSON.stringify(cp.body)}`);
+  const su = await api('POST', '/api/auth/step-up/password', { password: ADMIN_NEW_PASSWORD }, cookie);
+  if (su.status !== 200) throw new Error(`步升失败: ${JSON.stringify(su.body)}`);
+  const enroll = await api('POST', '/api/auth/mfa/totp/enroll', undefined, cookie);
+  const secret = (enroll.body as { secret?: string }).secret;
+  if (!secret) throw new Error(`MFA enroll 失败: ${JSON.stringify(enroll.body)}`);
+  const confirm = await api('POST', '/api/auth/mfa/totp/confirm', { token: await totpGenerate({ secret }) }, cookie);
+  if (confirm.status !== 200) throw new Error(`MFA confirm 失败: ${JSON.stringify(confirm.body)}`);
+
+  const settings = await api('PUT', '/api/admin/settings', { REGISTRATION_MODE: 'open' }, cookie);
+  if (settings.status >= 300) throw new Error(`开放注册失败: ${JSON.stringify(settings.body)}`);
+  const app = await api(
     'POST',
     '/api/admin/apps',
     {
@@ -91,6 +120,22 @@ export async function setup(): Promise<void> {
     },
     cookie,
   );
+  if (app.status >= 300) throw new Error(`demo 应用创建失败: ${JSON.stringify(app.body)}`);
+
+  // 还原 admin 初始态：原 users 行 + 原密码哈希，清除 setup 期间产生的 TOTP/恢复码
+  {
+    const { __password_hash, ...userRow } = pristine;
+    const cols = Object.keys(userRow);
+    runDb(
+      "const D=require('better-sqlite3');const db=new D(process.argv[1]);" +
+        `db.prepare('UPDATE users SET ${cols.map((c) => `${c}=@${c}`).join(', ')} WHERE username=@un').run(JSON.parse(process.argv[2]));` +
+        "db.prepare('DELETE FROM totp_secrets WHERE user_id=(SELECT id FROM users WHERE username=?)').run('admin');" +
+        "db.prepare('DELETE FROM recovery_codes WHERE user_id=(SELECT id FROM users WHERE username=?)').run('admin');" +
+        "db.prepare('UPDATE local_credentials SET password_hash=? WHERE user_id=(SELECT id FROM users WHERE username=?)').run(process.argv[3],'admin');",
+      JSON.stringify({ ...userRow, un: 'admin' }),
+      __password_hash as string,
+    );
+  }
 }
 
 export async function teardown(): Promise<void> {
