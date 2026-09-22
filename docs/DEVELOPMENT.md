@@ -100,6 +100,7 @@ client = OpenAI(base_url="http://<host>:8080/v1", api_key="aapk_…")
 - **额度充值**：订单按 `TOPUP_TOKENS_PER_FEN` 折算到账；`SHOW_TOPUP_PANEL` 可对用户隐藏充值面板（兑换码不受影响）。
 - **卡券码**：批量生成额度码/订阅码（`AAP-XXXX-XXXX-XXXX`），原子兑换防双花，可作废/设有效期；兑换走 `grantTokens`（三触发失效缓存）。
 - **运营面板**：30 天收入/成本/毛利（成本按路由 `costPer1k`）、余额与消耗排行、应用热度、订单确认；用户额度发放/调减入口与计费设置（`TOPUP_TOKENS_PER_FEN`、`SHOW_TOPUP_PANEL`）也在本页。
+- **用户端入口**：个人中心「订阅与充值」Tab 自上而下为 Token 余额与最近调用（`GET /api/user/billing`）→ 功能订阅/套餐 → 兑换码 → 额度充值（`SHOW_TOPUP_PANEL=false` 时对用户隐藏）→ 订单记录；余额随兑换/到账刷新（react-query `['billing']` 失效联动）。
 
 ## 8. 分发（deploy/）
 

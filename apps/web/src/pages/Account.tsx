@@ -416,7 +416,13 @@ export function AccountPage() {
           {
             key: 'billing',
             label: '订阅与充值',
-            children: <MembershipTopupTab />,
+            // BillingTab（余额 + 最近调用）曾漏挂载致个人页无余额查询入口（2026-09-22）
+            children: (
+              <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+                <BillingTab />
+                <MembershipTopupTab />
+              </Space>
+            ),
           },
           {
             key: 'danger',
