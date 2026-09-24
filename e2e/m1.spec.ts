@@ -2,7 +2,9 @@ import { test, expect } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { generate } from 'otplib';
-import { INIT_ADMIN_PASSWORD, ADMIN_NEW_PASSWORD, PORTAL, latestCodeFromLog } from './global-setup';
+import { INIT_ADMIN_PASSWORD, ADMIN_NEW_PASSWORD, NORMAL_USERNAME, NORMAL_INIT_PASSWORD, PORTAL, latestCodeFromLog } from './global-setup';
+
+const NORMAL_NEW_PASSWORD = 'e2e-normal-password-123';
 
 /** 测试间共享（workers=1 串行，同一进程模块状态保留） */
 let adminTotpSecret = '';
@@ -146,4 +148,39 @@ test('设置保存：HTTPS 跳转开关开 → 保存 → 刷新仍为开', asyn
   await page.getByRole('tab', { name: '证书' }).click();
   const switcher2 = page.locator('.ant-card', { hasText: 'HTTPS 跳转' }).locator('.ant-switch').first();
   await expect(switcher2).not.toHaveClass(/ant-switch-checked/);
+});
+
+/** M1 验收主链路⑤：普通用户不强制绑 MFA——初始密码改密后直达门户（曾误跳绑定页），
+ *  绑定页可「跳过绑定」，个人中心安全 Tab 提供 MFA 管理卡片 */
+test('普通用户改密直达门户 + 绑定页跳过 + 个人中心 MFA 管理', async ({ page }) => {
+  await page.goto('/login');
+  await page.getByPlaceholder('用户名').fill(NORMAL_USERNAME);
+  await page.getByPlaceholder('密码').fill(NORMAL_INIT_PASSWORD);
+  await page.getByRole('button', { name: /^登\s*录$/ }).click();
+
+  // 强制改密（初始密码首登）
+  await page.waitForURL('**/initialize');
+  await page.locator('input[type="password"]').nth(0).fill(NORMAL_INIT_PASSWORD);
+  await page.locator('input[type="password"]').nth(1).fill(NORMAL_NEW_PASSWORD);
+  await page.locator('input[type="password"]').nth(2).fill(NORMAL_NEW_PASSWORD);
+  await page.getByRole('button', { name: '保存并继续' }).click();
+
+  // 回归点：普通用户 mustEnrollMfa=false → 改密后回门户，不再被带入 /mfa-setup
+  await page.waitForURL(`${PORTAL}/`);
+  await expect(page).not.toHaveURL(/mfa-setup/);
+
+  // 自愿绑定路径：绑定页对非强制用户出示「跳过绑定」，点击回门户
+  await page.goto('/mfa-setup');
+  const skip = page.getByRole('button', { name: '跳过绑定' });
+  await expect(skip).toBeVisible();
+  await skip.click();
+  await page.waitForURL(`${PORTAL}/`);
+
+  // 个人中心-安全：MFA 管理卡片（未绑状态展示 TOTP 未绑定 + 绑定入口 + Passkey 区）
+  await page.goto('/account');
+  await page.getByRole('tab', { name: '安全' }).click();
+  await expect(page.getByText('多因子认证（MFA）')).toBeVisible();
+  await expect(page.getByText('TOTP 验证器', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '绑定 TOTP' })).toBeVisible();
+  await expect(page.getByText(/Passkey（\d+）/)).toBeVisible();
 });

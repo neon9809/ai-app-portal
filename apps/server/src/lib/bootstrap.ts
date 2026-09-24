@@ -28,8 +28,9 @@ export function adminCount(): number {
   return getDb().select({ n: sql<number>`count(*)` }).from(users).where(sql`role = 'admin'`).get()?.n ?? 0;
 }
 
-/** 首启引导；幂等（已有用户则跳过） */
-export function ensureInitialAdmin(): void {
+/** 首启引导；幂等（已有用户则跳过）。async：凭据 scrypt 完成前不得放行 listen，
+ *  否则首秒内登录会因凭据行未落库而 401（e2e setup 高负载下随机踩中） */
+export async function ensureInitialAdmin(): Promise<void> {
   if (userCount() > 0) return;
 
   const username = (process.env.ADMIN_USERNAME?.trim() || 'admin').toLowerCase();
@@ -51,7 +52,7 @@ export function ensureInitialAdmin(): void {
       createdAt: Date.now(),
     })
     .run();
-  void writeLocalCredentials(Number(info.lastInsertRowid), password);
+  await writeLocalCredentials(Number(info.lastInsertRowid), password);
 
   // 凭据落盘（0600）+ 打印日志
   const content = [

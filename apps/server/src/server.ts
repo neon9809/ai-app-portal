@@ -19,7 +19,7 @@ import { ensureInitialAdmin, seedOfficialSigningKey } from './lib/bootstrap.js';
 import { seedSettings } from './lib/settings.js';
 import { createApp } from './app.js';
 
-function main(): void {
+async function main(): Promise<void> {
   if (config.databaseTarget.kind === 'mysql') {
     console.error('[aap] MySQL 数据库方言将在 FPK 集成版本中启用，当前版本请使用 SQLite（默认）。');
     process.exit(1);
@@ -27,7 +27,7 @@ function main(): void {
   initDb({ file: config.databaseTarget.file, migrationsDir: config.migrationsDir });
   seedSettings();
   seedOfficialSigningKey(); // G4：AAP_OFFICIAL_SIGN_PUBKEY 提供时内置信任官方签名公钥
-  ensureInitialAdmin(); // F3：users 为空时创建初始管理员（Docker 首启打印密码 + 一次性凭据文件）
+  await ensureInitialAdmin(); // F3：users 为空时创建初始管理员（Docker 首启打印密码 + 一次性凭据文件）
   startPurgeLoop();
   startHealthLoop();
   startBillingLoop();
@@ -99,4 +99,4 @@ function main(): void {
   process.on('SIGTERM', () => shutdown('SIGTERM'));
 }
 
-main();
+void main();

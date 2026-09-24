@@ -21,113 +21,15 @@ import {
   message,
 } from 'antd';
 import { useEffect, useState, type ReactNode } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../api/client';
 import { obtainPowToken } from '../lib/pow';
 import { useSession } from '../state/session';
+import { useStepUp, withStepUp } from '../components/StepUpModal';
+import { registerNewPasskey } from '../lib/mfaClient';
 import { BUILTIN_THEMES, useTheme } from '../theme/themes';
 import { AppEnvModal } from '../components/AppEnvModal';
-
-// ---------- 步升认证弹窗 ----------
-
-function useStepUp(): [ReactNode, () => Promise<boolean>] {
-  const { me } = useSession();
-  const [open, setOpen] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [resolveRef, setResolveRef] = useState<((ok: boolean) => void) | null>(null);
-  // 两个 Tab 各自独立实例：共用一个实例时 Tabs 切换后两 Form 同时挂载，
-  // 提交会对隐藏 Tab 的必填字段一并校验，导致 TOTP 提交静默失败
-  const [passwordForm] = Form.useForm();
-  const [totpForm] = Form.useForm();
-
-  const ensure = (): Promise<boolean> => {
-    // 已在步升窗口内 → 直接放行
-    if (me?.stepUpUntil && me.stepUpUntil > Date.now()) return Promise.resolve(true);
-    passwordForm.resetFields();
-    totpForm.resetFields();
-    setOpen(true);
-    return new Promise((resolve) => setResolveRef(() => resolve));
-  };
-
-  const close = (ok: boolean): void => {
-    setOpen(false);
-    resolveRef?.(ok);
-    setResolveRef(null);
-  };
-
-  async function submitPassword(values: { password: string }): Promise<void> {
-    setLoading(true);
-    try {
-      await api('/api/auth/step-up/password', { method: 'POST', json: values });
-      close(true);
-    } catch (err) {
-      message.error(err instanceof Error ? err.message : '验证失败');
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function submitTotp(values: { token: string }): Promise<void> {
-    setLoading(true);
-    try {
-      await api('/api/auth/step-up/totp', { method: 'POST', json: values });
-      close(true);
-    } catch (err) {
-      message.error(err instanceof Error ? err.message : '验证失败');
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  const modal = (
-    <Modal
-      title="验证身份（敏感操作）"
-      open={open}
-      onCancel={() => close(false)}
-      footer={null}
-      destroyOnClose
-    >
-      <Tabs
-        items={[
-          {
-            key: 'password',
-            label: '密码',
-            children: (
-              <Form form={passwordForm} onFinish={submitPassword} layout="vertical">
-                <Form.Item name="password" rules={[{ required: true, message: '请输入当前密码' }]}>
-                  <Input.Password autoFocus />
-                </Form.Item>
-                <Button type="primary" htmlType="submit" loading={loading} block>
-                  确认
-                </Button>
-              </Form>
-            ),
-          },
-          ...(me?.user.mfaEnabled
-            ? [
-                {
-                  key: 'totp',
-                  label: 'TOTP',
-                  children: (
-                    <Form form={totpForm} onFinish={submitTotp} layout="vertical">
-                      <Form.Item name="token" rules={[{ required: true, message: '请输入验证码' }]}>
-                        <Input maxLength={6} placeholder="6 位验证码" />
-                      </Form.Item>
-                      <Button type="primary" htmlType="submit" loading={loading} block>
-                        确认
-                      </Button>
-                    </Form>
-                  ),
-                },
-              ]
-            : []),
-        ]}
-      />
-    </Modal>
-  );
-
-  return [modal, ensure];
-}
 
 // ---------- 主页面 ----------
 
@@ -352,20 +254,8 @@ export function AccountPage() {
                     </Button>
                   </Form>
                 </Card>
-                <Card title="多因子认证（MFA）">
-                  {user.mfaEnabled ? (
-                    <Tag color="green">已启用</Tag>
-                  ) : (
-                    <Tag color="orange">未启用</Tag>
-                  )}
-                  <Typography.Paragraph type="secondary" style={{ margin: '8px 0' }}>
-                    推荐 TOTP 验证器 + Passkey 双因子。管理员账号强制启用。
-                  </Typography.Paragraph>
-                  <Space>
-                    <a href={withBase('/mfa-setup')}>
-                      <Button type="primary">绑定 / 管理</Button>
-                    </a>
-                  </Space>
+                <Card title="多因子认证（MFA）" extra={user.mfaEnabled ? <Tag color="green">已启用</Tag> : <Tag color="orange">未启用</Tag>}>
+                  <MfaManageBody ensureStepUp={ensureStepUp} />
                 </Card>
                 <Card title="登录会话">
                   <Table<SessionRow>
@@ -517,6 +407,186 @@ export function AccountPage() {
         </Form>
       </Modal>
     </div>
+  );
+}
+
+// ---------- MFA 管理（A3：已绑因子的查看/解绑/恢复码重置；绑定新因子走 /mfa-setup） ----------
+
+interface PasskeyRow {
+  id: string;
+  nickname: string;
+  createdAt: number;
+  lastUsedAt: number | null;
+  deviceType: string | null;
+  backedUp: boolean;
+}
+
+interface MfaStatus {
+  totpConfirmed: boolean;
+  passkeys: PasskeyRow[];
+  recoveryRemaining: number;
+}
+
+function MfaManageBody({ ensureStepUp }: { ensureStepUp: () => Promise<boolean> }): ReactNode {
+  const navigate = useNavigate();
+  const qc = useQueryClient();
+  const { refetch: refetchMe } = useSession();
+  const status = useQuery({ queryKey: ['mfa-status'], queryFn: () => api<MfaStatus>('/api/auth/mfa/status') });
+  const [busy, setBusy] = useState(false);
+  const [newCodes, setNewCodes] = useState<string[] | null>(null);
+
+  const refresh = (): void => {
+    void qc.invalidateQueries({ queryKey: ['mfa-status'] });
+    void refetchMe(); // 解绑最后一个因子会翻转 mfaEnabled，卡片角标同步
+  };
+
+  /** 统一执行：步升窗口过期自动弹步升窗重验；失败如实透出服务端消息（如 admin 保底约束） */
+  async function run(action: string, fn: () => Promise<void>): Promise<void> {
+    setBusy(true);
+    try {
+      await withStepUp(ensureStepUp, fn);
+      refresh();
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : `${action}失败`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const d = status.data;
+
+  if (!d) {
+    return <Typography.Text type="secondary">正在加载 MFA 状态…</Typography.Text>;
+  }
+
+  return (
+    <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+      <Typography.Paragraph type="secondary" style={{ margin: 0 }}>
+        推荐 TOTP 验证器 + Passkey 双因子。管理员账号强制启用；绑定新因子可在下方或前往
+        <Button type="link" size="small" style={{ padding: 0 }} onClick={() => navigate('/mfa-setup')}>
+          绑定页
+        </Button>
+        。
+      </Typography.Paragraph>
+
+      <div>
+        <Space>
+          <Typography.Text>TOTP 验证器</Typography.Text>
+          {d.totpConfirmed ? <Tag color="green">已绑定</Tag> : <Tag>未绑定</Tag>}
+        </Space>
+        {d.totpConfirmed ? (
+          <Space style={{ marginLeft: 12 }} wrap>
+            <Typography.Text type="secondary">恢复码剩余 {d.recoveryRemaining} 枚</Typography.Text>
+            <Button
+              size="small"
+              loading={busy}
+              onClick={() =>
+                void run('重新生成恢复码', async () => {
+                  const r = await api<{ recoveryCodes: string[] }>('/api/auth/mfa/recovery/regenerate', {
+                    method: 'POST',
+                  });
+                  setNewCodes(r.recoveryCodes);
+                })
+              }
+            >
+              重新生成恢复码
+            </Button>
+            <Popconfirm
+              title="解绑 TOTP 后需重新扫码绑定，确定？"
+              onConfirm={() =>
+                void run('解绑 TOTP', async () => {
+                  await api('/api/auth/mfa/totp/disable', { method: 'POST' });
+                })
+              }
+            >
+              <Button size="small" danger loading={busy}>
+                解绑 TOTP
+              </Button>
+            </Popconfirm>
+          </Space>
+        ) : (
+          <Button size="small" type="primary" style={{ marginLeft: 12 }} onClick={() => navigate('/mfa-setup')}>
+            绑定 TOTP
+          </Button>
+        )}
+      </div>
+
+      <Card
+        type="inner"
+        size="small"
+        title={`Passkey（${d.passkeys.length}）`}
+        extra={
+          <Button
+            size="small"
+            loading={busy}
+            onClick={() =>
+              void run('Passkey 绑定', () => registerNewPasskey(`Passkey ${new Date().toLocaleDateString()}`))
+            }
+          >
+            注册本设备 Passkey
+          </Button>
+        }
+      >
+        {d.passkeys.length ? (
+          <Table<PasskeyRow>
+            rowKey="id"
+            size="small"
+            pagination={false}
+            dataSource={d.passkeys}
+            columns={[
+              { title: '名称', dataIndex: 'nickname', ellipsis: true },
+              { title: '绑定时间', width: 170, render: (_, r) => new Date(r.createdAt).toLocaleString() },
+              {
+                title: '',
+                width: 90,
+                render: (_, r) => (
+                  <Popconfirm
+                    title="删除该 Passkey？"
+                    onConfirm={() =>
+                      void run('删除 Passkey', async () => {
+                        await api(`/api/auth/mfa/passkeys/${r.id}`, { method: 'DELETE' });
+                      })
+                    }
+                  >
+                    <Button size="small" danger loading={busy}>
+                      删除
+                    </Button>
+                  </Popconfirm>
+                ),
+              },
+            ]}
+          />
+        ) : (
+          <Typography.Text type="secondary">未绑定 Passkey</Typography.Text>
+        )}
+      </Card>
+
+      <Modal
+        title="新的恢复码"
+        open={newCodes !== null}
+        onCancel={() => setNewCodes(null)}
+        footer={
+          <Button type="primary" onClick={() => setNewCodes(null)}>
+            我已保存
+          </Button>
+        }
+      >
+        <Alert
+          type="warning"
+          showIcon
+          message="旧恢复码已全部失效"
+          description="每个恢复码只能使用一次，用于验证器丢失时登录。关闭后不会再显示，请妥善保存。"
+          style={{ marginBottom: 12 }}
+        />
+        <Card size="small">
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, fontFamily: 'monospace' }}>
+            {(newCodes ?? []).map((c) => (
+              <span key={c}>{c}</span>
+            ))}
+          </div>
+        </Card>
+      </Modal>
+    </Space>
   );
 }
 

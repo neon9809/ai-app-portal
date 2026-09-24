@@ -4,13 +4,12 @@
  */
 import { Button, Card, Form, Input, Typography, message } from 'antd';
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
-import { usePostAuthRedirect } from '../state/session';
+import { usePostAuthRedirect, useSession } from '../state/session';
 
 export function ForceChangePasswordPage() {
-  const navigate = useNavigate();
   const redirect = usePostAuthRedirect();
+  const { refetch } = useSession();
   const [loading, setLoading] = useState(false);
 
   async function onFinish(values: { currentPassword: string; newPassword: string }): Promise<void> {
@@ -21,15 +20,19 @@ export function ForceChangePasswordPage() {
         json: values,
       });
       message.success('密码已更新');
-      // 强制流程下一步：绑 MFA（/api/auth/me 会重新计算）
-      navigate('/mfa-setup', { replace: true });
+      // 重算强制流标记后再分流：仅 mustEnrollMfa（未绑 MFA 的 local admin）继续绑 MFA，
+      // 普通用户不强制绑，直接回门户（曾写死跳 /mfa-setup 致普通用户被误带入绑定页）
+      const me = await refetch();
+      redirect({
+        mustChangePassword: me.data?.mustChangePassword ?? false,
+        mustEnrollMfa: me.data?.mustEnrollMfa ?? false,
+      });
     } catch (err) {
       message.error(err instanceof Error ? err.message : '修改失败');
     } finally {
       setLoading(false);
     }
   }
-  void redirect;
 
   return (
     <Card style={{ maxWidth: 440, margin: '48px auto' }}>

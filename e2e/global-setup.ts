@@ -17,6 +17,10 @@ export const PORTAL = 'http://127.0.0.1:9910';
 export const UPSTREAM = 'http://127.0.0.1:9912'; // 避开本地体验用的 9911
 export const INIT_ADMIN_PASSWORD = 'e2e-init-password';
 export const ADMIN_NEW_PASSWORD = 'e2e-new-password-123';
+/** 预置普通用户（mustChangePassword=1）：验收「普通用户不强制绑 MFA」回归。
+ *  密码用常量显式传入（worker 进程读不到 setup 进程的模块状态） */
+export const NORMAL_USERNAME = 'e2e-normal';
+export const NORMAL_INIT_PASSWORD = 'e2e-normal-init-password';
 
 const RUN_DIR = path.join(__dirname, '.run');
 const SERVER_LOG = path.join(RUN_DIR, 'server.log');
@@ -121,6 +125,15 @@ export async function setup(): Promise<void> {
     cookie,
   );
   if (app.status >= 300) throw new Error(`demo 应用创建失败: ${JSON.stringify(app.body)}`);
+
+  // 预置普通用户（mustChangePassword=1）
+  const user = await api(
+    'POST',
+    '/api/admin/users',
+    { username: NORMAL_USERNAME, name: 'E2E 普通用户', password: NORMAL_INIT_PASSWORD },
+    cookie,
+  );
+  if (user.status >= 300) throw new Error(`普通用户创建失败: ${JSON.stringify(user.body)}`);
 
   // 还原 admin 初始态：原 users 行 + 原密码哈希，清除 setup 期间产生的 TOTP/恢复码
   {
